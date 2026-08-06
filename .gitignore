@@ -1,0 +1,32 @@
+﻿# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Temporary files
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
+
+# Streamlit and patch-install leftovers
+ui_backup_before_shared_shell/
+streamlit_ui_unified_v1/
+streamlit_pages_current.zip
+streamlit_ui_unified_v1.zip
+
+# Automatically created backups
+pages/*_backup_*.py
+app_data/*_backup_*.json
+
+# Large generated artifacts retained locally
+data/
+models/
+outputs/

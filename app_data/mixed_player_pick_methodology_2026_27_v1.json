@@ -1,0 +1,23 @@
+{
+  "data_contract_version": "mixed_trade_app_v1",
+  "display_tiers": {
+    "Model-backed trade concept": "Clears the stricter bilateral balance, utility, contribution, downside, and pick-risk standards.",
+    "Exploratory strategy shortlist": "Passes the balanced shortlist screen but remains below the stricter production confidence threshold."
+  },
+  "score_labels": {
+    "team_strategy_score_display": "Team-specific strategy score, 0-100",
+    "counterpart_strategy_score_display": "Counterpart team-specific strategy score, 0-100",
+    "bilateral_floor_score_display": "Lower of the two team strategy scores",
+    "bilateral_mean_score_display": "Average of the two team strategy scores"
+  },
+  "display_rules": {
+    "manual_context_review": "Analyst-only. Do not show as a public recommendation.",
+    "hold_not_displayed": "Excluded from recommendation cards.",
+    "protected_player_blockbusters": "Concept-only and outside this app-facing routine release."
+  },
+  "disclaimers": [
+    "Model-generated concepts do not imply that a player or team is actually available.",
+    "Legality is deterministic within the modeled package checks and evidence cutoff, not a substitute for official league approval.",
+    "Strategy shortlist concepts require additional team-context review."
+  ]
+}

@@ -1,0 +1,207 @@
+{
+  "release_name": "mixed_trade_visual_assets_2026_27_v1",
+  "script_version": "mixed-trade-visual-assets-v1-2026-08-06",
+  "created_utc": "2026-08-06T06:10:43.664691+00:00",
+  "player_market_source": "C:\\Users\\klima\\Python Projects\\Projects\\NBA_Roster_Optimization_Engine\\data\\processed\\player_trade_market_value_layer_2026_27_v4_protected.parquet",
+  "counts": {
+    "teams": 30,
+    "app_players": 11,
+    "resolved_players": 11,
+    "unresolved_players": 0
+  },
+  "teams": {
+    "ATL": {
+      "team_id": 1610612737,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612737/global/L/logo.svg"
+    },
+    "BOS": {
+      "team_id": 1610612738,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612738/global/L/logo.svg"
+    },
+    "CLE": {
+      "team_id": 1610612739,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612739/global/L/logo.svg"
+    },
+    "NOP": {
+      "team_id": 1610612740,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612740/global/L/logo.svg"
+    },
+    "CHI": {
+      "team_id": 1610612741,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612741/global/L/logo.svg"
+    },
+    "DAL": {
+      "team_id": 1610612742,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612742/global/L/logo.svg"
+    },
+    "DEN": {
+      "team_id": 1610612743,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612743/global/L/logo.svg"
+    },
+    "GSW": {
+      "team_id": 1610612744,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612744/global/L/logo.svg"
+    },
+    "HOU": {
+      "team_id": 1610612745,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612745/global/L/logo.svg"
+    },
+    "LAC": {
+      "team_id": 1610612746,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612746/global/L/logo.svg"
+    },
+    "LAL": {
+      "team_id": 1610612747,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612747/global/L/logo.svg"
+    },
+    "MIA": {
+      "team_id": 1610612748,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612748/global/L/logo.svg"
+    },
+    "MIL": {
+      "team_id": 1610612749,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612749/global/L/logo.svg"
+    },
+    "MIN": {
+      "team_id": 1610612750,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612750/global/L/logo.svg"
+    },
+    "BKN": {
+      "team_id": 1610612751,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612751/global/L/logo.svg"
+    },
+    "NYK": {
+      "team_id": 1610612752,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612752/global/L/logo.svg"
+    },
+    "ORL": {
+      "team_id": 1610612753,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612753/global/L/logo.svg"
+    },
+    "IND": {
+      "team_id": 1610612754,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612754/global/L/logo.svg"
+    },
+    "PHI": {
+      "team_id": 1610612755,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612755/global/L/logo.svg"
+    },
+    "PHX": {
+      "team_id": 1610612756,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612756/global/L/logo.svg"
+    },
+    "POR": {
+      "team_id": 1610612757,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612757/global/L/logo.svg"
+    },
+    "SAC": {
+      "team_id": 1610612758,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612758/global/L/logo.svg"
+    },
+    "SAS": {
+      "team_id": 1610612759,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612759/global/L/logo.svg"
+    },
+    "OKC": {
+      "team_id": 1610612760,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612760/global/L/logo.svg"
+    },
+    "TOR": {
+      "team_id": 1610612761,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612761/global/L/logo.svg"
+    },
+    "UTA": {
+      "team_id": 1610612762,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612762/global/L/logo.svg"
+    },
+    "MEM": {
+      "team_id": 1610612763,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612763/global/L/logo.svg"
+    },
+    "WAS": {
+      "team_id": 1610612764,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612764/global/L/logo.svg"
+    },
+    "DET": {
+      "team_id": 1610612765,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612765/global/L/logo.svg"
+    },
+    "CHA": {
+      "team_id": 1610612766,
+      "logo_url": "https://cdn.nba.com/logos/nba/1610612766/global/L/logo.svg"
+    }
+  },
+  "players": {
+    "danny wolf|BKN": {
+      "player_id": "1642874",
+      "player_name": "Danny Wolf",
+      "team_abbreviation": "BKN",
+      "headshot_url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642874.png"
+    },
+    "hugo gonzalez|BOS": {
+      "player_id": "1642864",
+      "player_name": "Hugo González",
+      "team_abbreviation": "BOS",
+      "headshot_url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642864.png"
+    },
+    "pj washington|DAL": {
+      "player_id": "1629023",
+      "player_name": "P.J. Washington",
+      "team_abbreviation": "DAL",
+      "headshot_url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629023.png"
+    },
+    "cameron johnson|DEN": {
+      "player_id": "1629661",
+      "player_name": "Cameron Johnson",
+      "team_abbreviation": "DEN",
+      "headshot_url": "https://cdn.nba.com/headshots/nba/latest/260x190/1629661.png"
+    },
+    "daniss jenkins|DET": {
+      "player_id": "1642450",
+      "player_name": "Daniss Jenkins",
+      "team_abbreviation": "DET",
+      "headshot_url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642450.png"
+    },
+    "dru smith|MIA": {
+      "player_id": "1630696",
+      "player_name": "Dru Smith",
+      "team_abbreviation": "MIA",
+      "headshot_url": "https://cdn.nba.com/headshots/nba/latest/260x190/1630696.png"
+    },
+    "nikola jovic|MIA": {
+      "player_id": "1631107",
+      "player_name": "Nikola Jović",
+      "team_abbreviation": "MIA",
+      "headshot_url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631107.png"
+    },
+    "kasparas jakucionis|MIL": {
+      "player_id": "1642857",
+      "player_name": "Kasparas Jakučionis",
+      "team_abbreviation": "MIL",
+      "headshot_url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642857.png"
+    },
+    "alex caruso|OKC": {
+      "player_id": "1627936",
+      "player_name": "Alex Caruso",
+      "team_abbreviation": "OKC",
+      "headshot_url": "https://cdn.nba.com/headshots/nba/latest/260x190/1627936.png"
+    },
+    "dominick barlow|PHI": {
+      "player_id": "1631230",
+      "player_name": "Dominick Barlow",
+      "team_abbreviation": "PHI",
+      "headshot_url": "https://cdn.nba.com/headshots/nba/latest/260x190/1631230.png"
+    },
+    "isaiah collier|UTA": {
+      "player_id": "1642268",
+      "player_name": "Isaiah Collier",
+      "team_abbreviation": "UTA",
+      "headshot_url": "https://cdn.nba.com/headshots/nba/latest/260x190/1642268.png"
+    }
+  },
+  "unresolved_players": [],
+  "fallbacks": {
+    "player_headshot": "",
+    "team_logo": ""
+  }
+}
