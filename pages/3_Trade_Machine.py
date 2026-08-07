@@ -51,6 +51,14 @@ from league_scenario_store_v1 import (  # noqa: E402
     load_scenario_file,
     save_scenario,
 )
+from trade_mode_policy_v1 import (  # noqa: E402
+    ModeTradeEvaluation,
+    SandboxDisposition,
+    TradeMode,
+    TradeModePolicyError,
+    apply_trade_in_mode,
+    classify_trade,
+)
 
 
 st.set_page_config(
@@ -1764,6 +1772,87 @@ def render_status_banner(
     )
 
 
+def friendly_trade_message(value: Any) -> str:
+    text = str(value or "").strip()
+    return (
+        text.replace(" through nan.", ".")
+        .replace(" through NaN.", ".")
+        .replace(" through <NA>.", ".")
+    )
+
+
+def render_trade_mode_banner(
+    policy: ModeTradeEvaluation,
+) -> None:
+    if policy.mode == TradeMode.REALISM:
+        render_status_banner(
+            policy.strict_status,
+            "Overall transaction result",
+            verdict_copy(policy.strict_evaluation),
+        )
+        return
+
+    if (
+        policy.disposition
+        == SandboxDisposition.VERIFIED
+    ):
+        color = "#1f9d55"
+        icon = "✓"
+        title = "Verified and ready to apply"
+        copy = (
+            "The package passed the strict V3 legality audit "
+            "and is fully playable in Sandbox Mode."
+        )
+    elif (
+        policy.disposition
+        == SandboxDisposition.PLAYABLE_WITH_WARNING
+    ):
+        color = "#2563eb"
+        icon = "▶"
+        title = "Playable with realism warnings"
+        copy = (
+            "Sandbox Mode can apply this package using modeled "
+            "salary treatment. The unresolved strict-CBA items "
+            "remain visible in the legality audit."
+        )
+    elif (
+        policy.disposition
+        == SandboxDisposition.FORCE_REQUIRED
+    ):
+        color = "#d97706"
+        icon = "!"
+        title = "Force trade available"
+        copy = (
+            "The package violates one or more strict realism "
+            "rules. It can only be applied after explicit force-"
+            "trade confirmation."
+        )
+    else:
+        color = "#dc2626"
+        icon = "×"
+        title = "Invalid package"
+        copy = (
+            "The package contains a structural problem that "
+            "cannot be bypassed in either mode."
+        )
+
+    st.markdown(
+        f"""
+<div class="tm-verdict" style="--status-color:{color};">
+  <div class="tm-verdict-icon">{icon}</div>
+  <div>
+    <div class="tm-verdict-label">
+      {escaped(policy.verification_label)}
+    </div>
+    <div class="tm-verdict-title">{escaped(title)}</div>
+    <div class="tm-verdict-copy">{escaped(copy)}</div>
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_check(check: CheckResult) -> None:
     conditional_pass = (
         check.status == Status.PASS
@@ -1796,7 +1885,7 @@ def render_check(check: CheckResult) -> None:
   <div class="tm-audit-icon">{icon}</div>
   <div>
     <div class="tm-audit-title">{escaped(title)}</div>
-    <div class="tm-audit-message">{escaped(check.message)}</div>
+    <div class="tm-audit-message">{escaped(friendly_trade_message(check.message))}</div>
   </div>
   <div class="tm-audit-badge">{escaped(label)}</div>
 </div>
@@ -1970,6 +2059,15 @@ def render_side_summary(
         )
 
 
+def clear_trade_audit_state() -> None:
+    for key in {
+        "trade_machine_last_result",
+        "trade_machine_last_policy",
+        "trade_machine_last_selection",
+    }:
+        st.session_state.pop(key, None)
+
+
 def clear_trade_state() -> None:
     removable = [
         key
@@ -1977,15 +2075,13 @@ def clear_trade_state() -> None:
         if (
             key.startswith("trade_machine_players_")
             or key.startswith("trade_machine_picks_")
-            or key in {
-                "trade_machine_last_result",
-                "trade_machine_last_selection",
-            }
         )
     ]
 
     for key in removable:
         del st.session_state[key]
+
+    clear_trade_audit_state()
 
 
 def selection_request(
@@ -2610,6 +2706,42 @@ with st.expander("How the V3 verdict works", expanded=False):
     )
 
 st.markdown(
+    '<div class="tm-section-kicker">Trade experience</div>',
+    unsafe_allow_html=True,
+)
+
+with st.container(border=True):
+    mode_label = st.radio(
+        "Choose how strictly the transaction should be judged",
+        options=["Sandbox Mode", "Realism Mode"],
+        index=0,
+        horizontal=True,
+        key="trade_machine_mode_selector",
+        on_change=clear_trade_audit_state,
+    )
+
+    trade_mode = (
+        TradeMode.SANDBOX
+        if mode_label == "Sandbox Mode"
+        else TradeMode.REALISM
+    )
+
+    if trade_mode == TradeMode.SANDBOX:
+        st.info(
+            "Sandbox Mode is built for team building and future "
+            "simulation play. Missing player-CBA evidence becomes "
+            "a visible warning, while structural errors still "
+            "remain blocked. Strict rule failures may be force-"
+            "traded after confirmation."
+        )
+    else:
+        st.caption(
+            "Realism Mode preserves the strict V3 CBA, salary, "
+            "apron, roster, draft-right, and Stepien verdict. "
+            "Only deterministic PASS transactions can be applied."
+        )
+
+st.markdown(
     '<div class="tm-section-kicker">01 · Build the package</div>',
     unsafe_allow_html=True,
 )
@@ -2731,7 +2863,11 @@ render_trade_rail()
 action_columns = st.columns([4.5, 1.1], gap="small")
 with action_columns[0]:
     evaluate_clicked = st.button(
-        "Run V3 trade audit",
+        (
+            "Evaluate sandbox trade"
+            if trade_mode == TradeMode.SANDBOX
+            else "Run V3 realism audit"
+        ),
         type="primary",
         width="stretch",
         disabled=(team_a == team_b),
@@ -2774,9 +2910,15 @@ if evaluate_clicked:
             ),
         )
 
-        result = evaluate_trade(runtime, request)
+        policy = classify_trade(
+            runtime,
+            request,
+            mode=trade_mode,
+        )
+        result = policy.strict_evaluation
 
         st.session_state["trade_machine_last_result"] = result
+        st.session_state["trade_machine_last_policy"] = policy
         st.session_state["trade_machine_last_selection"] = {
             "team_a": team_a,
             "team_b": team_b,
@@ -2785,48 +2927,119 @@ if evaluate_clicked:
             "team_a_picks": list(team_a_picks),
             "team_b_picks": list(team_b_picks),
             "state_revision": league_state.state_revision,
+            "trade_mode": trade_mode.value,
         }
 
 result = st.session_state.get("trade_machine_last_result")
+policy = st.session_state.get("trade_machine_last_policy")
 selection = st.session_state.get("trade_machine_last_selection")
 
-if result is not None and selection is not None:
+if (
+    result is not None
+    and policy is not None
+    and selection is not None
+):
     st.markdown(
         '<div class="tm-section-kicker">02 · Trade verdict</div>',
         unsafe_allow_html=True,
     )
-    render_status_banner(
-        result.status,
-        "Overall transaction result",
-        verdict_copy(result),
-    )
-    render_resolution_guidance(result)
+    render_trade_mode_banner(policy)
 
-    if result.status == Status.PASS:
+    if policy.mode == TradeMode.REALISM:
+        render_resolution_guidance(result)
+    elif policy.warnings:
+        with st.expander(
+            "Strict realism warnings preserved",
+            expanded=(
+                policy.disposition
+                != SandboxDisposition.VERIFIED
+            ),
+        ):
+            for warning in policy.warnings:
+                st.warning(
+                    friendly_trade_message(warning)
+                )
+
+    can_offer_apply = (
+        policy.can_apply_without_force
+        or policy.force_allowed
+    )
+
+    if can_offer_apply:
         with st.container(border=True):
+            force_trade = (
+                policy.disposition
+                == SandboxDisposition.FORCE_REQUIRED
+            )
+
             apply_columns = st.columns([3.8, 1.6])
 
             with apply_columns[0]:
                 st.markdown(
-                    "**Commit this approved transaction**"
+                    (
+                        "**Force this transaction into the "
+                        "simulation universe**"
+                        if force_trade
+                        else "**Commit this transaction**"
+                    )
                 )
                 st.caption(
-                    "The audited package will update both rosters, "
-                    "team financials, draft-right ownership, and "
-                    "all later Trade Machine evaluations."
+                    (
+                        "Force Trade bypasses non-structural "
+                        "realism rules, but still updates rosters, "
+                        "listed salaries, draft-right ownership, "
+                        "history, undo, and saved scenarios."
+                        if force_trade
+                        else (
+                            "The package will update both rosters, "
+                            "team financials, draft-right ownership, "
+                            "and all later Trade Machine evaluations."
+                        )
+                    )
                 )
+
+                force_confirmed = False
+                if force_trade:
+                    force_confirmed = st.checkbox(
+                        "I understand this trade failed strict "
+                        "realism rules and want to force it.",
+                        key=(
+                            "trade_machine_force_confirmation_"
+                            f"r{league_state.state_revision}"
+                        ),
+                    )
 
             with apply_columns[1]:
                 apply_clicked = st.button(
-                    "Apply approved trade",
+                    (
+                        "Force trade"
+                        if force_trade
+                        else (
+                            "Apply sandbox trade"
+                            if policy.mode
+                            == TradeMode.SANDBOX
+                            else "Apply approved trade"
+                        )
+                    ),
                     type="primary",
                     width="stretch",
-                    key="trade_machine_apply_passed_trade",
+                    disabled=(
+                        force_trade
+                        and not force_confirmed
+                    ),
+                    key=(
+                        "trade_machine_apply_"
+                        f"{policy.mode.value}_"
+                        f"r{league_state.state_revision}"
+                    ),
                 )
 
             if apply_clicked:
                 audited_revision = selection.get(
                     "state_revision"
+                )
+                audited_mode = selection.get(
+                    "trade_mode"
                 )
 
                 if (
@@ -2834,8 +3047,13 @@ if result is not None and selection is not None:
                     != league_state.state_revision
                 ):
                     st.error(
-                        "The league changed after this audit. "
-                        "Run the V3 audit again before applying it."
+                        "The league changed after this evaluation. "
+                        "Evaluate the package again before applying it."
+                    )
+                elif audited_mode != trade_mode.value:
+                    st.error(
+                        "The trade mode changed after this evaluation. "
+                        "Evaluate the package again."
                     )
                 else:
                     request = selection_request(selection)
@@ -2844,44 +3062,58 @@ if result is not None and selection is not None:
                         trial_state = copy.deepcopy(
                             league_state
                         )
-                        apply_passed_trade(
+                        apply_trade_in_mode(
                             trial_state,
                             runtime,
                             request,
-                            result,
+                            mode=policy.mode,
+                            force=force_trade,
                         )
                         build_state_runtime(
                             base_runtime,
                             trial_state,
                         )
 
-                        record = apply_passed_trade(
+                        applied = apply_trade_in_mode(
                             league_state,
                             runtime,
                             request,
-                            result,
+                            mode=policy.mode,
+                            force=force_trade,
                         )
+                        record = applied.transaction
                     except (
+                        TradeModePolicyError,
                         StateMutationError,
                         StateRuntimeAdapterError,
                         ValueError,
                         KeyError,
                     ) as exc:
                         st.error(
-                            "The approved package could not be "
-                            "committed to mutable league state. "
-                            f"Detail: {exc}"
+                            "The transaction could not be committed "
+                            f"to league state. Detail: {exc}"
                         )
                     else:
                         clear_trade_state()
                         st.session_state[
                             "trade_machine_state_notice"
                         ] = (
-                            f"Applied {record.transaction_id}: "
-                            f"{record.team_a} ↔ "
-                            f"{record.team_b}."
+                            (
+                                "Force-applied "
+                                if force_trade
+                                else "Applied "
+                            )
+                            + f"{record.transaction_id}: "
+                            + f"{record.team_a} ↔ "
+                            + f"{record.team_b}."
                         )
                         st.rerun()
+
+    st.caption(
+        "The Legality Audit tab below always preserves the "
+        "strict V3 result, even when Sandbox Mode allows the "
+        "transaction to remain playable."
+    )
 
     overview_tab, audit_tab = st.tabs(
         ["Trade overview", "Legality audit"]
