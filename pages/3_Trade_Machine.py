@@ -14,7 +14,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from freeform_trade_machine_engine_v2_2 import (  # noqa: E402
+from freeform_trade_machine_engine_v3 import (  # noqa: E402
     CheckResult,
     RuntimeData,
     Status,
@@ -121,32 +121,167 @@ def team_label(team: str) -> str:
     return f"{TEAM_NAMES.get(team, team)} ({team})"
 
 
+def compact_asset_label(value: Any) -> str:
+    text = str(value or "").strip().lower()
+
+    labels = {
+        "franchise_caliber": "Franchise",
+        "superstar_caliber": "Superstar",
+        "star_caliber": "Star",
+        "high_end_starter": "High-End Starter",
+        "quality_starter": "Starter",
+        "starter_caliber": "Starter",
+        "development_core": "Dev Core",
+        "development_depth": "Dev/Depth",
+        "rotation_player": "Rotation",
+        "rotation_caliber": "Rotation",
+        "bench_depth": "Bench",
+        "salary_filler": "Salary Filler",
+    }
+
+    if not text or text in {"nan", "none", "unclassified"}:
+        return ""
+
+    return labels.get(
+        text,
+        text.replace("_", " ").title(),
+    )
+
+
 def player_label(
     runtime: RuntimeData,
     player_id: str,
 ) -> str:
     trade = runtime.trade_by_id.get(player_id, {})
+    rating = runtime.ratings_by_id.get(player_id, {})
+    market = runtime.market_by_id.get(player_id, {})
 
     name = str(
         trade.get("player_name", player_id)
     ).strip()
 
+    overall = rating_text(
+        rating.get("overall_rating")
+    )
+
+    asset_class = compact_asset_label(
+        market.get("recommendation_asset_class_v3")
+    )
+
     salary = money(
         trade.get("trade_salary_2026_27")
     )
 
-    return f"{name} | {salary}"
+    parts = [
+        name,
+        f"{overall} OVR",
+    ]
+
+    if asset_class:
+        parts.append(asset_class)
+
+    parts.append(salary)
+
+    return " | ".join(parts)
 
 
-def pick_label(runtime: RuntimeData, pick_right_id: str) -> str:
+
+def compact_pick_years(record: dict[str, Any]) -> str:
+    def year_text(value: Any) -> str:
+        try:
+            return str(int(float(value)))
+        except (TypeError, ValueError):
+            return ""
+
+    first = year_text(record.get("draft_year_min"))
+    last = year_text(record.get("draft_year_max"))
+
+    if first and last and first != last:
+        return f"{first}-{last}"
+
+    return first or last or "Future"
+
+
+def compact_pick_rounds(value: Any) -> str:
+    text = str(value or "").strip()
+
+    if text in {"1", "1.0"}:
+        return "R1"
+
+    if text in {"2", "2.0"}:
+        return "R2"
+
+    if text in {"1|2", "1.0|2.0", "2|1"}:
+        return "R1/R2"
+
+    return text.replace("|", "/") or "Pick"
+
+
+def compact_pick_structure(value: Any) -> str:
+    text = str(value or "").strip().lower()
+
+    labels = {
+        "direct_owned_pick": "Direct",
+        "joint_component_candidate_right": "Component",
+        "retained_or_fallback_right": "Retained/Fallback",
+        "protected_or_conditional_pick": "Protected",
+        "linked_rollover_right": "Rollover",
+        "swap_option_value_right": "Swap",
+        "integrated_pool_candidate_right": "Pool",
+        "composite_candidate_right": "Composite",
+    }
+
+    if not text or text in {"nan", "none"}:
+        return "Draft Right"
+
+    return labels.get(
+        text,
+        text.replace("_", " ").title(),
+    )
+
+
+def compact_originating_teams(value: Any) -> str:
+    text = str(value or "").strip()
+
+    if not text or text.lower() in {"nan", "none"}:
+        return ""
+
+    return text.replace("|", "/")
+
+
+def pick_label(
+    runtime: RuntimeData,
+    pick_right_id: str,
+) -> str:
     record = runtime.pick_by_id.get(pick_right_id, {})
-    display_name = str(
-        record.get("right_display_name", pick_right_id)
-    ).strip()
-    value = safe_float(record.get("candidate_right_value_score"))
 
-    value_text = f" | Value {value:.1f}" if value is not None else ""
-    return f"{display_name}{value_text}"
+    years = compact_pick_years(record)
+    rounds = compact_pick_rounds(
+        record.get("round_numbers")
+    )
+    structure = compact_pick_structure(
+        record.get("right_structure")
+    )
+    origins = compact_originating_teams(
+        record.get("originating_teams")
+    )
+    value = safe_float(
+        record.get("candidate_right_value_score")
+    )
+
+    parts = [
+        f"{years} {rounds}",
+        structure,
+    ]
+
+    if origins:
+        parts.append(origins)
+
+    if value is not None:
+        parts.append(f"V{value:.1f}")
+
+    return " | ".join(parts)
+
 
 
 def team_players(runtime: RuntimeData, team: str) -> list[str]:
