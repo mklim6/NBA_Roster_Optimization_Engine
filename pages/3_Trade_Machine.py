@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,8 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
+APP_DATA = ROOT / "app_data"
+VISUAL_ASSETS_PATH = APP_DATA / "mixed_trade_visual_assets_2026_27_v1.json"
 
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -546,105 +550,1226 @@ def render_side_summary(
         )
 
 
-runtime = get_runtime()
-teams = sorted(runtime.team_salary_by_team)
 
-st.title("Freeform Two-Team Trade Machine")
-st.caption(
-    "Construct a custom player-and-pick trade using the validated 2026-27 "
-    "runtime data. V2.2 evaluates roster identity, player restrictions, verified "
-    "team salary, salary-matching routes, aggregation, roster limits, and "
-    "hard-cap rules. Complete draft-right validation remains conservative."
-)
+TEAM_COLORS = {
+    "ATL": ("#E03A3E", "#C1D32F"),
+    "BOS": ("#007A33", "#BA9653"),
+    "BKN": ("#FFFFFF", "#6B7280"),
+    "CHA": ("#1D1160", "#00788C"),
+    "CHI": ("#CE1141", "#0B0F17"),
+    "CLE": ("#860038", "#FDBB30"),
+    "DAL": ("#00538C", "#B8C4CA"),
+    "DEN": ("#0E2240", "#FEC524"),
+    "DET": ("#C8102E", "#1D42BA"),
+    "GSW": ("#1D428A", "#FFC72C"),
+    "HOU": ("#CE1141", "#C4CED4"),
+    "IND": ("#002D62", "#FDBB30"),
+    "LAC": ("#C8102E", "#1D428A"),
+    "LAL": ("#552583", "#FDB927"),
+    "MEM": ("#5D76A9", "#12173F"),
+    "MIA": ("#98002E", "#F9A01B"),
+    "MIL": ("#00471B", "#EEE1C6"),
+    "MIN": ("#0C2340", "#78BE20"),
+    "NOP": ("#0C2340", "#C8102E"),
+    "NYK": ("#006BB6", "#F58426"),
+    "OKC": ("#007AC1", "#EF3B24"),
+    "ORL": ("#0077C0", "#C4CED4"),
+    "PHI": ("#006BB6", "#ED174C"),
+    "PHX": ("#1D1160", "#E56020"),
+    "POR": ("#E03A3E", "#000000"),
+    "SAC": ("#5A2D81", "#63727A"),
+    "SAS": ("#C4CED4", "#111827"),
+    "TOR": ("#CE1141", "#000000"),
+    "UTA": ("#002B5C", "#F9A01B"),
+    "WAS": ("#002B5C", "#E31837"),
+}
 
-with st.expander("What each result means", expanded=False):
+
+@st.cache_data(show_spinner=False)
+def get_visual_assets() -> dict[str, Any]:
+    if not VISUAL_ASSETS_PATH.exists():
+        return {"teams": {}, "players": {}}
+
+    try:
+        payload = json.loads(
+            VISUAL_ASSETS_PATH.read_text(encoding="utf-8-sig")
+        )
+    except (OSError, json.JSONDecodeError):
+        return {"teams": {}, "players": {}}
+
+    return payload if isinstance(payload, dict) else {"teams": {}, "players": {}}
+
+
+def escaped(value: Any) -> str:
+    return html.escape("" if value is None else str(value))
+
+
+def team_logo_url(
+    visual_assets: dict[str, Any],
+    team: str,
+) -> str:
+    return str(
+        visual_assets
+        .get("teams", {})
+        .get(team, {})
+        .get("logo_url", "")
+    ).strip()
+
+
+def player_headshot_url(player_id: str) -> str:
+    cleaned = str(player_id).strip()
+    if not cleaned.isdigit():
+        return ""
+
+    return (
+        "https://cdn.nba.com/headshots/nba/latest/"
+        f"260x190/{cleaned}.png"
+    )
+
+
+def team_palette(team: str) -> tuple[str, str]:
+    return TEAM_COLORS.get(team, ("#38BDF8", "#A78BFA"))
+
+
+def standalone_pick_count(runtime: RuntimeData) -> int:
+    column = runtime.picks.get("standalone_trade_asset_flag")
+    if column is None:
+        return 0
+
+    return int(
+        column.astype(str)
+        .str.strip()
+        .str.lower()
+        .isin({"true", "1", "yes"})
+        .sum()
+    )
+
+
+def selected_outgoing_salary(
+    runtime: RuntimeData,
+    player_ids: list[str],
+) -> float:
+    total = 0.0
+
+    for player_id in player_ids:
+        record = runtime.trade_by_id.get(player_id, {})
+        amount = safe_float(record.get("trade_salary_2026_27"))
+        if amount is not None:
+            total += amount
+
+    return total
+
+
+def inject_trade_machine_styles() -> None:
     st.markdown(
         """
-        **PASS** means the currently connected evidence stage found no issue.
-        **BLOCKED** means a deterministic rule failed, such as roster ownership,
-        trade eligibility, or an active aggregation restriction.
-        **MANUAL REVIEW** means the trade may still be workable, but it contains
-        unresolved player consent, contract mechanics, team evidence, or draft-right rules.
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+    --tm-bg: #070b13;
+    --tm-panel: rgba(15, 23, 42, 0.76);
+    --tm-panel-strong: rgba(17, 25, 40, 0.94);
+    --tm-border: rgba(148, 163, 184, 0.18);
+    --tm-text: #f8fafc;
+    --tm-muted: #94a3b8;
+    --tm-cyan: #38bdf8;
+    --tm-violet: #8b5cf6;
+}
+
+html, body, [class*="css"] {
+    font-family: "Inter", sans-serif;
+}
+
+.stApp {
+    background:
+        radial-gradient(circle at 18% 0%, rgba(56, 189, 248, 0.10), transparent 32%),
+        radial-gradient(circle at 82% 8%, rgba(139, 92, 246, 0.11), transparent 30%),
+        linear-gradient(180deg, #080c15 0%, #070a11 100%);
+}
+
+[data-testid="stMainBlockContainer"] {
+    max-width: 1480px;
+    padding-top: 2rem;
+    padding-bottom: 5rem;
+}
+
+h1, h2, h3, .tm-display {
+    font-family: "Barlow Condensed", sans-serif !important;
+    letter-spacing: 0.01em;
+}
+
+[data-testid="stVerticalBlockBorderWrapper"] {
+    border: 1px solid var(--tm-border) !important;
+    border-radius: 22px !important;
+    background:
+        linear-gradient(145deg, rgba(19, 29, 48, 0.92), rgba(10, 15, 26, 0.92)) !important;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
+    overflow: hidden;
+}
+
+div[data-baseweb="select"] > div {
+    background: rgba(10, 15, 26, 0.92) !important;
+    border-color: rgba(148, 163, 184, 0.22) !important;
+    border-radius: 12px !important;
+    min-height: 48px;
+}
+
+div[data-baseweb="select"] span {
+    font-weight: 600;
+}
+
+.stButton > button[kind="primary"] {
+    min-height: 54px;
+    border: 0;
+    border-radius: 14px;
+    background: linear-gradient(100deg, #0ea5e9 0%, #6366f1 52%, #8b5cf6 100%);
+    color: white;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    box-shadow: 0 12px 30px rgba(79, 70, 229, 0.28);
+}
+
+.stButton > button[kind="primary"]:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 16px 36px rgba(79, 70, 229, 0.36);
+}
+
+.stButton > button[kind="secondary"] {
+    min-height: 54px;
+    border-radius: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: rgba(15, 23, 42, 0.72);
+    color: #cbd5e1;
+    font-weight: 700;
+}
+
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 8px;
+}
+
+[data-testid="stTabs"] button[role="tab"] {
+    border-radius: 999px;
+    padding: 0.35rem 1rem;
+    font-weight: 700;
+}
+
+.tm-hero {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgba(125, 211, 252, 0.20);
+    border-radius: 28px;
+    padding: 30px 32px 26px;
+    margin-bottom: 20px;
+    background:
+        linear-gradient(120deg, rgba(14, 165, 233, 0.14), rgba(99, 102, 241, 0.11) 46%, rgba(139, 92, 246, 0.15)),
+        rgba(8, 13, 24, 0.92);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.30);
+}
+
+.tm-hero::after {
+    content: "";
+    position: absolute;
+    width: 380px;
+    height: 380px;
+    right: -160px;
+    top: -210px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(56, 189, 248, 0.30), transparent 68%);
+}
+
+.tm-eyebrow {
+    color: #7dd3fc;
+    font-size: 0.76rem;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+.tm-title {
+    margin: 6px 0 6px;
+    color: #f8fafc;
+    font-family: "Barlow Condensed", sans-serif;
+    font-size: clamp(2.8rem, 5vw, 5.1rem);
+    line-height: 0.90;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    text-transform: uppercase;
+}
+
+.tm-subtitle {
+    max-width: 900px;
+    color: #b9c4d4;
+    font-size: 1rem;
+    line-height: 1.65;
+}
+
+.tm-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 22px;
+}
+
+.tm-stat {
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 16px;
+    padding: 13px 15px;
+    background: rgba(5, 10, 18, 0.48);
+}
+
+.tm-stat-value {
+    color: #ffffff;
+    font-family: "Barlow Condensed", sans-serif;
+    font-size: 1.75rem;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.tm-stat-label {
+    margin-top: 5px;
+    color: #8fa0b7;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+}
+
+.tm-section-kicker {
+    margin: 18px 0 8px;
+    color: #7dd3fc;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+}
+
+.tm-team-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin: 4px 0 15px;
+    padding: 16px;
+    border: 1px solid color-mix(in srgb, var(--team-primary) 45%, transparent);
+    border-radius: 18px;
+    background:
+        linear-gradient(110deg, color-mix(in srgb, var(--team-primary) 22%, transparent), transparent 58%),
+        rgba(7, 12, 22, 0.70);
+    overflow: hidden;
+}
+
+.tm-team-header::after {
+    content: "";
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: 5px;
+    background: linear-gradient(180deg, var(--team-primary), var(--team-secondary));
+}
+
+.tm-team-logo {
+    width: 70px;
+    height: 70px;
+    object-fit: contain;
+    filter: drop-shadow(0 8px 14px rgba(0,0,0,0.35));
+}
+
+.tm-team-side {
+    color: #94a3b8;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.tm-team-name {
+    color: #f8fafc;
+    font-family: "Barlow Condensed", sans-serif;
+    font-size: 1.75rem;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.tm-team-meta {
+    margin-top: 5px;
+    color: #a8b3c4;
+    font-size: 0.78rem;
+}
+
+.tm-asset-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 9px;
+    margin: 12px 0 4px;
+}
+
+.tm-mini-stat {
+    padding: 10px 11px;
+    border: 1px solid rgba(148, 163, 184, 0.13);
+    border-radius: 12px;
+    background: rgba(5, 10, 18, 0.48);
+}
+
+.tm-mini-stat strong {
+    display: block;
+    color: #f8fafc;
+    font-size: 0.98rem;
+}
+
+.tm-mini-stat span {
+    color: #7f8da3;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.tm-asset-stack {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.tm-player-card, .tm-pick-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 68px;
+    padding: 9px 11px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 14px;
+    background: rgba(8, 13, 23, 0.68);
+}
+
+.tm-player-card img {
+    width: 58px;
+    height: 50px;
+    object-fit: cover;
+    object-position: top center;
+    border-radius: 10px;
+    background: rgba(148, 163, 184, 0.10);
+}
+
+.tm-player-name, .tm-pick-name {
+    color: #f8fafc;
+    font-weight: 750;
+    font-size: 0.90rem;
+}
+
+.tm-player-meta, .tm-pick-meta {
+    margin-top: 3px;
+    color: #8fa0b7;
+    font-size: 0.72rem;
+}
+
+.tm-pick-icon {
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    color: #dbeafe;
+    background: linear-gradient(135deg, rgba(14,165,233,0.24), rgba(139,92,246,0.28));
+    font-family: "Barlow Condensed", sans-serif;
+    font-size: 0.82rem;
+    font-weight: 800;
+}
+
+.tm-empty {
+    margin-top: 12px;
+    padding: 17px;
+    border: 1px dashed rgba(148, 163, 184, 0.20);
+    border-radius: 14px;
+    color: #728197;
+    text-align: center;
+    font-size: 0.80rem;
+}
+
+.tm-trade-rail {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    margin: 18px 0 10px;
+    color: #8291a7;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.tm-trade-rail::before,
+.tm-trade-rail::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(125,211,252,0.42), transparent);
+}
+
+.tm-swap-orb {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border: 1px solid rgba(125,211,252,0.30);
+    border-radius: 50%;
+    color: #7dd3fc;
+    background: rgba(14,165,233,0.10);
+    font-size: 1.1rem;
+}
+
+.tm-verdict {
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 18px;
+    align-items: center;
+    padding: 22px 24px;
+    margin: 12px 0 18px;
+    border: 1px solid color-mix(in srgb, var(--status-color) 52%, transparent);
+    border-radius: 22px;
+    background:
+        linear-gradient(110deg, color-mix(in srgb, var(--status-color) 18%, transparent), transparent 62%),
+        rgba(8, 13, 23, 0.91);
+    box-shadow: 0 18px 48px rgba(0,0,0,0.24);
+}
+
+.tm-verdict-icon {
+    display: grid;
+    place-items: center;
+    width: 68px;
+    height: 68px;
+    border-radius: 18px;
+    color: white;
+    background: var(--status-color);
+    font-family: "Barlow Condensed", sans-serif;
+    font-size: 2rem;
+    font-weight: 800;
+}
+
+.tm-verdict-label {
+    color: var(--status-color);
+    font-size: 0.72rem;
+    font-weight: 900;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+}
+
+.tm-verdict-title {
+    margin-top: 2px;
+    color: #f8fafc;
+    font-family: "Barlow Condensed", sans-serif;
+    font-size: 2rem;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.tm-verdict-copy {
+    margin-top: 7px;
+    color: #aeb9c9;
+    font-size: 0.84rem;
+    line-height: 1.55;
+}
+
+.tm-result-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.tm-result-header img {
+    width: 52px;
+    height: 52px;
+    object-fit: contain;
+}
+
+.tm-result-name {
+    color: #f8fafc;
+    font-family: "Barlow Condensed", sans-serif;
+    font-size: 1.55rem;
+    font-weight: 800;
+}
+
+.tm-result-status {
+    color: var(--status-color);
+    font-size: 0.70rem;
+    font-weight: 850;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.tm-salary-card {
+    margin: 12px 0 15px;
+    padding: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 15px;
+    background: rgba(5, 10, 18, 0.52);
+}
+
+.tm-salary-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.tm-salary-title {
+    color: #dbe5f3;
+    font-weight: 750;
+    font-size: 0.82rem;
+}
+
+.tm-salary-route {
+    color: #7dd3fc;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.tm-salary-bar {
+    position: relative;
+    height: 10px;
+    margin: 12px 0 8px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.14);
+    overflow: hidden;
+}
+
+.tm-salary-fill {
+    height: 100%;
+    width: var(--bar-width);
+    border-radius: inherit;
+    background: var(--bar-color);
+}
+
+.tm-salary-values {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    color: #7f8da3;
+    font-size: 0.70rem;
+}
+
+.tm-salary-margin {
+    margin-top: 7px;
+    color: var(--bar-color);
+    font-size: 0.78rem;
+    font-weight: 800;
+}
+
+.tm-audit-card {
+    position: relative;
+    display: grid;
+    grid-template-columns: 34px 1fr auto;
+    gap: 11px;
+    align-items: start;
+    margin: 8px 0;
+    padding: 13px 14px;
+    border: 1px solid color-mix(in srgb, var(--audit-color) 36%, transparent);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--audit-color) 9%, rgba(8,13,23,0.76));
+}
+
+.tm-audit-icon {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    color: white;
+    background: var(--audit-color);
+    font-weight: 900;
+}
+
+.tm-audit-title {
+    color: #eef2f7;
+    font-weight: 780;
+    font-size: 0.84rem;
+}
+
+.tm-audit-message {
+    margin-top: 4px;
+    color: #9daabc;
+    font-size: 0.75rem;
+    line-height: 1.48;
+}
+
+.tm-audit-badge {
+    color: var(--audit-color);
+    font-size: 0.62rem;
+    font-weight: 900;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+}
+
+@media (max-width: 900px) {
+    .tm-stat-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .tm-hero {
+        padding: 24px 20px;
+    }
+
+    .tm-title {
+        font-size: 3rem;
+    }
+
+    .tm-verdict {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_hero(runtime: RuntimeData) -> None:
+    stats = [
+        (len(runtime.trade_pool), "Trade-pool players"),
+        (len(runtime.player_cba), "Player CBA decisions"),
+        (standalone_pick_count(runtime), "Standalone draft rights"),
+        (len(runtime.stepien), "Stepien team-years"),
+    ]
+
+    cards = "".join(
+        f"""
+<div class="tm-stat">
+  <div class="tm-stat-value">{value:,}</div>
+  <div class="tm-stat-label">{escaped(label)}</div>
+</div>
+"""
+        for value, label in stats
+    )
+
+    st.markdown(
+        f"""
+<div class="tm-hero">
+  <div class="tm-eyebrow">V3 legality engine · 2026-27 transaction lab</div>
+  <div class="tm-title">NBA Trade Command Center</div>
+  <div class="tm-subtitle">
+    Build a two-team player-and-pick package, then run it through verified
+    salary matching, roster and apron rules, player-CBA evidence, draft-right
+    ownership, frozen-pick screening, and package-level Stepien analysis.
+  </div>
+  <div class="tm-stat-grid">{cards}</div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_team_header(
+    visual_assets: dict[str, Any],
+    runtime: RuntimeData,
+    team: str,
+    side_label: str,
+) -> None:
+    primary, secondary = team_palette(team)
+    logo = team_logo_url(visual_assets, team)
+    logo_html = (
+        f'<img class="tm-team-logo" src="{escaped(logo)}" '
+        f'alt="{escaped(team_label(team))} logo">'
+        if logo
+        else ""
+    )
+    available_players = len(team_players(runtime, team))
+    available_picks = len(team_picks(runtime, team))
+
+    st.markdown(
+        f"""
+<div class="tm-team-header"
+     style="--team-primary:{primary};--team-secondary:{secondary};">
+  {logo_html}
+  <div>
+    <div class="tm-team-side">{escaped(side_label)}</div>
+    <div class="tm-team-name">{escaped(TEAM_NAMES.get(team, team))}</div>
+    <div class="tm-team-meta">
+      {team} · {available_players} eligible players ·
+      {available_picks} standalone rights
+    </div>
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_asset_preview(
+    runtime: RuntimeData,
+    player_ids: list[str],
+    pick_right_ids: list[str],
+) -> None:
+    salary = selected_outgoing_salary(runtime, player_ids)
+
+    st.markdown(
+        f"""
+<div class="tm-asset-summary">
+  <div class="tm-mini-stat">
+    <strong>{len(player_ids)}</strong><span>Players</span>
+  </div>
+  <div class="tm-mini-stat">
+    <strong>{len(pick_right_ids)}</strong><span>Draft rights</span>
+  </div>
+  <div class="tm-mini-stat">
+    <strong>{escaped(money(salary))}</strong><span>Listed salary</span>
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    cards: list[str] = []
+
+    for player_id in player_ids:
+        trade = runtime.trade_by_id.get(player_id, {})
+        rating = runtime.ratings_by_id.get(player_id, {})
+        market = runtime.market_by_id.get(player_id, {})
+        name = str(trade.get("player_name", player_id)).strip()
+        headshot = player_headshot_url(player_id)
+        image = (
+            f'<img src="{escaped(headshot)}" alt="{escaped(name)}" '
+            'onerror="this.style.visibility=\'hidden\'">'
+            if headshot
+            else ""
+        )
+        cards.append(
+            f"""
+<div class="tm-player-card">
+  {image}
+  <div>
+    <div class="tm-player-name">{escaped(name)}</div>
+    <div class="tm-player-meta">
+      {escaped(rating_text(rating.get("overall_rating")))} OVR ·
+      {escaped(money(trade.get("trade_salary_2026_27")))} ·
+      {escaped(compact_asset_label(
+          market.get("recommendation_asset_class_v3")
+      ) or "Unclassified")}
+    </div>
+  </div>
+</div>
+"""
+        )
+
+    for pick_right_id in pick_right_ids:
+        record = runtime.pick_by_id.get(pick_right_id, {})
+        display_name = str(
+            record.get("right_display_name", pick_right_id)
+        ).strip()
+        cards.append(
+            f"""
+<div class="tm-pick-card">
+  <div class="tm-pick-icon">PICK</div>
+  <div>
+    <div class="tm-pick-name">
+      {escaped(compact_pick_years(record))}
+      {escaped(compact_pick_rounds(record.get("round_numbers")))}
+    </div>
+    <div class="tm-pick-meta">
+      {escaped(compact_pick_structure(record.get("right_structure")))} ·
+      {escaped(display_name)}
+    </div>
+  </div>
+</div>
+"""
+        )
+
+    if cards:
+        st.markdown(
+            '<div class="tm-asset-stack">'
+            + "".join(cards)
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div class="tm-empty">'
+            "No outgoing assets selected yet."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+
+def render_trade_rail() -> None:
+    st.markdown(
+        """
+<div class="tm-trade-rail">
+  <span>Sending assets</span>
+  <div class="tm-swap-orb">⇄</div>
+  <span>Receiving assets</span>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def first_relevant_check(result: Any) -> CheckResult | None:
+    ordered = [
+        *result.checks,
+        *result.side_a.checks,
+        *result.side_b.checks,
+    ]
+
+    for target in [Status.BLOCKED, Status.MANUAL_REVIEW]:
+        for check in ordered:
+            if check.status == target:
+                return check
+
+    return ordered[0] if ordered else None
+
+
+def verdict_copy(result: Any) -> str:
+    check = first_relevant_check(result)
+
+    if result.status == Status.PASS:
+        return (
+            "Both teams clear the connected V3 player, salary, roster, "
+            "draft-right, frozen-pick, and Stepien checks."
+        )
+
+    if check is not None:
+        return check.message
+
+    if result.status == Status.MANUAL_REVIEW:
+        return "The package requires unresolved evidence or contract review."
+
+    return "At least one deterministic legality rule blocks the package."
+
+
+def render_status_banner(
+    status: Status,
+    title: str,
+    copy: str | None = None,
+) -> None:
+    color = STATUS_COLORS[status]
+    label = STATUS_LABELS[status]
+    icon = {
+        Status.PASS: "✓",
+        Status.MANUAL_REVIEW: "!",
+        Status.BLOCKED: "×",
+    }[status]
+
+    st.markdown(
+        f"""
+<div class="tm-verdict" style="--status-color:{color};">
+  <div class="tm-verdict-icon">{icon}</div>
+  <div>
+    <div class="tm-verdict-label">{escaped(label)}</div>
+    <div class="tm-verdict-title">{escaped(title)}</div>
+    <div class="tm-verdict-copy">{escaped(copy or "")}</div>
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_check(check: CheckResult) -> None:
+    color = STATUS_COLORS[check.status]
+    label = STATUS_LABELS[check.status]
+    icon = {
+        Status.PASS: "✓",
+        Status.MANUAL_REVIEW: "!",
+        Status.BLOCKED: "×",
+    }[check.status]
+    title = check.code.replace("_", " ").title()
+
+    st.markdown(
+        f"""
+<div class="tm-audit-card" style="--audit-color:{color};">
+  <div class="tm-audit-icon">{icon}</div>
+  <div>
+    <div class="tm-audit-title">{escaped(title)}</div>
+    <div class="tm-audit-message">{escaped(check.message)}</div>
+  </div>
+  <div class="tm-audit-badge">{escaped(label)}</div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_salary_meter(side: Any, team: str) -> None:
+    incoming = safe_float(side.incoming_salary_for_matching)
+    maximum = safe_float(side.salary_matching_max_incoming)
+    margin = safe_float(side.salary_matching_margin)
+    route = str(side.salary_matching_route or "not evaluated")
+    passed = side.salary_matching_passed is True
+
+    if incoming is None or maximum is None or maximum <= 0:
+        st.markdown(
+            '<div class="tm-empty">'
+            "Salary route was not deterministically evaluated."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    ratio = max(0.0, incoming / maximum)
+    width = min(100.0, ratio * 100.0)
+    color = "#22c55e" if passed else "#ef4444"
+
+    if margin is None:
+        margin_text = "Margin unavailable"
+    elif margin >= 0:
+        margin_text = f"{money(margin)} remaining"
+    else:
+        margin_text = f"{money(abs(margin))} over the limit"
+
+    st.markdown(
+        f"""
+<div class="tm-salary-card">
+  <div class="tm-salary-top">
+    <div class="tm-salary-title">{escaped(team)} salary match</div>
+    <div class="tm-salary-route">{escaped(route.replace("_", " "))}</div>
+  </div>
+  <div class="tm-salary-bar">
+    <div class="tm-salary-fill"
+         style="--bar-width:{width:.1f}%;--bar-color:{color};"></div>
+  </div>
+  <div class="tm-salary-values">
+    <span>Incoming {escaped(money(incoming))}</span>
+    <span>Maximum {escaped(money(maximum))}</span>
+  </div>
+  <div class="tm-salary-margin" style="--bar-color:{color};">
+    {escaped(margin_text)}
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_result_header(
+    visual_assets: dict[str, Any],
+    team: str,
+    status: Status,
+) -> None:
+    logo = team_logo_url(visual_assets, team)
+    logo_html = (
+        f'<img src="{escaped(logo)}" alt="{escaped(team)} logo">'
+        if logo
+        else ""
+    )
+    color = STATUS_COLORS[status]
+
+    st.markdown(
+        f"""
+<div class="tm-result-header" style="--status-color:{color};">
+  {logo_html}
+  <div>
+    <div class="tm-result-name">{escaped(team_label(team))}</div>
+    <div class="tm-result-status">{escaped(STATUS_LABELS[status])}</div>
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_side_summary(
+    visual_assets: dict[str, Any],
+    runtime: RuntimeData,
+    team: str,
+    player_ids: list[str],
+    pick_right_ids: list[str],
+    side: Any,
+) -> None:
+    render_result_header(
+        visual_assets,
+        team,
+        side.status,
+    )
+
+    metrics = st.columns(3)
+    metrics[0].metric("Players sent", len(player_ids))
+    metrics[1].metric("Draft rights", len(pick_right_ids))
+    metrics[2].metric("Outgoing salary", money(side.outgoing_salary))
+
+    render_salary_meter(side, team)
+
+    if player_ids:
+        st.markdown("**Outgoing players**")
+        st.dataframe(
+            selected_player_rows(runtime, player_ids),
+            hide_index=True,
+            width="stretch",
+        )
+
+    if pick_right_ids:
+        st.markdown("**Outgoing draft rights**")
+        st.dataframe(
+            selected_pick_rows(runtime, pick_right_ids),
+            hide_index=True,
+            width="stretch",
+        )
+
+
+def clear_trade_state() -> None:
+    removable = [
+        key
+        for key in list(st.session_state)
+        if (
+            key.startswith("trade_machine_players_")
+            or key.startswith("trade_machine_picks_")
+            or key in {
+                "trade_machine_last_result",
+                "trade_machine_last_selection",
+            }
+        )
+    ]
+
+    for key in removable:
+        del st.session_state[key]
+
+
+runtime = get_runtime()
+visual_assets = get_visual_assets()
+teams = sorted(runtime.team_salary_by_team)
+
+inject_trade_machine_styles()
+render_hero(runtime)
+
+with st.expander("How the V3 verdict works", expanded=False):
+    st.markdown(
+        """
+        **PASS** means the package cleared every connected deterministic stage.
+        **BLOCKED** means at least one verified rule failed.
+        **MANUAL REVIEW** means the package may be workable, but unresolved
+        consent, contract mechanics, team evidence, or right-specific evidence
+        prevents a deterministic release.
+
+        V3 includes player-CBA evidence, verified team salary routes, roster and
+        apron tests, right-legality evidence, frozen-pick screening, and combined
+        package-level Stepien analysis.
         """
     )
 
-team_columns = st.columns(2)
-
-with team_columns[0]:
-    team_a = st.selectbox(
-        "Team A",
-        teams,
-        index=teams.index("CHI") if "CHI" in teams else 0,
-        format_func=team_label,
-        key="trade_machine_team_a",
-    )
-
-with team_columns[1]:
-    default_b = "DET" if "DET" in teams else teams[1]
-    team_b = st.selectbox(
-        "Team B",
-        teams,
-        index=teams.index(default_b),
-        format_func=team_label,
-        key="trade_machine_team_b",
-    )
-
-if team_a == team_b:
-    st.error("Choose two different teams before evaluating the trade.")
+st.markdown(
+    '<div class="tm-section-kicker">01 · Build the package</div>',
+    unsafe_allow_html=True,
+)
 
 side_columns = st.columns(2, gap="large")
 
 with side_columns[0]:
-    st.markdown(f"### {team_label(team_a)} sends")
-    team_a_player_options = team_players(runtime, team_a)
-    team_a_pick_options = team_picks(runtime, team_a)
-
-    team_a_players = st.multiselect(
-        "Players from Team A",
-        team_a_player_options,
-        format_func=lambda player_id: player_label(
+    with st.container(border=True):
+        team_a = st.selectbox(
+            "Team A franchise",
+            teams,
+            index=teams.index("CHI") if "CHI" in teams else 0,
+            format_func=team_label,
+            key="trade_machine_team_a",
+        )
+        render_team_header(
+            visual_assets,
             runtime,
-            player_id,
-        ),
-        key=f"trade_machine_players_{team_a}",
-    )
+            team_a,
+            "Team A · Sending assets",
+        )
 
-    team_a_picks = st.multiselect(
-        "Draft rights from Team A",
-        team_a_pick_options,
-        format_func=lambda pick_id: pick_label(runtime, pick_id),
-        key=f"trade_machine_picks_{team_a}",
-    )
+        team_a_player_options = team_players(runtime, team_a)
+        team_a_pick_options = team_picks(runtime, team_a)
+
+        team_a_players = st.multiselect(
+            "Outgoing players",
+            team_a_player_options,
+            format_func=lambda player_id: player_label(
+                runtime,
+                player_id,
+            ),
+            key=f"trade_machine_players_{team_a}",
+            placeholder="Search the roster",
+        )
+
+        team_a_picks = st.multiselect(
+            "Outgoing draft rights",
+            team_a_pick_options,
+            format_func=lambda pick_id: pick_label(
+                runtime,
+                pick_id,
+            ),
+            key=f"trade_machine_picks_{team_a}",
+            placeholder="Add a future draft right",
+        )
+
+        render_asset_preview(
+            runtime,
+            team_a_players,
+            team_a_picks,
+        )
 
 with side_columns[1]:
-    st.markdown(f"### {team_label(team_b)} sends")
-    team_b_player_options = team_players(runtime, team_b)
-    team_b_pick_options = team_picks(runtime, team_b)
-
-    team_b_players = st.multiselect(
-        "Players from Team B",
-        team_b_player_options,
-        format_func=lambda player_id: player_label(
+    with st.container(border=True):
+        default_b = "DET" if "DET" in teams else teams[1]
+        team_b = st.selectbox(
+            "Team B franchise",
+            teams,
+            index=teams.index(default_b),
+            format_func=team_label,
+            key="trade_machine_team_b",
+        )
+        render_team_header(
+            visual_assets,
             runtime,
-            player_id,
-        ),
-        key=f"trade_machine_players_{team_b}",
+            team_b,
+            "Team B · Sending assets",
+        )
+
+        team_b_player_options = team_players(runtime, team_b)
+        team_b_pick_options = team_picks(runtime, team_b)
+
+        team_b_players = st.multiselect(
+            "Outgoing players",
+            team_b_player_options,
+            format_func=lambda player_id: player_label(
+                runtime,
+                player_id,
+            ),
+            key=f"trade_machine_players_{team_b}",
+            placeholder="Search the roster",
+        )
+
+        team_b_picks = st.multiselect(
+            "Outgoing draft rights",
+            team_b_pick_options,
+            format_func=lambda pick_id: pick_label(
+                runtime,
+                pick_id,
+            ),
+            key=f"trade_machine_picks_{team_b}",
+            placeholder="Add a future draft right",
+        )
+
+        render_asset_preview(
+            runtime,
+            team_b_players,
+            team_b_picks,
+        )
+
+if team_a == team_b:
+    st.error("Choose two different franchises before running the audit.")
+
+render_trade_rail()
+
+action_columns = st.columns([4.5, 1.1], gap="small")
+with action_columns[0]:
+    evaluate_clicked = st.button(
+        "Run V3 trade audit",
+        type="primary",
+        width="stretch",
     )
 
-    team_b_picks = st.multiselect(
-        "Draft rights from Team B",
-        team_b_pick_options,
-        format_func=lambda pick_id: pick_label(runtime, pick_id),
-        key=f"trade_machine_picks_{team_b}",
+with action_columns[1]:
+    st.button(
+        "Clear",
+        type="secondary",
+        width="stretch",
+        on_click=clear_trade_state,
     )
-
-st.divider()
-
-evaluate_clicked = st.button(
-    "Evaluate trade",
-    type="primary",
-    width="stretch",
-)
 
 if evaluate_clicked:
     side_a_has_assets = bool(team_a_players or team_a_picks)
@@ -686,64 +1811,77 @@ result = st.session_state.get("trade_machine_last_result")
 selection = st.session_state.get("trade_machine_last_selection")
 
 if result is not None and selection is not None:
-    st.divider()
+    st.markdown(
+        '<div class="tm-section-kicker">02 · Trade verdict</div>',
+        unsafe_allow_html=True,
+    )
     render_status_banner(
         result.status,
         "Overall transaction result",
+        verdict_copy(result),
     )
 
-    summary_columns = st.columns(2, gap="large")
+    overview_tab, audit_tab = st.tabs(
+        ["Trade overview", "Legality audit"]
+    )
 
-    with summary_columns[0]:
-        render_side_summary(
-            runtime=runtime,
-            side_name="Team A",
-            team=selection["team_a"],
-            player_ids=selection["team_a_players"],
-            pick_right_ids=selection["team_a_picks"],
-            outgoing_salary=result.side_a.outgoing_salary,
-            status=result.side_a.status,
-        )
+    with overview_tab:
+        summary_columns = st.columns(2, gap="large")
 
-    with summary_columns[1]:
-        render_side_summary(
-            runtime=runtime,
-            side_name="Team B",
-            team=selection["team_b"],
-            player_ids=selection["team_b_players"],
-            pick_right_ids=selection["team_b_picks"],
-            outgoing_salary=result.side_b.outgoing_salary,
-            status=result.side_b.status,
-        )
+        with summary_columns[0]:
+            with st.container(border=True):
+                render_side_summary(
+                    visual_assets=visual_assets,
+                    runtime=runtime,
+                    team=selection["team_a"],
+                    player_ids=selection["team_a_players"],
+                    pick_right_ids=selection["team_a_picks"],
+                    side=result.side_a,
+                )
 
-    st.subheader("Legality checks")
+        with summary_columns[1]:
+            with st.container(border=True):
+                render_side_summary(
+                    visual_assets=visual_assets,
+                    runtime=runtime,
+                    team=selection["team_b"],
+                    player_ids=selection["team_b_players"],
+                    pick_right_ids=selection["team_b_picks"],
+                    side=result.side_b,
+                )
 
-    if result.checks:
-        st.markdown("**Transaction-wide checks**")
-        for check in result.checks:
-            render_check(check)
+    with audit_tab:
+        if result.checks:
+            st.markdown("#### Transaction-wide checks")
+            for check in result.checks:
+                render_check(check)
 
-    check_columns = st.columns(2, gap="large")
+        check_columns = st.columns(2, gap="large")
 
-    with check_columns[0]:
-        st.markdown(f"**{selection['team_a']} checks**")
-        for check in result.side_a.checks:
-            render_check(check)
+        with check_columns[0]:
+            st.markdown(
+                f"#### {escaped(selection['team_a'])} audit"
+            )
+            for check in result.side_a.checks:
+                render_check(check)
 
-    with check_columns[1]:
-        st.markdown(f"**{selection['team_b']} checks**")
-        for check in result.side_b.checks:
-            render_check(check)
+        with check_columns[1]:
+            st.markdown(
+                f"#### {escaped(selection['team_b'])} audit"
+            )
+            for check in result.side_b.checks:
+                render_check(check)
 
-    with st.expander("Remaining limitations", expanded=True):
-        st.markdown(
-            """
-            - Salary matching, aggregation, roster limits, and hard-cap results now
-              use the verified team-CBA evidence and validated V9 formulas.
-            - Draft rights are checked for canonical existence, assigned team,
-              and standalone-asset status. Trade-date ownership, encumbrance,
-              and the complete package-level Stepien result remain pending.
-            - A manual-review result is intentionally conservative and should
-              not be interpreted as an illegal trade.
-            """
-        )
+        with st.expander("Validation scope and interpretation"):
+            st.markdown(
+                """
+                - Salary matching, aggregation, roster limits, and hard-cap
+                  outcomes use the verified team-CBA release and V9-validated
+                  formulas.
+                - Draft rights are screened for canonical inventory, assigned
+                  team, standalone-right evidence, frozen-pick status, and
+                  combined package-level Stepien effects.
+                - Manual review is intentionally conservative and is not the
+                  same as a deterministic illegal-trade ruling.
+                """
+            )
