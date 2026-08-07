@@ -4,6 +4,7 @@ import copy
 import html
 import json
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,15 @@ from mutable_league_state_v1 import (  # noqa: E402
 from state_runtime_adapter_v1 import (  # noqa: E402
     StateRuntimeAdapterError,
     build_state_runtime,
+)
+from league_scenario_store_v1 import (  # noqa: E402
+    DEFAULT_SCENARIO_DIR,
+    ScenarioStoreError,
+    delete_scenario,
+    import_scenario_file,
+    list_scenarios,
+    load_scenario_file,
+    save_scenario,
 )
 
 
@@ -2019,6 +2029,48 @@ def player_names(
     return ", ".join(names)
 
 
+def active_scenario_label(
+    state: LeagueState,
+) -> str:
+    name = st.session_state.get(
+        "trade_machine_active_scenario_name"
+    )
+    saved_revision = st.session_state.get(
+        "trade_machine_active_scenario_revision"
+    )
+
+    if not name:
+        return "Unsaved session"
+
+    if saved_revision == state.state_revision:
+        return str(name)
+
+    return f"{name} · unsaved changes"
+
+
+def activate_scenario(
+    name: str,
+    state_revision: int,
+) -> None:
+    st.session_state[
+        "trade_machine_active_scenario_name"
+    ] = name
+    st.session_state[
+        "trade_machine_active_scenario_revision"
+    ] = state_revision
+
+
+def clear_active_scenario() -> None:
+    st.session_state.pop(
+        "trade_machine_active_scenario_name",
+        None,
+    )
+    st.session_state.pop(
+        "trade_machine_active_scenario_revision",
+        None,
+    )
+
+
 def history_rows(
     state: LeagueState,
     runtime: RuntimeData,
@@ -2187,6 +2239,11 @@ with st.container(border=True):
         ] = "Restored the original 2026-27 league state."
         st.rerun()
 
+    st.caption(
+        "Active scenario: "
+        f"**{active_scenario_label(league_state)}**"
+    )
+
     if league_state.transaction_history:
         with st.expander(
             "Applied transaction history",
@@ -2200,6 +2257,342 @@ with st.container(border=True):
                 hide_index=True,
                 width="stretch",
             )
+
+    with st.expander(
+        "Save, load, import, or export scenarios",
+        expanded=False,
+    ):
+        st.caption(
+            "Saved scenarios preserve the complete mutable league, "
+            "including rosters, draft rights, salaries, transaction "
+            "history, and the undo stack."
+        )
+
+        with st.form(
+            "trade_machine_save_scenario_form",
+            clear_on_submit=False,
+        ):
+            save_name = st.text_input(
+                "Scenario name",
+                placeholder=(
+                    "Example: Bulls rebuild after deadline"
+                ),
+                max_chars=80,
+            )
+            save_notes = st.text_area(
+                "Notes",
+                placeholder=(
+                    "Optional explanation of the strategy "
+                    "behind this universe"
+                ),
+                max_chars=4000,
+                height=90,
+            )
+            overwrite_existing = st.checkbox(
+                "Replace an existing scenario with the same name",
+                value=False,
+            )
+            save_clicked = st.form_submit_button(
+                "Save current league",
+                type="primary",
+                width="stretch",
+            )
+
+        if save_clicked:
+            try:
+                saved = save_scenario(
+                    league_state,
+                    base_runtime,
+                    save_name,
+                    notes=save_notes,
+                    directory=DEFAULT_SCENARIO_DIR,
+                    overwrite=overwrite_existing,
+                )
+            except (
+                ScenarioStoreError,
+                OSError,
+                ValueError,
+            ) as exc:
+                st.error(
+                    "The scenario could not be saved. "
+                    f"Detail: {exc}"
+                )
+            else:
+                activate_scenario(
+                    saved.name,
+                    league_state.state_revision,
+                )
+                st.session_state[
+                    "trade_machine_state_notice"
+                ] = (
+                    f"Saved scenario: {saved.name}."
+                )
+                st.rerun()
+
+        scenario_summaries = list_scenarios(
+            base_runtime,
+            directory=DEFAULT_SCENARIO_DIR,
+        )
+        valid_scenarios = [
+            summary
+            for summary in scenario_summaries
+            if summary.valid
+        ]
+        invalid_scenarios = [
+            summary
+            for summary in scenario_summaries
+            if not summary.valid
+        ]
+
+        st.divider()
+        st.markdown("**Saved scenario library**")
+
+        if invalid_scenarios:
+            st.warning(
+                f"{len(invalid_scenarios)} saved scenario file(s) "
+                "failed validation and were excluded from loading."
+            )
+
+        if valid_scenarios:
+            summary_by_path = {
+                summary.path: summary
+                for summary in valid_scenarios
+            }
+            selected_path = st.selectbox(
+                "Saved scenario",
+                options=list(summary_by_path),
+                format_func=lambda path: (
+                    f"{summary_by_path[path].name} · "
+                    f"{summary_by_path[path].transaction_count} "
+                    "trade(s)"
+                ),
+                key="trade_machine_saved_scenario",
+            )
+            selected_summary = summary_by_path[
+                selected_path
+            ]
+
+            detail_columns = st.columns(4)
+            detail_columns[0].metric(
+                "Revision",
+                selected_summary.state_revision,
+            )
+            detail_columns[1].metric(
+                "Transactions",
+                selected_summary.transaction_count,
+            )
+            detail_columns[2].metric(
+                "Players",
+                selected_summary.player_count,
+            )
+            detail_columns[3].metric(
+                "Draft rights",
+                selected_summary.draft_right_count,
+            )
+
+            if selected_summary.notes:
+                st.caption(selected_summary.notes)
+
+            library_actions = st.columns(
+                [1.2, 1.2, 1.5],
+                gap="small",
+            )
+
+            with library_actions[0]:
+                load_clicked = st.button(
+                    "Load scenario",
+                    type="primary",
+                    width="stretch",
+                    key="trade_machine_load_scenario",
+                )
+
+            with library_actions[1]:
+                confirm_delete = st.checkbox(
+                    "Confirm delete",
+                    key=(
+                        "trade_machine_confirm_"
+                        "scenario_delete"
+                    ),
+                )
+                delete_clicked = st.button(
+                    "Delete",
+                    width="stretch",
+                    disabled=not confirm_delete,
+                    key="trade_machine_delete_scenario",
+                )
+
+            with library_actions[2]:
+                scenario_bytes = Path(
+                    selected_summary.path
+                ).read_bytes()
+                st.download_button(
+                    "Export scenario JSON",
+                    data=scenario_bytes,
+                    file_name=Path(
+                        selected_summary.path
+                    ).name,
+                    mime="application/json",
+                    width="stretch",
+                    key="trade_machine_export_scenario",
+                )
+
+            if load_clicked:
+                try:
+                    loaded_state, loaded_summary = (
+                        load_scenario_file(
+                            Path(selected_summary.path),
+                            base_runtime,
+                        )
+                    )
+                except (
+                    ScenarioStoreError,
+                    OSError,
+                    ValueError,
+                ) as exc:
+                    st.error(
+                        "The selected scenario could not be "
+                        f"loaded. Detail: {exc}"
+                    )
+                else:
+                    st.session_state[
+                        "trade_machine_league_state"
+                    ] = loaded_state
+                    activate_scenario(
+                        loaded_summary.name,
+                        loaded_state.state_revision,
+                    )
+                    clear_trade_state()
+                    st.session_state[
+                        "trade_machine_state_notice"
+                    ] = (
+                        f"Loaded scenario: "
+                        f"{loaded_summary.name}."
+                    )
+                    st.rerun()
+
+            if delete_clicked:
+                try:
+                    delete_scenario(
+                        selected_summary.name,
+                        directory=DEFAULT_SCENARIO_DIR,
+                    )
+                except (
+                    ScenarioStoreError,
+                    OSError,
+                    ValueError,
+                ) as exc:
+                    st.error(
+                        "The selected scenario could not be "
+                        f"deleted. Detail: {exc}"
+                    )
+                else:
+                    active_name = st.session_state.get(
+                        "trade_machine_active_scenario_name"
+                    )
+                    if active_name == selected_summary.name:
+                        clear_active_scenario()
+                    st.session_state[
+                        "trade_machine_state_notice"
+                    ] = (
+                        f"Deleted scenario: "
+                        f"{selected_summary.name}."
+                    )
+                    st.rerun()
+        else:
+            st.info(
+                "No valid saved scenarios exist yet. "
+                "Save the current league above to create one."
+            )
+
+        st.divider()
+        st.markdown("**Import scenario JSON**")
+
+        uploaded_scenario = st.file_uploader(
+            "Choose an exported scenario file",
+            type=["json"],
+            key="trade_machine_import_upload",
+        )
+        import_name = st.text_input(
+            "Imported scenario name override",
+            placeholder=(
+                "Leave blank to retain the exported name"
+            ),
+            max_chars=80,
+            key="trade_machine_import_name",
+        )
+        import_overwrite = st.checkbox(
+            "Replace an existing imported scenario",
+            key="trade_machine_import_overwrite",
+        )
+        import_clicked = st.button(
+            "Import and load scenario",
+            width="stretch",
+            disabled=uploaded_scenario is None,
+            key="trade_machine_import_scenario",
+        )
+
+        if import_clicked and uploaded_scenario is not None:
+            temporary_path: Path | None = None
+
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="wb",
+                    suffix=".json",
+                    delete=False,
+                ) as handle:
+                    handle.write(
+                        uploaded_scenario.getvalue()
+                    )
+                    temporary_path = Path(handle.name)
+
+                imported = import_scenario_file(
+                    temporary_path,
+                    base_runtime,
+                    name=(
+                        import_name.strip()
+                        if import_name.strip()
+                        else None
+                    ),
+                    directory=DEFAULT_SCENARIO_DIR,
+                    overwrite=import_overwrite,
+                )
+                imported_state, imported_summary = (
+                    load_scenario_file(
+                        Path(imported.path),
+                        base_runtime,
+                    )
+                )
+            except (
+                ScenarioStoreError,
+                OSError,
+                ValueError,
+            ) as exc:
+                st.error(
+                    "The uploaded scenario could not be "
+                    f"imported. Detail: {exc}"
+                )
+            else:
+                st.session_state[
+                    "trade_machine_league_state"
+                ] = imported_state
+                activate_scenario(
+                    imported_summary.name,
+                    imported_state.state_revision,
+                )
+                clear_trade_state()
+                st.session_state[
+                    "trade_machine_state_notice"
+                ] = (
+                    f"Imported and loaded scenario: "
+                    f"{imported_summary.name}."
+                )
+                st.rerun()
+            finally:
+                if (
+                    temporary_path is not None
+                    and temporary_path.exists()
+                ):
+                    temporary_path.unlink()
 
 with st.expander("How the V3 verdict works", expanded=False):
     st.markdown(

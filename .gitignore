@@ -33,3 +33,6 @@ outputs/
 
 # Local page backups
 backups/
+
+# User-generated league scenarios
+app_data/league_scenarios/*.json
