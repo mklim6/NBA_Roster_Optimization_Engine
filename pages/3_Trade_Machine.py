@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import html
 import json
 import sys
@@ -26,6 +27,19 @@ from freeform_trade_machine_engine_v3 import (  # noqa: E402
     TradeSideRequest,
     evaluate_trade,
     load_runtime_data,
+)
+from mutable_league_state_v1 import (  # noqa: E402
+    STATE_VERSION,
+    LeagueState,
+    StateMutationError,
+    apply_passed_trade,
+    create_league_state,
+    reset_league_state,
+    undo_last_trade,
+)
+from state_runtime_adapter_v1 import (  # noqa: E402
+    StateRuntimeAdapterError,
+    build_state_runtime,
 )
 
 
@@ -89,8 +103,24 @@ TEAM_NAMES = {
 
 
 @st.cache_resource(show_spinner="Loading trade engine...")
-def get_runtime() -> RuntimeData:
+def get_base_runtime() -> RuntimeData:
     return load_runtime_data()
+
+
+def get_league_state(
+    base_runtime: RuntimeData,
+) -> LeagueState:
+    key = "trade_machine_league_state"
+    state = st.session_state.get(key)
+
+    if (
+        not isinstance(state, LeagueState)
+        or state.state_version != STATE_VERSION
+    ):
+        state = create_league_state(base_runtime)
+        st.session_state[key] = state
+
+    return state
 
 
 def safe_float(value: Any) -> float | None:
@@ -136,7 +166,9 @@ def compact_asset_label(value: Any) -> str:
         "quality_starter": "Starter",
         "starter_caliber": "Starter",
         "development_core": "Dev Core",
-        "development_depth": "Dev/Depth",
+        "development_depth": "Development / Depth",
+        "starter_rotation": "Starter / Rotation",
+        "rotation_depth": "Rotation / Depth",
         "rotation_player": "Rotation",
         "rotation_caliber": "Rotation",
         "bench_depth": "Bench",
@@ -395,6 +427,34 @@ def render_check(check: CheckResult) -> None:
         st.success(body)
 
 
+def friendly_status_value(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    labels = {
+        "verified_clear": "Verified Clear",
+        "verified_with_conditions": "Verified w/ Conditions",
+        "manual_review_required": "Manual Review",
+        "not_trade_eligible": "Not Trade Eligible",
+        "not covered": "Not Covered",
+        "not_covered": "Not Covered",
+    }
+    if not text or text in {"nan", "none"}:
+        return "Not Covered"
+    return labels.get(text, text.replace("_", " ").title())
+
+
+def humanize_code(value: Any) -> str:
+    text = str(value or "").strip().replace("_", " ").title()
+    replacements = {
+        "Cba": "CBA",
+        "Tpe": "TPE",
+        "Byc": "BYC",
+        "Nba": "NBA",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return text
+
+
 def selected_player_rows(
     runtime: RuntimeData,
     player_ids: list[str],
@@ -413,13 +473,17 @@ def selected_player_rows(
                 "Salary": money(trade.get("trade_salary_2026_27")),
                 "OVR": rating_text(rating.get("overall_rating")),
                 "POT": rating_text(rating.get("potential_rating")),
-                "Asset class": market.get(
-                    "recommendation_asset_class_v3",
-                    "Unclassified",
-                ),
-                "CBA evidence": decision.get(
-                    "player_cba_evidence_determination",
-                    "not covered",
+                "Asset class": compact_asset_label(
+                    market.get(
+                        "recommendation_asset_class_v3",
+                        "Unclassified",
+                    )
+                ) or "Unclassified",
+                "CBA evidence": friendly_status_value(
+                    decision.get(
+                        "player_cba_evidence_determination",
+                        "not covered",
+                    )
                 ),
             }
         )
@@ -455,7 +519,9 @@ def selected_pick_rows(
                     "candidate_right_value_score",
                     "",
                 ),
-                "Structure": record.get("right_structure", ""),
+                "Structure": compact_pick_structure(
+                    record.get("right_structure", "")
+                ),
             }
         )
 
@@ -1100,6 +1166,39 @@ div[data-baseweb="select"] span {
     text-transform: uppercase;
 }
 
+.tm-result-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+    margin: 10px 0 14px;
+}
+
+.tm-result-metric {
+    min-width: 0;
+    padding: 11px 12px;
+    border: 1px solid rgba(148, 163, 184, 0.13);
+    border-radius: 13px;
+    background: rgba(5, 10, 18, 0.48);
+}
+
+.tm-result-metric-value {
+    color: #f8fafc;
+    font-family: "Barlow Condensed", sans-serif;
+    font-size: 1.55rem;
+    font-weight: 750;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.tm-result-metric-label {
+    margin-top: 5px;
+    color: #8291a7;
+    font-size: 0.66rem;
+    font-weight: 800;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+}
+
 .tm-salary-card {
     margin: 12px 0 15px;
     padding: 14px;
@@ -1202,6 +1301,39 @@ div[data-baseweb="select"] span {
     font-weight: 900;
     letter-spacing: 0.09em;
     text-transform: uppercase;
+}
+
+.tm-resolution-card {
+    margin: -4px 0 18px;
+    padding: 16px 18px;
+    border: 1px solid rgba(56, 189, 248, 0.24);
+    border-radius: 16px;
+    background:
+        linear-gradient(110deg, rgba(14, 165, 233, 0.11), rgba(99, 102, 241, 0.08)),
+        rgba(8, 13, 23, 0.78);
+}
+
+.tm-resolution-label {
+    color: #7dd3fc;
+    font-size: 0.66rem;
+    font-weight: 900;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+}
+
+.tm-resolution-title {
+    margin-top: 3px;
+    color: #f8fafc;
+    font-family: "Barlow Condensed", sans-serif;
+    font-size: 1.28rem;
+    font-weight: 800;
+}
+
+.tm-resolution-copy {
+    margin-top: 5px;
+    color: #aeb9c9;
+    font-size: 0.80rem;
+    line-height: 1.55;
 }
 
 @media (max-width: 900px) {
@@ -1421,22 +1553,177 @@ def first_relevant_check(result: Any) -> CheckResult | None:
     return ordered[0] if ordered else None
 
 
-def verdict_copy(result: Any) -> str:
-    check = first_relevant_check(result)
+def blocked_salary_side(result: Any) -> tuple[str, Any] | None:
+    for side in [result.side_a, result.side_b]:
+        if (
+            side.status == Status.BLOCKED
+            and str(side.salary_issue) == "salary_matching_failed"
+        ):
+            return side.team_abbreviation, side
+    return None
 
+
+def manual_review_evidence_check(
+    result: Any,
+) -> CheckResult | None:
+    ordered = [
+        *result.checks,
+        *result.side_a.checks,
+        *result.side_b.checks,
+    ]
+    preferred_codes = [
+        "player_cba_evidence_missing",
+        "salary_evidence_missing",
+        "team_cba_evidence_missing",
+        "transaction_player_mechanics_manual_review",
+        "team_cba_manual_review",
+    ]
+
+    for code in preferred_codes:
+        for check in ordered:
+            if (
+                check.status == Status.MANUAL_REVIEW
+                and check.code == code
+            ):
+                return check
+
+    return next(
+        (
+            check
+            for check in ordered
+            if check.status == Status.MANUAL_REVIEW
+        ),
+        None,
+    )
+
+
+def verdict_copy(result: Any) -> str:
     if result.status == Status.PASS:
         return (
             "Both teams clear the connected V3 player, salary, roster, "
             "draft-right, frozen-pick, and Stepien checks."
         )
 
+    salary_failure = blocked_salary_side(result)
+    if salary_failure is not None:
+        team, side = salary_failure
+        incoming = safe_float(side.incoming_salary_for_matching)
+        maximum = safe_float(side.salary_matching_max_incoming)
+        margin = safe_float(side.salary_matching_margin)
+        team_name = TEAM_NAMES.get(team, team)
+
+        if incoming is not None and maximum is not None:
+            overage = abs(margin) if margin is not None else max(
+                incoming - maximum,
+                0.0,
+            )
+            return (
+                f"{team_name} cannot receive this package under the "
+                f"validated salary-matching rules. It would receive "
+                f"{money(incoming)}, but its maximum is {money(maximum)}, "
+                f"leaving the trade {money(overage)} over the limit."
+            )
+
+    if result.status == Status.MANUAL_REVIEW:
+        check = manual_review_evidence_check(result)
+
+        if check is not None:
+            if check.code == "player_cba_evidence_missing":
+                return (
+                    f"{check.message} Because that player evidence is "
+                    "incomplete, neither team's exact salary route can be "
+                    "deterministically released."
+                )
+
+            if check.code in {
+                "salary_evidence_missing",
+                "team_cba_evidence_missing",
+            }:
+                return (
+                    "The package contains incomplete team or player salary "
+                    "evidence, so neither side's exact salary route can be "
+                    "released deterministically."
+                )
+
+            return check.message
+
+        return "The package requires unresolved evidence or contract review."
+
+    check = first_relevant_check(result)
     if check is not None:
         return check.message
 
-    if result.status == Status.MANUAL_REVIEW:
-        return "The package requires unresolved evidence or contract review."
-
     return "At least one deterministic legality rule blocks the package."
+
+
+def resolution_guidance(result: Any) -> tuple[str, str] | None:
+    salary_failure = blocked_salary_side(result)
+    if salary_failure is not None:
+        team, side = salary_failure
+        incoming = safe_float(side.incoming_salary_for_matching)
+        maximum = safe_float(side.salary_matching_max_incoming)
+        margin = safe_float(side.salary_matching_margin)
+        team_name = TEAM_NAMES.get(team, team)
+
+        if incoming is not None and maximum is not None:
+            overage = abs(margin) if margin is not None else max(
+                incoming - maximum,
+                0.0,
+            )
+            return (
+                "How to restructure this trade",
+                (
+                    f"Reduce {team_name}'s incoming matching salary by at "
+                    f"least {money(overage)}, or change its outgoing package "
+                    f"so the permitted incoming maximum rises from "
+                    f"{money(maximum)} to at least {money(incoming)}."
+                ),
+            )
+
+    if result.status == Status.MANUAL_REVIEW:
+        check = manual_review_evidence_check(result)
+
+        if (
+            check is not None
+            and check.code == "player_cba_evidence_missing"
+        ):
+            return (
+                "Resolve the missing player evidence",
+                (
+                    f"{check.message} Until that player is covered by the "
+                    "player-CBA decision layer, both salary routes must remain "
+                    "manual review."
+                ),
+            )
+
+        return (
+            "What requires review",
+            (
+                "Open the Legality Audit tab and resolve the first manual-"
+                "review item before treating the package as deterministically "
+                "legal."
+            ),
+        )
+
+    return None
+
+
+def render_resolution_guidance(result: Any) -> None:
+    guidance = resolution_guidance(result)
+    if guidance is None:
+        return
+
+    title, body = guidance
+    st.markdown(
+        f"""
+<div class="tm-resolution-card">
+  <div class="tm-resolution-label">Next action</div>
+  <div class="tm-resolution-title">{escaped(title)}</div>
+  <div class="tm-resolution-copy">{escaped(body)}</div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_status_banner(
@@ -1468,14 +1755,30 @@ def render_status_banner(
 
 
 def render_check(check: CheckResult) -> None:
-    color = STATUS_COLORS[check.status]
-    label = STATUS_LABELS[check.status]
-    icon = {
-        Status.PASS: "✓",
-        Status.MANUAL_REVIEW: "!",
-        Status.BLOCKED: "×",
-    }[check.status]
-    title = check.code.replace("_", " ").title()
+    conditional_pass = (
+        check.status == Status.PASS
+        and "with_conditions" in check.code
+    )
+    color = (
+        "#38bdf8"
+        if conditional_pass
+        else STATUS_COLORS[check.status]
+    )
+    label = (
+        "CONDITIONAL PASS"
+        if conditional_pass
+        else STATUS_LABELS[check.status]
+    )
+    icon = (
+        "i"
+        if conditional_pass
+        else {
+            Status.PASS: "✓",
+            Status.MANUAL_REVIEW: "!",
+            Status.BLOCKED: "×",
+        }[check.status]
+    )
+    title = humanize_code(check.code)
 
     st.markdown(
         f"""
@@ -1584,10 +1887,33 @@ def render_side_summary(
         side.status,
     )
 
-    metrics = st.columns(3)
-    metrics[0].metric("Players sent", len(player_ids))
-    metrics[1].metric("Draft rights", len(pick_right_ids))
-    metrics[2].metric("Outgoing salary", money(side.outgoing_salary))
+    st.markdown(
+        f"""
+<div class="tm-result-metrics">
+  <div class="tm-result-metric">
+    <div class="tm-result-metric-value">{len(player_ids)}</div>
+    <div class="tm-result-metric-label">Players sent</div>
+  </div>
+  <div class="tm-result-metric">
+    <div class="tm-result-metric-value">{len(pick_right_ids)}</div>
+    <div class="tm-result-metric-label">Draft rights</div>
+  </div>
+  <div class="tm-result-metric">
+    <div class="tm-result-metric-value">
+      {escaped(money(side.outgoing_salary))}
+    </div>
+    <div class="tm-result-metric-label">Outgoing salary</div>
+  </div>
+  <div class="tm-result-metric">
+    <div class="tm-result-metric-value">
+      {escaped(money(side.incoming_salary_for_matching))}
+    </div>
+    <div class="tm-result-metric-label">Incoming salary</div>
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     render_salary_meter(side, team)
 
@@ -1597,6 +1923,32 @@ def render_side_summary(
             selected_player_rows(runtime, player_ids),
             hide_index=True,
             width="stretch",
+            column_config={
+                "Player": st.column_config.TextColumn(
+                    "Player",
+                    width="medium",
+                ),
+                "Salary": st.column_config.TextColumn(
+                    "Salary",
+                    width="small",
+                ),
+                "OVR": st.column_config.TextColumn(
+                    "OVR",
+                    width="small",
+                ),
+                "POT": st.column_config.TextColumn(
+                    "POT",
+                    width="small",
+                ),
+                "Asset class": st.column_config.TextColumn(
+                    "Asset class",
+                    width="medium",
+                ),
+                "CBA evidence": st.column_config.TextColumn(
+                    "CBA evidence",
+                    width="medium",
+                ),
+            },
         )
 
     if pick_right_ids:
@@ -1626,12 +1978,228 @@ def clear_trade_state() -> None:
         del st.session_state[key]
 
 
-runtime = get_runtime()
+def selection_request(
+    selection: dict[str, Any],
+) -> TradeRequest:
+    return TradeRequest(
+        side_a=TradeSideRequest(
+            team_abbreviation=selection["team_a"],
+            player_ids=tuple(
+                selection["team_a_players"]
+            ),
+            pick_right_ids=tuple(
+                selection["team_a_picks"]
+            ),
+        ),
+        side_b=TradeSideRequest(
+            team_abbreviation=selection["team_b"],
+            player_ids=tuple(
+                selection["team_b_players"]
+            ),
+            pick_right_ids=tuple(
+                selection["team_b_picks"]
+            ),
+        ),
+    )
+
+
+def player_names(
+    runtime: RuntimeData,
+    player_ids: tuple[str, ...],
+) -> str:
+    names = [
+        str(
+            runtime.trade_by_id.get(
+                player_id,
+                {},
+            ).get("player_name", player_id)
+        ).strip()
+        for player_id in player_ids
+    ]
+    return ", ".join(names)
+
+
+def history_rows(
+    state: LeagueState,
+    runtime: RuntimeData,
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+
+    for record in reversed(state.transaction_history):
+        team_a_assets = [
+            player_names(
+                runtime,
+                record.team_a_player_ids,
+            ),
+            (
+                f"{len(record.team_a_pick_right_ids)} draft right(s)"
+                if record.team_a_pick_right_ids
+                else ""
+            ),
+        ]
+        team_b_assets = [
+            player_names(
+                runtime,
+                record.team_b_player_ids,
+            ),
+            (
+                f"{len(record.team_b_pick_right_ids)} draft right(s)"
+                if record.team_b_pick_right_ids
+                else ""
+            ),
+        ]
+
+        rows.append(
+            {
+                "Transaction": record.transaction_id,
+                "Revision": record.state_revision,
+                "Trade date": record.trade_date,
+                "Matchup": (
+                    f"{record.team_a} ↔ {record.team_b}"
+                ),
+                f"{record.team_a} sent": " · ".join(
+                    value
+                    for value in team_a_assets
+                    if value
+                ),
+                f"{record.team_b} sent": " · ".join(
+                    value
+                    for value in team_b_assets
+                    if value
+                ),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+base_runtime = get_base_runtime()
+league_state = get_league_state(base_runtime)
+
+try:
+    runtime = build_state_runtime(
+        base_runtime,
+        league_state,
+    )
+except (
+    StateRuntimeAdapterError,
+    StateMutationError,
+    ValueError,
+    KeyError,
+) as exc:
+    st.error(
+        "The mutable league runtime could not be rebuilt. "
+        f"Resetting the session state. Detail: {exc}"
+    )
+    league_state = create_league_state(base_runtime)
+    st.session_state[
+        "trade_machine_league_state"
+    ] = league_state
+    runtime = build_state_runtime(
+        base_runtime,
+        league_state,
+    )
+
 visual_assets = get_visual_assets()
 teams = sorted(runtime.team_salary_by_team)
 
 inject_trade_machine_styles()
 render_hero(runtime)
+
+notice = st.session_state.pop(
+    "trade_machine_state_notice",
+    None,
+)
+if notice:
+    st.success(notice)
+
+st.markdown(
+    '<div class="tm-section-kicker">League state</div>',
+    unsafe_allow_html=True,
+)
+
+with st.container(border=True):
+    state_metrics = st.columns(4)
+    state_metrics[0].metric(
+        "State revision",
+        league_state.state_revision,
+    )
+    state_metrics[1].metric(
+        "Applied trades",
+        len(league_state.transaction_history),
+    )
+    state_metrics[2].metric(
+        "Tracked players",
+        len(league_state.player_team_by_id),
+    )
+    state_metrics[3].metric(
+        "Tracked draft rights",
+        len(league_state.pick_team_by_id),
+    )
+
+    control_columns = st.columns([1.4, 1.4, 4.2])
+
+    with control_columns[0]:
+        undo_clicked = st.button(
+            "Undo last trade",
+            width="stretch",
+            disabled=not league_state.transaction_history,
+            key="trade_machine_undo",
+        )
+
+    with control_columns[1]:
+        reset_clicked = st.button(
+            "Reset league",
+            width="stretch",
+            disabled=not league_state.transaction_history,
+            key="trade_machine_reset",
+        )
+
+    with control_columns[2]:
+        st.caption(
+            "Applied moves live only in this Streamlit session. "
+            "Every later audit uses the updated rosters, salaries, "
+            "draft-right ownership, and conservative acquired-player rules."
+        )
+
+    if undo_clicked:
+        removed = undo_last_trade(
+            league_state,
+            base_runtime,
+        )
+        clear_trade_state()
+        st.session_state[
+            "trade_machine_state_notice"
+        ] = (
+            f"Undid {removed.transaction_id}: "
+            f"{removed.team_a} ↔ {removed.team_b}."
+        )
+        st.rerun()
+
+    if reset_clicked:
+        reset_league_state(
+            league_state,
+            base_runtime,
+        )
+        clear_trade_state()
+        st.session_state[
+            "trade_machine_state_notice"
+        ] = "Restored the original 2026-27 league state."
+        st.rerun()
+
+    if league_state.transaction_history:
+        with st.expander(
+            "Applied transaction history",
+            expanded=False,
+        ):
+            st.dataframe(
+                history_rows(
+                    league_state,
+                    base_runtime,
+                ),
+                hide_index=True,
+                width="stretch",
+            )
 
 with st.expander("How the V3 verdict works", expanded=False):
     st.markdown(
@@ -1681,7 +2249,10 @@ with side_columns[0]:
                 runtime,
                 player_id,
             ),
-            key=f"trade_machine_players_{team_a}",
+            key=(
+                f"trade_machine_players_side_a_{team_a}_"
+                f"r{league_state.state_revision}"
+            ),
             placeholder="Search the roster",
         )
 
@@ -1692,7 +2263,10 @@ with side_columns[0]:
                 runtime,
                 pick_id,
             ),
-            key=f"trade_machine_picks_{team_a}",
+            key=(
+                f"trade_machine_picks_side_a_{team_a}_"
+                f"r{league_state.state_revision}"
+            ),
             placeholder="Add a future draft right",
         )
 
@@ -1729,7 +2303,10 @@ with side_columns[1]:
                 runtime,
                 player_id,
             ),
-            key=f"trade_machine_players_{team_b}",
+            key=(
+                f"trade_machine_players_side_b_{team_b}_"
+                f"r{league_state.state_revision}"
+            ),
             placeholder="Search the roster",
         )
 
@@ -1740,7 +2317,10 @@ with side_columns[1]:
                 runtime,
                 pick_id,
             ),
-            key=f"trade_machine_picks_{team_b}",
+            key=(
+                f"trade_machine_picks_side_b_{team_b}_"
+                f"r{league_state.state_revision}"
+            ),
             placeholder="Add a future draft right",
         )
 
@@ -1761,6 +2341,12 @@ with action_columns[0]:
         "Run V3 trade audit",
         type="primary",
         width="stretch",
+        disabled=(team_a == team_b),
+        help=(
+            "Choose two different franchises."
+            if team_a == team_b
+            else None
+        ),
     )
 
 with action_columns[1]:
@@ -1801,10 +2387,11 @@ if evaluate_clicked:
         st.session_state["trade_machine_last_selection"] = {
             "team_a": team_a,
             "team_b": team_b,
-            "team_a_players": team_a_players,
-            "team_b_players": team_b_players,
-            "team_a_picks": team_a_picks,
-            "team_b_picks": team_b_picks,
+            "team_a_players": list(team_a_players),
+            "team_b_players": list(team_b_players),
+            "team_a_picks": list(team_a_picks),
+            "team_b_picks": list(team_b_picks),
+            "state_revision": league_state.state_revision,
         }
 
 result = st.session_state.get("trade_machine_last_result")
@@ -1820,6 +2407,88 @@ if result is not None and selection is not None:
         "Overall transaction result",
         verdict_copy(result),
     )
+    render_resolution_guidance(result)
+
+    if result.status == Status.PASS:
+        with st.container(border=True):
+            apply_columns = st.columns([3.8, 1.6])
+
+            with apply_columns[0]:
+                st.markdown(
+                    "**Commit this approved transaction**"
+                )
+                st.caption(
+                    "The audited package will update both rosters, "
+                    "team financials, draft-right ownership, and "
+                    "all later Trade Machine evaluations."
+                )
+
+            with apply_columns[1]:
+                apply_clicked = st.button(
+                    "Apply approved trade",
+                    type="primary",
+                    width="stretch",
+                    key="trade_machine_apply_passed_trade",
+                )
+
+            if apply_clicked:
+                audited_revision = selection.get(
+                    "state_revision"
+                )
+
+                if (
+                    audited_revision
+                    != league_state.state_revision
+                ):
+                    st.error(
+                        "The league changed after this audit. "
+                        "Run the V3 audit again before applying it."
+                    )
+                else:
+                    request = selection_request(selection)
+
+                    try:
+                        trial_state = copy.deepcopy(
+                            league_state
+                        )
+                        apply_passed_trade(
+                            trial_state,
+                            runtime,
+                            request,
+                            result,
+                        )
+                        build_state_runtime(
+                            base_runtime,
+                            trial_state,
+                        )
+
+                        record = apply_passed_trade(
+                            league_state,
+                            runtime,
+                            request,
+                            result,
+                        )
+                    except (
+                        StateMutationError,
+                        StateRuntimeAdapterError,
+                        ValueError,
+                        KeyError,
+                    ) as exc:
+                        st.error(
+                            "The approved package could not be "
+                            "committed to mutable league state. "
+                            f"Detail: {exc}"
+                        )
+                    else:
+                        clear_trade_state()
+                        st.session_state[
+                            "trade_machine_state_notice"
+                        ] = (
+                            f"Applied {record.transaction_id}: "
+                            f"{record.team_a} ↔ "
+                            f"{record.team_b}."
+                        )
+                        st.rerun()
 
     overview_tab, audit_tab = st.tabs(
         ["Trade overview", "Legality audit"]
