@@ -58,10 +58,15 @@ from simulation_roster_validator_v1 import (  # noqa: E402
     build_simulation_roster_snapshot,
     snapshot_report,
 )
+from simulation_league_state_v1 import (  # noqa: E402
+    create_simulation_league_state,
+    initial_state_summary,
+    validate_simulation_league_state,
+)
 
 
 VALIDATOR_VERSION = (
-    "project-validation-runner-v1.2-2026-08-08"
+    "project-validation-runner-v1.3-2026-08-08"
 )
 QUICK_REPORT = (
     OUTPUTS / "project_validation_quick_v1.json"
@@ -240,6 +245,7 @@ def validate_required_files(
         SRC / "league_scenario_store_v1.py",
         SRC / "trade_mode_policy_v1.py",
         SRC / "simulation_roster_validator_v1.py",
+        SRC / "simulation_league_state_v1.py",
         SRC
         / "validate_mutable_league_state_integration_v1.py",
     ]
@@ -461,6 +467,67 @@ def quick_runtime_validation(
         details=(
             "fallback_rating_players="
             f"{roster_report['summary']['fallback_rating_players']}"
+        ),
+    )
+
+    simulation_state_started = time.perf_counter()
+    simulation_state = create_simulation_league_state(
+        adapted_initial,
+        state,
+    )
+    simulation_checks = (
+        validate_simulation_league_state(
+            simulation_state
+        )
+    )
+    simulation_summary = initial_state_summary(
+        simulation_state
+    )
+
+    require(
+        checks,
+        phase="simulation_state",
+        name="simulation_league_state_valid",
+        condition=all(simulation_checks.values()),
+        details=(
+            f"teams={simulation_summary['teams']}; "
+            f"players={simulation_summary['players']}; "
+            f"free_agents={simulation_summary['free_agents']}"
+        ),
+        seconds=elapsed_seconds(
+            simulation_state_started
+        ),
+    )
+    require(
+        checks,
+        phase="simulation_state",
+        name="simulation_player_population_reconciles",
+        condition=(
+            simulation_summary["players"] == 582
+            and simulation_summary["rostered_players"] == 395
+            and simulation_summary["free_agents"] == 187
+            and simulation_summary["synthetic_players"] == 0
+        ),
+        details=(
+            f"players={simulation_summary['players']}; "
+            f"rostered={simulation_summary['rostered_players']}; "
+            f"free_agents={simulation_summary['free_agents']}; "
+            f"synthetic={simulation_summary['synthetic_players']}"
+        ),
+    )
+    require(
+        checks,
+        phase="simulation_state",
+        name="simulation_starts_clean",
+        condition=(
+            simulation_summary["scheduled_games"] == 0
+            and simulation_summary["completed_games"] == 0
+            and simulation_summary["phase"] == "preseason"
+        ),
+        details=(
+            f"scheduled={simulation_summary['scheduled_games']}; "
+            f"completed={simulation_summary['completed_games']}; "
+            f"phase={simulation_summary['phase']}"
         ),
     )
 
@@ -799,6 +866,18 @@ def quick_runtime_validation(
             ),
         },
         "simulation_rosters": roster_report["summary"],
+        "simulation_state": {
+            "teams": simulation_summary["teams"],
+            "players": simulation_summary["players"],
+            "rostered_players": (
+                simulation_summary["rostered_players"]
+            ),
+            "free_agents": simulation_summary["free_agents"],
+            "synthetic_players": (
+                simulation_summary["synthetic_players"]
+            ),
+            "phase": simulation_summary["phase"],
+        },
     }
 
 
@@ -945,6 +1024,17 @@ def run_full() -> dict[str, Any]:
             sys.executable,
             str(
                 SRC / "simulation_roster_validator_v1.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="simulation_league_state_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC / "simulation_league_state_v1.py"
             ),
             "--self-test",
         ],
