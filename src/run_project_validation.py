@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 PAGES = ROOT / "pages"
 OUTPUTS = ROOT / "outputs"
+APP_DATA = ROOT / "app_data"
 HOME = ROOT / "Home.py"
 
 if str(SRC) not in sys.path:
@@ -55,7 +56,10 @@ from trade_mode_policy_v1 import (  # noqa: E402
     find_missing_cba_manual_trade,
 )
 from simulation_roster_validator_v1 import (  # noqa: E402
+    POSITION_DATA_PATH,
+    VALIDATOR_VERSION as ROSTER_VALIDATOR_VERSION,
     build_simulation_roster_snapshot,
+    load_position_records,
     snapshot_report,
 )
 from simulation_league_state_v1 import (  # noqa: E402
@@ -74,7 +78,7 @@ from simulation_league_state_v1 import (  # noqa: E402
 
 
 VALIDATOR_VERSION = (
-    "project-validation-runner-v1.4-2026-08-08"
+    "project-validation-runner-v1.5-2026-08-08"
 )
 QUICK_REPORT = (
     OUTPUTS / "project_validation_quick_v1.json"
@@ -247,6 +251,9 @@ def validate_required_files(
     required = [
         HOME,
         PAGES / "3_Trade_Machine.py",
+        PAGES / "4_Game_Simulator.py",
+        APP_DATA / "player_positions_2026_27_v1.json",
+        SRC / "build_player_positions_v1.py",
         SRC / "freeform_trade_machine_engine_v3.py",
         SRC / "mutable_league_state_v1.py",
         SRC / "state_runtime_adapter_v1.py",
@@ -351,6 +358,79 @@ def validate_ui_contract(
             else (
                 "Missing app_data/league_scenarios/"
                 "*.json from .gitignore"
+            )
+        ),
+    )
+
+    simulator_page = PAGES / "4_Game_Simulator.py"
+    simulator_text = simulator_page.read_text(
+        encoding="utf-8"
+    )
+    simulator_markers = {
+        "shared_simulation_state": (
+            "game_simulator_league_state"
+        ),
+        "position_refresh_signature": (
+            "game_simulator_position_signature"
+        ),
+        "direct_position_application": (
+            "apply_latest_player_positions"
+        ),
+        "local_validator_loader": (
+            "load_local_roster_validator"
+        ),
+        "unlocked_seed_control": "Lock seed",
+        "fresh_seed_copy": (
+            "Fresh result each time you click Simulate game."
+        ),
+        "pregame_win_chance": (
+            'f"Pregame {home_team} win chance"'
+        ),
+        "top_performers_tab": '"Top Performers"',
+        "top_performers_steals": '"STL": line.steals',
+        "top_performers_blocks": '"BLK": line.blocks',
+        "top_performers_turnovers": (
+            '"TO": line.turnovers'
+        ),
+        "top_performers_fouls": '"PF": line.fouls',
+        "total_schedule_entries": (
+            '"Total schedule entries"'
+        ),
+        "stretch_width_api": 'width="stretch"',
+    }
+    missing_simulator_markers = [
+        name
+        for name, marker in simulator_markers.items()
+        if marker not in simulator_text
+    ]
+
+    require(
+        checks,
+        phase="ui_contract",
+        name="game_simulator_markers_present",
+        condition=not missing_simulator_markers,
+        details=(
+            f"{len(simulator_markers)} marker(s)"
+            if not missing_simulator_markers
+            else (
+                "Missing: "
+                + ", ".join(missing_simulator_markers)
+            )
+        ),
+    )
+    require(
+        checks,
+        phase="ui_contract",
+        name="game_simulator_uses_current_width_api",
+        condition=(
+            "use_container_width" not in simulator_text
+        ),
+        details=(
+            "No deprecated use_container_width calls"
+            if "use_container_width" not in simulator_text
+            else (
+                "Deprecated use_container_width remains "
+                "in pages/4_Game_Simulator.py"
             )
         ),
     )
@@ -479,6 +559,48 @@ def quick_runtime_validation(
         ),
     )
 
+    position_records = load_position_records()
+    real_roster_players = [
+        player
+        for roster in roster_snapshot.teams.values()
+        for player in roster.real_players
+    ]
+    unresolved_positions = [
+        f"{player.player_name} ({player.player_id})"
+        for player in real_roster_players
+        if player.position == "UNK"
+    ]
+    require(
+        checks,
+        phase="simulation_rosters",
+        name="position_layer_covers_runtime_players",
+        condition=(
+            POSITION_DATA_PATH.exists()
+            and len(position_records)
+            >= len(runtime.ratings_by_id)
+        ),
+        details=(
+            f"validator={ROSTER_VALIDATOR_VERSION}; "
+            f"records={len(position_records)}; "
+            f"runtime_players={len(runtime.ratings_by_id)}; "
+            f"path={POSITION_DATA_PATH.relative_to(ROOT)}"
+        ),
+    )
+    require(
+        checks,
+        phase="simulation_rosters",
+        name="all_real_roster_players_have_positions",
+        condition=not unresolved_positions,
+        details=(
+            f"resolved={len(real_roster_players)}"
+            if not unresolved_positions
+            else (
+                f"unresolved={len(unresolved_positions)}; "
+                + ", ".join(unresolved_positions[:8])
+            )
+        ),
+    )
+
     simulation_state_started = time.perf_counter()
     simulation_state = create_simulation_league_state(
         adapted_initial,
@@ -522,6 +644,26 @@ def quick_runtime_validation(
             f"rostered={simulation_summary['rostered_players']}; "
             f"free_agents={simulation_summary['free_agents']}; "
             f"synthetic={simulation_summary['synthetic_players']}"
+        ),
+    )
+    state_unresolved_positions = [
+        f"{player.player_name} ({player.player_id})"
+        for player in simulation_state.players.values()
+        if not player.synthetic
+        and player.position == "UNK"
+    ]
+    require(
+        checks,
+        phase="simulation_state",
+        name="permanent_state_preserves_positions",
+        condition=not state_unresolved_positions,
+        details=(
+            f"resolved={len(simulation_state.players)}"
+            if not state_unresolved_positions
+            else (
+                f"unresolved={len(state_unresolved_positions)}; "
+                + ", ".join(state_unresolved_positions[:8])
+            )
         ),
     )
     require(

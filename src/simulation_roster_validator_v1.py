@@ -8,12 +8,14 @@ import math
 import re
 import sys
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
+APP_DATA = ROOT / "app_data"
 OUTPUTS = ROOT / "outputs"
 
 if str(SRC) not in sys.path:
@@ -37,7 +39,10 @@ from state_runtime_adapter_v1 import (  # noqa: E402
 
 
 VALIDATOR_VERSION = (
-    "simulation-roster-validator-v1-2026-08-07"
+    "simulation-roster-validator-v1.1-2026-08-08"
+)
+POSITION_DATA_PATH = (
+    APP_DATA / "player_positions_2026_27_v1.json"
 )
 READINESS_REPORT = (
     OUTPUTS / "simulation_roster_readiness_v1.json"
@@ -289,10 +294,51 @@ def player_name(
     return clean_text(value) or player_id
 
 
+@lru_cache(maxsize=1)
+def load_position_records() -> dict[str, dict[str, Any]]:
+    if not POSITION_DATA_PATH.exists():
+        return {}
+
+    payload = json.loads(
+        POSITION_DATA_PATH.read_text(
+            encoding="utf-8-sig"
+        )
+    )
+    records = payload.get(
+        "players_by_id",
+        {},
+    )
+
+    if not isinstance(records, dict):
+        raise SimulationRosterValidationError(
+            "Player-position data has an invalid "
+            "players_by_id structure."
+        )
+
+    return {
+        normalize_player_id(player_id): record
+        for player_id, record in records.items()
+        if normalize_player_id(player_id)
+        and isinstance(record, dict)
+    }
+
+
 def player_position(
     runtime: RuntimeData,
     player_id: str,
 ) -> str:
+    player_id = normalize_player_id(player_id)
+    position_record = load_position_records().get(
+        player_id,
+        {},
+    )
+    enriched = normalize_position(
+        position_record.get("position")
+    )
+
+    if enriched != "UNK":
+        return enriched
+
     value = first_present(
         player_records(runtime, player_id),
         POSITION_FIELDS,
@@ -949,6 +995,20 @@ def run_self_test() -> dict[str, Any]:
             baseline.checks[
                 "all_simulation_ratings_finite"
             ]
+        ),
+        "position_layer_file_exists": (
+            POSITION_DATA_PATH.exists()
+        ),
+        "all_real_players_have_positions": (
+            all(
+                player.position != "UNK"
+                for roster in baseline.teams.values()
+                for player in roster.real_players
+            )
+        ),
+        "position_layer_covers_all_runtime_players": (
+            len(load_position_records())
+            >= len(runtime.ratings_by_id)
         ),
         "builder_does_not_mutate_state": (
             state_signature(state)
