@@ -14,7 +14,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from freeform_trade_machine_engine_v1 import (  # noqa: E402
+from freeform_trade_machine_engine_v2_2 import (  # noqa: E402
     CheckResult,
     RuntimeData,
     Status,
@@ -121,20 +121,21 @@ def team_label(team: str) -> str:
     return f"{TEAM_NAMES.get(team, team)} ({team})"
 
 
-def player_label(runtime: RuntimeData, player_id: str) -> str:
+def player_label(
+    runtime: RuntimeData,
+    player_id: str,
+) -> str:
     trade = runtime.trade_by_id.get(player_id, {})
-    rating = runtime.ratings_by_id.get(player_id, {})
-    market = runtime.market_by_id.get(player_id, {})
 
-    name = str(trade.get("player_name", player_id)).strip()
-    salary = money(trade.get("trade_salary_2026_27"))
-    overall = rating_text(rating.get("overall_rating"))
-    asset_class = str(
-        market.get("recommendation_asset_class_v3", "")
+    name = str(
+        trade.get("player_name", player_id)
     ).strip()
 
-    suffix = f" | {asset_class}" if asset_class else ""
-    return f"{name} | OVR {overall} | {salary}{suffix}"
+    salary = money(
+        trade.get("trade_salary_2026_27")
+    )
+
+    return f"{name} | {salary}"
 
 
 def pick_label(runtime: RuntimeData, pick_right_id: str) -> str:
@@ -333,16 +334,67 @@ def render_side_summary(
 ) -> None:
     st.subheader(f"{side_name}: {team_label(team)}")
 
-    metric_columns = st.columns(4)
-    metric_columns[0].metric("Players sent", len(player_ids))
-    metric_columns[1].metric("Draft rights sent", len(pick_right_ids))
-    metric_columns[2].metric("Outgoing salary", money(outgoing_salary))
-    metric_columns[3].metric("Side result", STATUS_LABELS[status])
+    metric_columns = st.columns(
+        [1.0, 1.0, 1.35]
+    )
+
+    metric_columns[0].metric(
+        "Players sent",
+        len(player_ids),
+    )
+
+    metric_columns[1].metric(
+        "Draft rights sent",
+        len(pick_right_ids),
+    )
+
+    metric_columns[2].metric(
+        "Outgoing salary",
+        money(outgoing_salary),
+    )
+
+    color = STATUS_COLORS[status]
+    icon = STATUS_ICONS[status]
+    label = STATUS_LABELS[status]
+
+    st.markdown(
+        f"""
+        <div style="
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border: 1px solid {color};
+            border-left: 6px solid {color};
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin: 8px 0 14px 0;
+        ">
+            <span style="
+                color: #9ca3af;
+                font-size: 0.82rem;
+                font-weight: 650;
+            ">
+                Side result
+            </span>
+            <span style="
+                color: {color};
+                font-weight: 800;
+                letter-spacing: 0.04em;
+            ">
+                {icon} {label}
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if player_ids:
         st.markdown("**Outgoing players**")
         st.dataframe(
-            selected_player_rows(runtime, player_ids),
+            selected_player_rows(
+                runtime,
+                player_ids,
+            ),
             hide_index=True,
             width="stretch",
         )
@@ -350,7 +402,10 @@ def render_side_summary(
     if pick_right_ids:
         st.markdown("**Outgoing draft rights**")
         st.dataframe(
-            selected_pick_rows(runtime, pick_right_ids),
+            selected_pick_rows(
+                runtime,
+                pick_right_ids,
+            ),
             hide_index=True,
             width="stretch",
         )
@@ -362,9 +417,9 @@ teams = sorted(runtime.team_salary_by_team)
 st.title("Freeform Two-Team Trade Machine")
 st.caption(
     "Construct a custom player-and-pick trade using the validated 2026-27 "
-    "runtime data. V1 deterministically evaluates roster identity and player "
-    "restrictions. Salary-route, official apron, and complete package-level "
-    "draft-right validation remain conservative manual-review checks."
+    "runtime data. V2.2 evaluates roster identity, player restrictions, verified "
+    "team salary, salary-matching routes, aggregation, roster limits, and "
+    "hard-cap rules. Complete draft-right validation remains conservative."
 )
 
 with st.expander("What each result means", expanded=False):
@@ -373,8 +428,8 @@ with st.expander("What each result means", expanded=False):
         **PASS** means the currently connected evidence stage found no issue.
         **BLOCKED** means a deterministic rule failed, such as roster ownership,
         trade eligibility, or an active aggregation restriction.
-        **MANUAL REVIEW** means the trade may still be workable, but V1 lacks a
-        transaction-specific salary, apron, consent, bonus, or draft-right ruling.
+        **MANUAL REVIEW** means the trade may still be workable, but it contains
+        unresolved player consent, contract mechanics, team evidence, or draft-right rules.
         """
     )
 
@@ -545,11 +600,11 @@ if result is not None and selection is not None:
         for check in result.side_b.checks:
             render_check(check)
 
-    with st.expander("Current V1 limitations", expanded=True):
+    with st.expander("Remaining limitations", expanded=True):
         st.markdown(
             """
-            - Team salary and apron figures are proxy-only, so the final salary
-              matching route and hard-cap result are not yet released.
+            - Salary matching, aggregation, roster limits, and hard-cap results now
+              use the verified team-CBA evidence and validated V9 formulas.
             - Draft rights are checked for canonical existence, assigned team,
               and standalone-asset status. Trade-date ownership, encumbrance,
               and the complete package-level Stepien result remain pending.

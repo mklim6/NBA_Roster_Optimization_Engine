@@ -30,3 +30,6 @@ app_data/*_backup_*.json
 data/
 models/
 outputs/
+
+# Local page backups
+backups/
