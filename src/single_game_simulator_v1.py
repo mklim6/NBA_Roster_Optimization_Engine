@@ -47,7 +47,7 @@ from state_runtime_adapter_v1 import (  # noqa: E402
 )
 
 
-ENGINE_VERSION = "single-game-simulator-v1-2026-08-08"
+ENGINE_VERSION = "single-game-simulator-v1.2-2026-08-08"
 SELF_TEST_REPORT = (
     OUTPUTS / "single_game_simulator_v1_self_test.json"
 )
@@ -110,6 +110,61 @@ class SimulatedGame:
     game: CompletedGame
     metadata: GameSimulationMetadata
     committed: bool
+
+
+@dataclass(frozen=True)
+class PlayerScoringProfile:
+    points: int
+    field_goals_made: int
+    field_goals_attempted: int
+    three_pointers_made: int
+    three_pointers_attempted: int
+    free_throws_made: int
+    free_throws_attempted: int
+
+
+POSITION_STAT_MULTIPLIERS: dict[str, dict[str, float]] = {
+    "PG": {
+        "rebounds": 0.58,
+        "assists": 2.00,
+        "steals": 1.12,
+        "blocks": 0.38,
+        "turnovers": 1.22,
+        "fouls": 0.78,
+    },
+    "SG": {
+        "rebounds": 0.72,
+        "assists": 1.34,
+        "steals": 1.08,
+        "blocks": 0.50,
+        "turnovers": 1.05,
+        "fouls": 0.88,
+    },
+    "SF": {
+        "rebounds": 1.00,
+        "assists": 0.96,
+        "steals": 1.00,
+        "blocks": 0.58,
+        "turnovers": 0.96,
+        "fouls": 1.00,
+    },
+    "PF": {
+        "rebounds": 1.48,
+        "assists": 0.72,
+        "steals": 0.88,
+        "blocks": 1.24,
+        "turnovers": 0.88,
+        "fouls": 1.18,
+    },
+    "C": {
+        "rebounds": 1.78,
+        "assists": 0.58,
+        "steals": 0.76,
+        "blocks": 1.72,
+        "turnovers": 0.84,
+        "fouls": 1.34,
+    },
+}
 
 
 def clamp(
@@ -836,24 +891,357 @@ def noisy_count(
     return int(value)
 
 
+def position_tokens(position: str) -> tuple[str, ...]:
+    tokens = tuple(
+        token
+        for token in str(position or "").upper().split("/")
+        if token in POSITION_STAT_MULTIPLIERS
+    )
+    return tokens or ("SF",)
+
+
+def position_stat_multiplier(
+    position: str,
+    stat_name: str,
+) -> float:
+    tokens = position_tokens(position)
+    values = [
+        POSITION_STAT_MULTIPLIERS[token][stat_name]
+        for token in tokens
+    ]
+    return sum(values) / len(values)
+
+
+def team_position_share(
+    state: SimulationLeagueState,
+    plan: TeamGamePlan,
+    position_group: set[str],
+) -> float:
+    total_minutes = sum(plan.minutes.values())
+    if total_minutes <= 0:
+        return 0.0
+
+    weighted = 0.0
+    for player_id in plan.player_ids:
+        tokens = position_tokens(
+            state.players[player_id].position
+        )
+        overlap = (
+            len(set(tokens).intersection(position_group))
+            / len(tokens)
+        )
+        weighted += plan.minutes[player_id] * overlap
+
+    return weighted / total_minutes
+
+
+def allocate_capped_integer_units(
+    total_units: int,
+    ordered_ids: tuple[str, ...],
+    weights: dict[str, float],
+    caps: dict[str, int],
+) -> dict[str, int]:
+    if total_units > sum(
+        max(0, int(caps.get(player_id, 0)))
+        for player_id in ordered_ids
+    ):
+        raise SingleGameSimulationError(
+            "Allocation total exceeds available player caps."
+        )
+
+    result = {
+        player_id: 0
+        for player_id in ordered_ids
+    }
+    remaining = int(total_units)
+
+    while remaining > 0:
+        eligible = tuple(
+            player_id
+            for player_id in ordered_ids
+            if result[player_id]
+            < max(0, int(caps.get(player_id, 0)))
+        )
+        if not eligible:
+            raise SingleGameSimulationError(
+                "No eligible recipients remain for allocation."
+            )
+
+        allocation = allocate_integer_units(
+            remaining,
+            eligible,
+            {
+                player_id: max(
+                    0.0001,
+                    float(weights.get(player_id, 0.0)),
+                )
+                for player_id in eligible
+            },
+        )
+
+        overflow = 0
+        progress = False
+        for player_id in eligible:
+            available = (
+                max(0, int(caps.get(player_id, 0)))
+                - result[player_id]
+            )
+            assigned = min(
+                available,
+                allocation[player_id],
+            )
+            if assigned:
+                progress = True
+            result[player_id] += assigned
+            overflow += allocation[player_id] - assigned
+
+        if not progress and remaining:
+            first = eligible[0]
+            result[first] += 1
+            overflow = remaining - 1
+
+        remaining = overflow
+
+    return result
+
+
+def randomized_team_total(
+    rng: random.Random,
+    expected: float,
+    standard_deviation: float,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    if maximum < minimum:
+        maximum = minimum
+
+    return int(
+        round(
+            clamp(
+                rng.gauss(
+                    expected,
+                    standard_deviation,
+                ),
+                minimum,
+                maximum,
+            )
+        )
+    )
+
+
+def secondary_stat_weights(
+    state: SimulationLeagueState,
+    plan: TeamGamePlan,
+    scoring: dict[str, PlayerScoringProfile],
+    stat_name: str,
+) -> dict[str, float]:
+    weights: dict[str, float] = {}
+
+    for player_id in plan.player_ids:
+        player = state.players[player_id]
+        minutes = plan.minutes[player_id]
+        rating = plan.effective_ratings[player_id]
+        rating_factor = clamp(
+            0.78 + (rating - 67.0) / 55.0,
+            0.72,
+            1.24,
+        )
+        position_factor = position_stat_multiplier(
+            player.position,
+            stat_name,
+        )
+        usage_factor = 1.0
+
+        if stat_name == "turnovers":
+            usage_factor += (
+                scoring[player_id].points / 34.0
+            )
+        elif stat_name == "assists":
+            usage_factor += (
+                scoring[player_id].points / 85.0
+            )
+
+        weights[player_id] = (
+            max(minutes, 0.1)
+            * position_factor
+            * rating_factor
+            * usage_factor
+        )
+
+    return weights
+
+
+def build_team_secondary_stat_allocations(
+    rng: random.Random,
+    state: SimulationLeagueState,
+    plan: TeamGamePlan,
+    scoring: dict[str, PlayerScoringProfile],
+    *,
+    pace: float,
+    config: GameSimulationConfig,
+) -> dict[str, dict[str, int]]:
+    total_minutes = sum(plan.minutes.values())
+    game_length_scale = max(
+        1.0,
+        total_minutes / 240.0,
+    )
+    pace_scale = clamp(
+        pace / config.base_pace,
+        0.86,
+        1.16,
+    )
+    guard_share = team_position_share(
+        state,
+        plan,
+        {"PG", "SG"},
+    )
+    big_share = team_position_share(
+        state,
+        plan,
+        {"PF", "C"},
+    )
+    field_goals_made = sum(
+        profile.field_goals_made
+        for profile in scoring.values()
+    )
+    rating_edge = clamp(
+        (
+            plan.weighted_team_rating
+            - config.neutral_rating
+        )
+        / 10.0,
+        -1.0,
+        1.0,
+    )
+
+    rebound_expected = (
+        42.8
+        * pace_scale
+        * game_length_scale
+        + 3.0 * (big_share - 0.42)
+    )
+    assist_rate = clamp(
+        0.60
+        + 0.10 * guard_share
+        + 0.025 * rating_edge,
+        0.55,
+        0.74,
+    )
+    assist_expected = field_goals_made * assist_rate
+
+    minimum_assists = min(
+        field_goals_made,
+        int(round(8 * game_length_scale)),
+    )
+    maximum_assists = min(
+        field_goals_made,
+        int(round(38 * game_length_scale)),
+    )
+
+    totals = {
+        "rebounds": randomized_team_total(
+            rng,
+            rebound_expected,
+            3.1 * math.sqrt(game_length_scale),
+            minimum=int(round(30 * game_length_scale)),
+            maximum=int(round(60 * game_length_scale)),
+        ),
+        "assists": randomized_team_total(
+            rng,
+            assist_expected,
+            2.4 * math.sqrt(game_length_scale),
+            minimum=minimum_assists,
+            maximum=maximum_assists,
+        ),
+        "steals": randomized_team_total(
+            rng,
+            7.3 * pace_scale * game_length_scale,
+            1.7 * math.sqrt(game_length_scale),
+            minimum=int(round(2 * game_length_scale)),
+            maximum=int(round(16 * game_length_scale)),
+        ),
+        "blocks": randomized_team_total(
+            rng,
+            (
+                3.8
+                + 2.1 * big_share
+            )
+            * pace_scale
+            * game_length_scale,
+            1.5 * math.sqrt(game_length_scale),
+            minimum=0,
+            maximum=int(round(14 * game_length_scale)),
+        ),
+        "turnovers": randomized_team_total(
+            rng,
+            13.4 * pace_scale * game_length_scale,
+            2.2 * math.sqrt(game_length_scale),
+            minimum=int(round(6 * game_length_scale)),
+            maximum=int(round(24 * game_length_scale)),
+        ),
+        "fouls": randomized_team_total(
+            rng,
+            (
+                18.4
+                + 2.2 * big_share
+            )
+            * game_length_scale,
+            2.7 * math.sqrt(game_length_scale),
+            minimum=int(round(9 * game_length_scale)),
+            maximum=int(round(30 * game_length_scale)),
+        ),
+    }
+
+    caps_by_stat = {
+        "rebounds": 22,
+        "assists": 18,
+        "steals": 7,
+        "blocks": 8,
+        "turnovers": 9,
+        "fouls": 6,
+    }
+    allocations: dict[str, dict[str, int]] = {}
+
+    for stat_name, total in totals.items():
+        allocations[stat_name] = (
+            allocate_capped_integer_units(
+                total,
+                plan.player_ids,
+                secondary_stat_weights(
+                    state,
+                    plan,
+                    scoring,
+                    stat_name,
+                ),
+                {
+                    player_id: caps_by_stat[stat_name]
+                    for player_id in plan.player_ids
+                },
+            )
+        )
+
+    return allocations
+
+
 def build_player_box_scores(
     rng: random.Random,
     state: SimulationLeagueState,
     plan: TeamGamePlan,
     *,
     team_score: int,
+    pace: float,
+    config: GameSimulationConfig,
 ) -> tuple[PlayerBoxScore, ...]:
     point_allocation = allocate_integer_units(
         team_score,
         plan.player_ids,
         usage_weights(rng, plan),
     )
-    starter_set = set(plan.starter_ids)
-    lines: list[PlayerBoxScore] = []
+    scoring: dict[str, PlayerScoringProfile] = {}
 
     for player_id in plan.player_ids:
         player = state.players[player_id]
-        minutes = plan.minutes[player_id]
         points = point_allocation[player_id]
         (
             field_goals_made,
@@ -870,81 +1258,37 @@ def build_player_box_scores(
                 plan.effective_ratings[player_id]
             ),
         )
-
-        guard = any(
-            token in player.position
-            for token in ("PG", "SG")
-        )
-        wing = "SF" in player.position
-        big = any(
-            token in player.position
-            for token in ("PF", "C")
-        )
-        minute_share = minutes / 36.0
-        rating_factor = clamp(
-            (
-                plan.effective_ratings[player_id]
-                - 67.0
-            )
-            / 18.0,
-            0.25,
-            1.55,
+        scoring[player_id] = PlayerScoringProfile(
+            points=points,
+            field_goals_made=field_goals_made,
+            field_goals_attempted=(
+                field_goals_attempted
+            ),
+            three_pointers_made=(
+                three_pointers_made
+            ),
+            three_pointers_attempted=(
+                three_pointers_attempted
+            ),
+            free_throws_made=free_throws_made,
+            free_throws_attempted=(
+                free_throws_attempted
+            ),
         )
 
-        rebounds = noisy_count(
-            rng,
-            minute_share
-            * (
-                3.1
-                + 3.5 * int(big)
-                + 0.9 * int(wing)
-            ),
-            maximum=22,
-        )
-        assists = noisy_count(
-            rng,
-            minute_share
-            * (
-                2.1
-                + 3.8 * int(guard)
-                + 0.8 * rating_factor
-            ),
-            maximum=18,
-        )
-        steals = noisy_count(
-            rng,
-            minute_share * 0.95,
-            maximum=7,
-        )
-        blocks = noisy_count(
-            rng,
-            minute_share
-            * (
-                0.35
-                + 1.15 * int(big)
-            ),
-            maximum=8,
-        )
-        turnovers = noisy_count(
-            rng,
-            minute_share
-            * (
-                1.0
-                + points / 24.0
-                + 0.65 * int(guard)
-            ),
-            maximum=9,
-        )
-        fouls = noisy_count(
-            rng,
-            minute_share
-            * (
-                1.65
-                + 0.45 * int(big)
-            ),
-            maximum=6,
-        )
+    secondary = build_team_secondary_stat_allocations(
+        rng,
+        state,
+        plan,
+        scoring,
+        pace=pace,
+        config=config,
+    )
+    starter_set = set(plan.starter_ids)
+    lines: list[PlayerBoxScore] = []
 
+    for player_id in plan.player_ids:
+        profile = scoring[player_id]
         lines.append(
             PlayerBoxScore(
                 player_id=player_id,
@@ -954,31 +1298,43 @@ def build_player_box_scores(
                 started=(
                     player_id in starter_set
                 ),
-                minutes=minutes,
-                points=points,
-                rebounds=rebounds,
-                assists=assists,
-                steals=steals,
-                blocks=blocks,
-                turnovers=turnovers,
-                fouls=fouls,
+                minutes=plan.minutes[player_id],
+                points=profile.points,
+                rebounds=secondary[
+                    "rebounds"
+                ][player_id],
+                assists=secondary[
+                    "assists"
+                ][player_id],
+                steals=secondary[
+                    "steals"
+                ][player_id],
+                blocks=secondary[
+                    "blocks"
+                ][player_id],
+                turnovers=secondary[
+                    "turnovers"
+                ][player_id],
+                fouls=secondary[
+                    "fouls"
+                ][player_id],
                 field_goals_made=(
-                    field_goals_made
+                    profile.field_goals_made
                 ),
                 field_goals_attempted=(
-                    field_goals_attempted
+                    profile.field_goals_attempted
                 ),
                 three_pointers_made=(
-                    three_pointers_made
+                    profile.three_pointers_made
                 ),
                 three_pointers_attempted=(
-                    three_pointers_attempted
+                    profile.three_pointers_attempted
                 ),
                 free_throws_made=(
-                    free_throws_made
+                    profile.free_throws_made
                 ),
                 free_throws_attempted=(
-                    free_throws_attempted
+                    profile.free_throws_attempted
                 ),
             )
         )
@@ -1071,12 +1427,16 @@ def simulate_scheduled_game(
         state,
         home_plan,
         team_score=home_score,
+        pace=pace,
+        config=resolved_config,
     )
     away_lines = build_player_box_scores(
         rng,
         state,
         away_plan,
         team_score=away_score,
+        pace=pace,
+        config=resolved_config,
     )
     game = CompletedGame(
         game_id=game_id,
@@ -1391,6 +1751,72 @@ def run_self_test() -> dict[str, Any]:
         )
     )
 
+    checks["position_profiles_are_directional"] = (
+        position_stat_multiplier(
+            "C",
+            "rebounds",
+        )
+        > position_stat_multiplier(
+            "PG",
+            "rebounds",
+        )
+        and position_stat_multiplier(
+            "PG",
+            "assists",
+        )
+        > position_stat_multiplier(
+            "C",
+            "assists",
+        )
+        and position_stat_multiplier(
+            "C",
+            "blocks",
+        )
+        > position_stat_multiplier(
+            "PG",
+            "blocks",
+        )
+        and position_stat_multiplier(
+            "PG/SG",
+            "blocks",
+        )
+        > 0.30
+    )
+
+    preview_team_lines = {
+        team: [
+            line
+            for line in preview_one.game.player_box_scores
+            if line.team_abbreviation == team
+        ]
+        for team in (home_team, away_team)
+    }
+    checks["team_secondary_totals_are_plausible"] = all(
+        30 <= sum(line.rebounds for line in lines) <= 60
+        and 2 <= sum(line.steals for line in lines) <= 16
+        and 0 <= sum(line.blocks for line in lines) <= 14
+        and 6 <= sum(line.turnovers for line in lines) <= 24
+        and 9 <= sum(line.fouls for line in lines) <= 30
+        for lines in preview_team_lines.values()
+    )
+    checks["team_assists_respect_made_shots"] = all(
+        sum(line.assists for line in lines)
+        <= sum(
+            line.field_goals_made
+            for line in lines
+        )
+        for lines in preview_team_lines.values()
+    )
+    checks["individual_secondary_caps_hold"] = all(
+        line.rebounds <= 22
+        and line.assists <= 18
+        and line.steals <= 7
+        and line.blocks <= 8
+        and line.turnovers <= 9
+        and line.fouls <= 6
+        for line in preview_one.game.player_box_scores
+    )
+
     committed = simulate_scheduled_game(
         state,
         "SIM-TEST-0001",
@@ -1584,6 +2010,38 @@ def run_self_test() -> dict[str, Any]:
                 unavailable_player
             ),
             "coach_sit_player": sit_player,
+            "home_secondary_totals": {
+                "rebounds": sum(
+                    line.rebounds
+                    for line in preview_one.game.player_box_scores
+                    if line.team_abbreviation == home_team
+                ),
+                "assists": sum(
+                    line.assists
+                    for line in preview_one.game.player_box_scores
+                    if line.team_abbreviation == home_team
+                ),
+                "steals": sum(
+                    line.steals
+                    for line in preview_one.game.player_box_scores
+                    if line.team_abbreviation == home_team
+                ),
+                "blocks": sum(
+                    line.blocks
+                    for line in preview_one.game.player_box_scores
+                    if line.team_abbreviation == home_team
+                ),
+                "turnovers": sum(
+                    line.turnovers
+                    for line in preview_one.game.player_box_scores
+                    if line.team_abbreviation == home_team
+                ),
+                "fouls": sum(
+                    line.fouls
+                    for line in preview_one.game.player_box_scores
+                    if line.team_abbreviation == home_team
+                ),
+            },
         },
         "passed": not failed,
     }

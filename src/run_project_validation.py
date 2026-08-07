@@ -68,6 +68,8 @@ from simulation_league_state_v1 import (  # noqa: E402
     validate_simulation_league_state,
 )
 from single_game_simulator_v1 import (  # noqa: E402
+    ENGINE_VERSION as GAME_ENGINE_VERSION,
+    position_stat_multiplier,
     simulate_scheduled_game,
     team_box_score_reconciles,
 )
@@ -78,7 +80,7 @@ from simulation_league_state_v1 import (  # noqa: E402
 
 
 VALIDATOR_VERSION = (
-    "project-validation-runner-v1.5-2026-08-08"
+    "project-validation-runner-v1.7-2026-08-08"
 )
 QUICK_REPORT = (
     OUTPUTS / "project_validation_quick_v1.json"
@@ -254,6 +256,7 @@ def validate_required_files(
         PAGES / "4_Game_Simulator.py",
         APP_DATA / "player_positions_2026_27_v1.json",
         SRC / "build_player_positions_v1.py",
+        SRC / "validate_position_aware_game_stats_v2.py",
         SRC / "freeform_trade_machine_engine_v3.py",
         SRC / "mutable_league_state_v1.py",
         SRC / "state_runtime_adapter_v1.py",
@@ -767,6 +770,108 @@ def quick_runtime_validation(
         details=(
             "completed_games=0; standings_games=0"
         ),
+    )
+
+    require(
+        checks,
+        phase="single_game",
+        name="position_aware_stat_engine_active",
+        condition=(
+            GAME_ENGINE_VERSION
+            == "single-game-simulator-v1.2-2026-08-08"
+            and position_stat_multiplier(
+                "C",
+                "rebounds",
+            )
+            > position_stat_multiplier(
+                "PG",
+                "rebounds",
+            )
+            and position_stat_multiplier(
+                "PG",
+                "assists",
+            )
+            > position_stat_multiplier(
+                "C",
+                "assists",
+            )
+            and position_stat_multiplier(
+                "C",
+                "blocks",
+            )
+            > position_stat_multiplier(
+                "PG",
+                "blocks",
+            )
+            and position_stat_multiplier(
+                "PG/SG",
+                "blocks",
+            )
+            > 0.30
+        ),
+        details=GAME_ENGINE_VERSION,
+    )
+
+    preview_lines_by_team = {
+        team: [
+            line
+            for line in preview.game.player_box_scores
+            if line.team_abbreviation == team
+        ]
+        for team in (
+            preview.game.home_team,
+            preview.game.away_team,
+        )
+    }
+    plausible_secondary_totals = all(
+        30 <= sum(
+            line.rebounds
+            for line in lines
+        ) <= 60
+        and 2 <= sum(
+            line.steals
+            for line in lines
+        ) <= 16
+        and 0 <= sum(
+            line.blocks
+            for line in lines
+        ) <= 14
+        and 6 <= sum(
+            line.turnovers
+            for line in lines
+        ) <= 24
+        and 9 <= sum(
+            line.fouls
+            for line in lines
+        ) <= 30
+        and sum(
+            line.assists
+            for line in lines
+        )
+        <= sum(
+            line.field_goals_made
+            for line in lines
+        )
+        for lines in preview_lines_by_team.values()
+    )
+    secondary_details = "; ".join(
+        (
+            f"{team}: "
+            f"REB={sum(line.rebounds for line in lines)}, "
+            f"AST={sum(line.assists for line in lines)}, "
+            f"STL={sum(line.steals for line in lines)}, "
+            f"BLK={sum(line.blocks for line in lines)}, "
+            f"TO={sum(line.turnovers for line in lines)}, "
+            f"PF={sum(line.fouls for line in lines)}"
+        )
+        for team, lines in preview_lines_by_team.items()
+    )
+    require(
+        checks,
+        phase="single_game",
+        name="position_aware_team_totals_are_plausible",
+        condition=plausible_secondary_totals,
+        details=secondary_details,
     )
 
     committed = simulate_scheduled_game(
@@ -1325,6 +1430,21 @@ def run_full() -> dict[str, Any]:
                 SRC / "single_game_simulator_v1.py"
             ),
             "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="position_aware_game_stat_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_position_aware_game_stats_v2.py"
+            ),
+            "--games",
+            "180",
+            "--seed",
+            "20260808",
         ],
     )
 
