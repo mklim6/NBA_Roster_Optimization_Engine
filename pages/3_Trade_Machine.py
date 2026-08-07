@@ -370,9 +370,9 @@ st.caption(
 with st.expander("What each result means", expanded=False):
     st.markdown(
         """
-        **PASS** means the currently connected evidence stage found no issue.  
+        **PASS** means the currently connected evidence stage found no issue.
         **BLOCKED** means a deterministic rule failed, such as roster ownership,
-        trade eligibility, or an active aggregation restriction.  
+        trade eligibility, or an active aggregation restriction.
         **MANUAL REVIEW** means the trade may still be workable, but V1 lacks a
         transaction-specific salary, apron, consent, bonus, or draft-right ruling.
         """
