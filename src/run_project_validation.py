@@ -54,10 +54,14 @@ from trade_mode_policy_v1 import (  # noqa: E402
     find_forceable_blocked_trade,
     find_missing_cba_manual_trade,
 )
+from simulation_roster_validator_v1 import (  # noqa: E402
+    build_simulation_roster_snapshot,
+    snapshot_report,
+)
 
 
 VALIDATOR_VERSION = (
-    "project-validation-runner-v1.1-2026-08-07"
+    "project-validation-runner-v1.2-2026-08-08"
 )
 QUICK_REPORT = (
     OUTPUTS / "project_validation_quick_v1.json"
@@ -235,6 +239,7 @@ def validate_required_files(
         SRC / "state_runtime_adapter_v1.py",
         SRC / "league_scenario_store_v1.py",
         SRC / "trade_mode_policy_v1.py",
+        SRC / "simulation_roster_validator_v1.py",
         SRC
         / "validate_mutable_league_state_integration_v1.py",
     ]
@@ -407,6 +412,55 @@ def quick_runtime_validation(
                 in adapter_checks.items()
                 if not passed
             )
+        ),
+    )
+
+    roster_started = time.perf_counter()
+    roster_snapshot = build_simulation_roster_snapshot(
+        adapted_initial,
+        state,
+    )
+    roster_report = snapshot_report(
+        roster_snapshot
+    )
+
+    require(
+        checks,
+        phase="simulation_rosters",
+        name="all_30_teams_ready_for_game",
+        condition=(
+            roster_snapshot.ready
+            and len(roster_snapshot.teams) == 30
+            and roster_report["summary"]["ready_teams"] == 30
+        ),
+        details=(
+            f"ready={roster_report['summary']['ready_teams']}; "
+            f"teams={roster_report['summary']['teams']}"
+        ),
+        seconds=elapsed_seconds(roster_started),
+    )
+    require(
+        checks,
+        phase="simulation_rosters",
+        name="baseline_needs_no_emergency_replacements",
+        condition=(
+            roster_report["summary"]["replacement_players"] == 0
+        ),
+        details=(
+            "replacement_players="
+            f"{roster_report['summary']['replacement_players']}"
+        ),
+    )
+    require(
+        checks,
+        phase="simulation_rosters",
+        name="baseline_has_no_missing_ratings",
+        condition=(
+            roster_report["summary"]["fallback_rating_players"] == 0
+        ),
+        details=(
+            "fallback_rating_players="
+            f"{roster_report['summary']['fallback_rating_players']}"
         ),
     )
 
@@ -744,6 +798,7 @@ def quick_runtime_validation(
                 f"{force_request.side_b.team_abbreviation}"
             ),
         },
+        "simulation_rosters": roster_report["summary"],
     }
 
 
@@ -879,6 +934,17 @@ def run_full() -> dict[str, Any]:
             sys.executable,
             str(
                 SRC / "trade_mode_policy_v1.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="simulation_roster_validator_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC / "simulation_roster_validator_v1.py"
             ),
             "--self-test",
         ],
