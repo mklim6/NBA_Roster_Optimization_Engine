@@ -63,10 +63,18 @@ from simulation_league_state_v1 import (  # noqa: E402
     initial_state_summary,
     validate_simulation_league_state,
 )
+from single_game_simulator_v1 import (  # noqa: E402
+    simulate_scheduled_game,
+    team_box_score_reconciles,
+)
+from simulation_league_state_v1 import (  # noqa: E402
+    ScheduledGame,
+    add_scheduled_games,
+)
 
 
 VALIDATOR_VERSION = (
-    "project-validation-runner-v1.3-2026-08-08"
+    "project-validation-runner-v1.4-2026-08-08"
 )
 QUICK_REPORT = (
     OUTPUTS / "project_validation_quick_v1.json"
@@ -246,6 +254,7 @@ def validate_required_files(
         SRC / "trade_mode_policy_v1.py",
         SRC / "simulation_roster_validator_v1.py",
         SRC / "simulation_league_state_v1.py",
+        SRC / "single_game_simulator_v1.py",
         SRC
         / "validate_mutable_league_state_integration_v1.py",
     ]
@@ -528,6 +537,122 @@ def quick_runtime_validation(
             f"scheduled={simulation_summary['scheduled_games']}; "
             f"completed={simulation_summary['completed_games']}; "
             f"phase={simulation_summary['phase']}"
+        ),
+    )
+
+    game_started = time.perf_counter()
+    game_teams = sorted(simulation_state.teams)
+    preview_state_signature = {
+        "completed_games": len(
+            simulation_state.completed_games
+        ),
+        "games_played": sum(
+            standing.games_played
+            for standing in simulation_state.standings.values()
+        ),
+    }
+    add_scheduled_games(
+        simulation_state,
+        [
+            ScheduledGame(
+                game_id="QUICK-SIM-0001",
+                day_index=1,
+                home_team=game_teams[0],
+                away_team=game_teams[1],
+            )
+        ],
+    )
+    preview = simulate_scheduled_game(
+        simulation_state,
+        "QUICK-SIM-0001",
+        seed=20260808,
+        commit=False,
+    )
+    preview_signature_after = {
+        "completed_games": len(
+            simulation_state.completed_games
+        ),
+        "games_played": sum(
+            standing.games_played
+            for standing in simulation_state.standings.values()
+        ),
+    }
+
+    require(
+        checks,
+        phase="single_game",
+        name="preview_simulation_reconciles",
+        condition=(
+            preview.game.home_score
+            != preview.game.away_score
+            and team_box_score_reconciles(
+                preview.game,
+                preview.game.home_team,
+                regulation_minutes=(
+                    simulation_state.settings.regulation_minutes
+                ),
+                overtime_minutes=(
+                    simulation_state.settings.overtime_minutes
+                ),
+            )
+            and team_box_score_reconciles(
+                preview.game,
+                preview.game.away_team,
+                regulation_minutes=(
+                    simulation_state.settings.regulation_minutes
+                ),
+                overtime_minutes=(
+                    simulation_state.settings.overtime_minutes
+                ),
+            )
+        ),
+        details=(
+            f"{preview.game.away_team} "
+            f"{preview.game.away_score}, "
+            f"{preview.game.home_team} "
+            f"{preview.game.home_score}"
+        ),
+        seconds=elapsed_seconds(game_started),
+    )
+    require(
+        checks,
+        phase="single_game",
+        name="preview_simulation_does_not_mutate_results",
+        condition=(
+            preview_state_signature
+            == preview_signature_after
+        ),
+        details=(
+            "completed_games=0; standings_games=0"
+        ),
+    )
+
+    committed = simulate_scheduled_game(
+        simulation_state,
+        "QUICK-SIM-0001",
+        seed=20260808,
+        commit=True,
+    )
+    require(
+        checks,
+        phase="single_game",
+        name="committed_simulation_updates_state",
+        condition=(
+            committed.game == preview.game
+            and len(
+                simulation_state.completed_games
+            )
+            == 1
+            and sum(
+                standing.games_played
+                for standing
+                in simulation_state.standings.values()
+            )
+            == 2
+        ),
+        details=(
+            f"game_id={committed.game.game_id}; "
+            f"completed={len(simulation_state.completed_games)}"
         ),
     )
 
@@ -878,6 +1003,16 @@ def quick_runtime_validation(
             ),
             "phase": simulation_summary["phase"],
         },
+        "single_game": {
+            "game_id": committed.game.game_id,
+            "home_team": committed.game.home_team,
+            "away_team": committed.game.away_team,
+            "home_score": committed.game.home_score,
+            "away_score": committed.game.away_score,
+            "overtime_periods": (
+                committed.game.overtime_periods
+            ),
+        },
     }
 
 
@@ -1035,6 +1170,17 @@ def run_full() -> dict[str, Any]:
             sys.executable,
             str(
                 SRC / "simulation_league_state_v1.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="single_game_simulator_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC / "single_game_simulator_v1.py"
             ),
             "--self-test",
         ],
