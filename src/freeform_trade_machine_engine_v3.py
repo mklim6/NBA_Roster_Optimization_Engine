@@ -2848,6 +2848,23 @@ def evaluate_trade(
     side_a = evaluate_side_base(runtime, request.side_a)
     side_b = evaluate_side_base(runtime, request.side_b)
 
+    if not (
+        side_a.player_ids
+        or side_a.pick_right_ids
+        or side_b.player_ids
+        or side_b.pick_right_ids
+    ):
+        global_checks.append(
+            CheckResult(
+                status=Status.BLOCKED,
+                code="empty_trade",
+                message=(
+                    "A trade must include at least one player "
+                    "or draft right."
+                ),
+            )
+        )
+
     if side_a.pick_right_ids:
         side_a.checks.append(
             evaluate_pick_package(
@@ -3268,7 +3285,23 @@ def run_self_test() -> dict[str, Any]:
         )
     )
 
+    known_teams = sorted(runtime.team_salary_by_team)
+    empty_trade_status = evaluate_trade(
+        runtime,
+        TradeRequest(
+            side_a=TradeSideRequest(
+                team_abbreviation=known_teams[0],
+            ),
+            side_b=TradeSideRequest(
+                team_abbreviation=known_teams[1],
+            ),
+        ),
+    ).status
+
     checks = {
+        "empty_trade_is_blocked": (
+            empty_trade_status == Status.BLOCKED
+        ),
         "trade_pool_rows_395": len(runtime.trade_pool) == 395,
         "financial_rows_582": len(runtime.financial) == 582,
         "market_rows_395": len(runtime.market) == 395,
