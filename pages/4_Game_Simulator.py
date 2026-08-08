@@ -5,6 +5,7 @@ import html
 import importlib.util
 import secrets
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,16 @@ from mutable_league_state_v1 import (  # noqa: E402
     StateMutationError,
     create_league_state,
 )
+from simulation_module_bootstrap_v1 import (  # noqa: E402
+    BOOTSTRAP_VERSION,
+    SimulationModuleBootstrapError,
+    ensure_current_simulation_modules,
+)
+
+
+# Streamlit may preload an older simulator module object before this page
+# begins. Repair that chain before importing any state-dependent controller.
+ensure_current_simulation_modules()
 def load_local_roster_validator():
     """Load the validator from this project's exact src file.
 
@@ -101,6 +112,30 @@ from simulation_season_transition_controller_v1 import (  # noqa: E402
     incomplete_scheduled_game_ids,
     next_target_season,
     preview_matches_state,
+)
+from regular_season_schedule_v1 import (  # noqa: E402
+    LEAGUE_GAME_COUNT,
+    RegularSeasonScheduleError,
+    generate_regular_season_schedule,
+    install_regular_season_schedule,
+)
+from regular_season_simulation_controller_v1 import (  # noqa: E402
+    RegularSeasonSimulationControllerError,
+    SimulationScope,
+    regular_season_progress,
+    simulate_regular_season_scope,
+)
+from franchise_calendar_v1 import (  # noqa: E402
+    CALENDAR_VERSION,
+    FranchiseCalendarError,
+    available_calendar_months,
+    build_team_month_calendar,
+    calendar_html,
+    controlled_team_pause,
+    date_for_day_index,
+    default_calendar_month,
+    normalize_controlled_teams,
+    team_schedule_games,
 )
 from state_runtime_adapter_v1 import (  # noqa: E402
     StateRuntimeAdapterError,
@@ -190,6 +225,10 @@ def clear_season_transition_preview() -> None:
 def away_team_changed() -> None:
     clear_game_preview()
     st.session_state.pop(
+        "game_simulator_selected_schedule_game_id",
+        None,
+    )
+    st.session_state.pop(
         "game_simulator_away_sit",
         None,
     )
@@ -198,7 +237,135 @@ def away_team_changed() -> None:
 def home_team_changed() -> None:
     clear_game_preview()
     st.session_state.pop(
+        "game_simulator_selected_schedule_game_id",
+        None,
+    )
+    st.session_state.pop(
         "game_simulator_home_sit",
+        None,
+    )
+
+
+def clear_franchise_game_selection() -> None:
+    st.session_state.pop(
+        "game_simulator_selected_schedule_game_id",
+        None,
+    )
+    clear_game_preview()
+
+
+def prepare_scheduled_game(
+    state: SimulationLeagueState,
+    game_id: str,
+) -> None:
+    game = state.schedule.get(game_id)
+
+    if (
+        game is None
+        or game.status != GameStatus.SCHEDULED
+    ):
+        raise FranchiseCalendarError(
+            "Only an upcoming scheduled game can be prepared."
+        )
+
+    st.session_state[
+        "game_simulator_selected_schedule_game_id"
+    ] = game_id
+    st.session_state[
+        "game_simulator_away_team"
+    ] = game.away_team
+    st.session_state[
+        "game_simulator_home_team"
+    ] = game.home_team
+    st.session_state.pop(
+        "game_simulator_away_sit",
+        None,
+    )
+    st.session_state.pop(
+        "game_simulator_home_sit",
+        None,
+    )
+    clear_game_preview()
+
+
+def schedule_game_label(
+    state: SimulationLeagueState,
+    game_id: str,
+) -> str:
+    game = state.schedule[game_id]
+    game_date = date_for_day_index(
+        state.settings.season_label,
+        game.day_index,
+    )
+    return (
+        f"{game_date.strftime('%b %d')} · "
+        f"{game.away_team} at {game.home_team}"
+    )
+
+
+def execute_calendar_scope(
+    state: SimulationLeagueState,
+    *,
+    controlled_teams: tuple[str, ...],
+    scope: SimulationScope,
+) -> tuple[
+    SimulationLeagueState,
+    str,
+    str | None,
+]:
+    pause = controlled_team_pause(
+        state,
+        controlled_teams=controlled_teams,
+        scope=scope,
+    )
+
+    if pause.requires_user_action:
+        selected_game_id = (
+            pause.pause_game_ids[0]
+            if pause.pause_game_ids
+            else None
+        )
+
+        if pause.can_auto_advance:
+            next_state, result = (
+                simulate_regular_season_scope(
+                    state,
+                    scope=SimulationScope.THROUGH_DAY,
+                    target_day=pause.auto_target_day,
+                )
+            )
+            message = (
+                f"Simulated {result.games_simulated} game(s) "
+                f"through day {result.final_current_day}. "
+                "Paused before the next controlled-team game."
+            )
+            return (
+                next_state,
+                message,
+                selected_game_id,
+            )
+
+        return (
+            state,
+            (
+                "No games were auto-simulated because the next "
+                "unplayed day contains a controlled-team game."
+            ),
+            selected_game_id,
+        )
+
+    next_state, result = (
+        simulate_regular_season_scope(
+            state,
+            scope=scope,
+        )
+    )
+    return (
+        next_state,
+        (
+            f"Simulated {result.games_simulated} game(s) "
+            f"through day {result.final_current_day}."
+        ),
         None,
     )
 
@@ -293,6 +460,7 @@ def create_fresh_simulation_state(
     ] = current_position_signature()
     clear_game_preview()
     clear_season_transition_preview()
+    clear_franchise_game_selection()
     return state
 
 
@@ -538,6 +706,114 @@ def inject_styles() -> None:
   font-size: .84rem;
   line-height: 1.5;
 }
+.fc-calendar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+.fc-weekday {
+  padding: 8px 4px;
+  color: #667085;
+  font-size: .68rem;
+  font-weight: 850;
+  letter-spacing: .12em;
+  text-align: center;
+}
+.fc-day {
+  min-height: 112px;
+  border: 1px solid #e4e7ec;
+  border-radius: 14px;
+  padding: 9px;
+  background: #ffffff;
+  box-shadow: 0 3px 9px rgba(16,24,40,.04);
+}
+.fc-day.outside {
+  opacity: .32;
+  background: #f8fafc;
+}
+.fc-day.current {
+  border: 2px solid #f79009;
+  box-shadow: 0 0 0 3px rgba(247,144,9,.14);
+}
+.fc-day.home {
+  background:
+    linear-gradient(145deg, rgba(239,248,255,.98), #ffffff);
+  border-color: #84caff;
+}
+.fc-day.away {
+  background:
+    linear-gradient(145deg, rgba(255,244,237,.98), #ffffff);
+  border-color: #f7b27a;
+}
+.fc-date {
+  color: #344054;
+  font-size: .72rem;
+  font-weight: 850;
+}
+.fc-rest {
+  display: flex;
+  min-height: 70px;
+  align-items: center;
+  justify-content: center;
+  color: #98a2b3;
+  font-size: .64rem;
+  font-weight: 750;
+  letter-spacing: .08em;
+}
+.fc-game {
+  display: flex;
+  min-height: 70px;
+  flex-direction: column;
+  justify-content: center;
+}
+.fc-opponent {
+  color: #101828;
+  font-size: .98rem;
+  font-weight: 900;
+}
+.fc-result {
+  margin-top: 8px;
+  color: #027a48;
+  font-size: .76rem;
+  font-weight: 850;
+}
+.fc-upcoming {
+  margin-top: 8px;
+  color: #175cd3;
+  font-size: .65rem;
+  font-weight: 850;
+  letter-spacing: .08em;
+}
+.fc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 8px 0 2px;
+  color: #667085;
+  font-size: .74rem;
+  font-weight: 700;
+}
+.fc-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.fc-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+}
+.fc-swatch.home {
+  background: #b2ddff;
+}
+.fc-swatch.away {
+  background: #f7b27a;
+}
+.fc-swatch.current {
+  border: 2px solid #f79009;
+  background: #fffaeb;
+}
 @media (max-width: 760px) {
   .gs-score-body {
     grid-template-columns: 1fr;
@@ -566,9 +842,9 @@ def render_hero(
   <div class="gs-hero-kicker">Front Office Simulation Lab</div>
   <div class="gs-hero-title">NBA Game Simulator</div>
   <div class="gs-hero-copy">
-    Choose a matchup, adjust who plays, preview a seeded result,
-    commit games to permanent standings, and advance the league
-    through player development and regression.
+    Control one or more teams, manage a full season calendar,
+    prepare lineups for upcoming games, simulate the league safely,
+    and carry permanent results into future seasons.
   </div>
 </div>
 <div class="gs-source">
@@ -576,6 +852,7 @@ def render_hero(
   Season {escaped(simulation_state.settings.season_label)}
   · {escaped(simulation_state.phase.value.replace("_", " ").title())}
   · Trade universe revision {trade_state.state_revision}
+  · Bootstrap {escaped(BOOTSTRAP_VERSION)}
   · {len(trade_state.transaction_history)} applied trade(s)
   · {len(simulation_state.completed_games)} completed game(s)
 </div>
@@ -1148,11 +1425,534 @@ if notice:
     st.success(notice)
 
 st.markdown(
-    '<div class="gs-section">01 · Build the matchup</div>',
+    '<div class="gs-section">00 · Franchise calendar</div>',
     unsafe_allow_html=True,
 )
 
 teams = sorted(simulation_state.teams)
+controlled_key = (
+    "game_simulator_controlled_teams"
+)
+if controlled_key not in st.session_state:
+    st.session_state[controlled_key] = (
+        ["CHI"]
+        if "CHI" in teams
+        else [teams[0]]
+    )
+
+franchise_control_columns = st.columns(
+    [2.4, 1.5, 1.1]
+)
+
+with franchise_control_columns[0]:
+    controlled_team_values = st.multiselect(
+        "User-controlled teams",
+        options=teams,
+        format_func=team_label,
+        key=controlled_key,
+        help=(
+            "Batch simulation pauses before games involving "
+            "any controlled team so you can manage rotations "
+            "and availability."
+        ),
+    )
+
+try:
+    controlled_teams = (
+        normalize_controlled_teams(
+            controlled_team_values,
+            available_teams=teams,
+        )
+    )
+except FranchiseCalendarError as exc:
+    st.error(str(exc))
+    controlled_teams = ()
+
+viewed_key = (
+    "game_simulator_viewed_team"
+)
+preferred_viewed_team = (
+    controlled_teams[0]
+    if controlled_teams
+    else teams[0]
+)
+if (
+    viewed_key not in st.session_state
+    or st.session_state[viewed_key]
+    not in teams
+):
+    st.session_state[
+        viewed_key
+    ] = preferred_viewed_team
+
+with franchise_control_columns[1]:
+    viewed_team = st.selectbox(
+        "Calendar team",
+        options=teams,
+        format_func=team_label,
+        key=viewed_key,
+    )
+
+with franchise_control_columns[2]:
+    st.metric(
+        "Controlled",
+        len(controlled_teams),
+    )
+
+full_schedule_active = (
+    len(simulation_state.schedule)
+    == LEAGUE_GAME_COUNT
+)
+partial_schedule_active = bool(
+    simulation_state.schedule
+) and not full_schedule_active
+
+if not simulation_state.schedule:
+    with st.container(border=True):
+        schedule_columns = st.columns(
+            [3.7, 1.3]
+        )
+
+        with schedule_columns[0]:
+            st.markdown(
+                '<div class="gs-card-title">'
+                'Create the generated 2026–27 season'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '<div class="gs-card-copy">'
+                'This installs the validated realistic filler '
+                'schedule: 1,230 games, 82 per team, 41 home '
+                'and 41 away. It is not the official NBA '
+                'schedule and can later be replaced by an '
+                'official-schedule import layer.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+
+        with schedule_columns[1]:
+            install_schedule_clicked = (
+                st.button(
+                    "Generate schedule",
+                    type="primary",
+                    width="stretch",
+                    key=(
+                        "game_simulator_install_"
+                        "regular_schedule"
+                    ),
+                )
+            )
+
+    if install_schedule_clicked:
+        try:
+            scheduled_state = copy.deepcopy(
+                simulation_state
+            )
+            generated_schedule = (
+                generate_regular_season_schedule(
+                    scheduled_state,
+                    seed=(
+                        scheduled_state.settings
+                        .random_seed
+                    ),
+                )
+            )
+            install_regular_season_schedule(
+                scheduled_state,
+                generated_schedule,
+            )
+            validate_simulation_league_state(
+                scheduled_state
+            )
+        except (
+            RegularSeasonScheduleError,
+            SimulationLeagueStateError,
+            ValueError,
+            KeyError,
+        ) as exc:
+            st.error(
+                "The 82-game schedule could not be "
+                f"installed. Detail: {exc}"
+            )
+        else:
+            st.session_state[
+                "game_simulator_league_state"
+            ] = scheduled_state
+            clear_game_preview()
+            clear_season_transition_preview()
+            clear_franchise_game_selection()
+            st.session_state[
+                "game_simulator_notice"
+            ] = (
+                "Generated and installed the realistic "
+                "1,230-game simulation schedule."
+            )
+            st.rerun()
+
+elif partial_schedule_active:
+    st.markdown(
+        '<div class="gs-warning">'
+        'The current season contains a partial custom schedule. '
+        'Reset the season before installing the complete '
+        '82-game franchise calendar.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+else:
+    progress = regular_season_progress(
+        simulation_state
+    )
+    calendar_month_options = (
+        available_calendar_months(
+            simulation_state
+        )
+    )
+    default_month_value = (
+        default_calendar_month(
+            simulation_state,
+            viewed_team,
+        )
+    )
+    calendar_month_key = (
+        "game_simulator_calendar_month"
+    )
+
+    if (
+        calendar_month_key
+        not in st.session_state
+        or st.session_state[
+            calendar_month_key
+        ] not in calendar_month_options
+    ):
+        st.session_state[
+            calendar_month_key
+        ] = default_month_value
+
+    calendar_header_columns = st.columns(
+        [1.7, 1, 1, 1, 1]
+    )
+
+    with calendar_header_columns[0]:
+        selected_month = st.selectbox(
+            "Calendar month",
+            options=calendar_month_options,
+            format_func=lambda value: date(
+                value[0],
+                value[1],
+                1,
+            ).strftime("%B %Y"),
+            key=calendar_month_key,
+        )
+
+    calendar_model = (
+        build_team_month_calendar(
+            simulation_state,
+            viewed_team,
+            year=selected_month[0],
+            month=selected_month[1],
+            controlled_teams=(
+                controlled_teams
+            ),
+        )
+    )
+
+    calendar_header_columns[1].metric(
+        "Season progress",
+        (
+            f"{progress['completion_percentage']:.1f}%"
+        ),
+    )
+    calendar_header_columns[2].metric(
+        "Month games",
+        calendar_model.scheduled_games,
+    )
+    calendar_header_columns[3].metric(
+        "Home",
+        calendar_model.home_games,
+    )
+    calendar_header_columns[4].metric(
+        "Away",
+        calendar_model.away_games,
+    )
+
+    st.markdown(
+        '<div class="fc-legend">'
+        '<span><i class="fc-swatch home"></i>Home</span>'
+        '<span><i class="fc-swatch away"></i>Away</span>'
+        '<span><i class="fc-swatch current"></i>Current day</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        calendar_html(
+            calendar_model
+        ),
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Generated simulation schedule. Day 1 is displayed "
+        "as October 20 of the season start year. The calendar "
+        "is a realistic filler until an official schedule "
+        "import is available."
+    )
+
+    viewed_upcoming_games = [
+        game
+        for game in team_schedule_games(
+            simulation_state,
+            viewed_team,
+        )
+        if (
+            game.status
+            == GameStatus.SCHEDULED
+            and date_for_day_index(
+                simulation_state.settings
+                .season_label,
+                game.day_index,
+            ).year
+            == selected_month[0]
+            and date_for_day_index(
+                simulation_state.settings
+                .season_label,
+                game.day_index,
+            ).month
+            == selected_month[1]
+        )
+    ]
+
+    if not viewed_upcoming_games:
+        viewed_upcoming_games = [
+            game
+            for game in team_schedule_games(
+                simulation_state,
+                viewed_team,
+            )
+            if game.status
+            == GameStatus.SCHEDULED
+        ][:8]
+
+    upcoming_columns = st.columns(
+        [2.6, 1.1]
+    )
+    selected_calendar_game_id = None
+
+    with upcoming_columns[0]:
+        if viewed_upcoming_games:
+            selected_calendar_game_id = (
+                st.selectbox(
+                    "Upcoming matchup to manage",
+                    options=[
+                        game.game_id
+                        for game
+                        in viewed_upcoming_games
+                    ],
+                    format_func=lambda game_id: (
+                        schedule_game_label(
+                            simulation_state,
+                            game_id,
+                        )
+                    ),
+                    key=(
+                        "game_simulator_calendar_"
+                        "upcoming_game"
+                    ),
+                )
+            )
+        else:
+            st.info(
+                "This team has no remaining regular-season "
+                "games."
+            )
+
+    with upcoming_columns[1]:
+        prepare_game_clicked = st.button(
+            "Prepare matchup",
+            width="stretch",
+            disabled=(
+                selected_calendar_game_id
+                is None
+            ),
+            key=(
+                "game_simulator_prepare_"
+                "calendar_game"
+            ),
+        )
+
+    if (
+        prepare_game_clicked
+        and selected_calendar_game_id
+        is not None
+    ):
+        try:
+            prepare_scheduled_game(
+                simulation_state,
+                selected_calendar_game_id,
+            )
+        except FranchiseCalendarError as exc:
+            st.error(str(exc))
+        else:
+            st.session_state[
+                "game_simulator_notice"
+            ] = (
+                "Loaded the scheduled matchup into "
+                "the lineup-management controls."
+            )
+            st.rerun()
+
+    st.markdown(
+        '<div class="gs-section">'
+        'Calendar simulation controls'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    simulation_columns = st.columns(
+        [1, 1, 1.25, 2.6]
+    )
+    next_day_clicked = simulation_columns[
+        0
+    ].button(
+        "Sim next day",
+        width="stretch",
+        disabled=progress[
+            "regular_season_complete"
+        ],
+        key="game_simulator_sim_next_day",
+    )
+    next_week_clicked = simulation_columns[
+        1
+    ].button(
+        "Sim next week",
+        width="stretch",
+        disabled=progress[
+            "regular_season_complete"
+        ],
+        key="game_simulator_sim_next_week",
+    )
+    remainder_clicked = simulation_columns[
+        2
+    ].button(
+        "Sim to season end",
+        width="stretch",
+        disabled=progress[
+            "regular_season_complete"
+        ],
+        key=(
+            "game_simulator_sim_"
+            "season_remainder"
+        ),
+    )
+    simulation_columns[3].caption(
+        "Computer-only games simulate automatically. "
+        "Any requested range stops before the first day "
+        "containing a controlled-team game."
+    )
+
+    requested_scope = (
+        SimulationScope.NEXT_DAY
+        if next_day_clicked
+        else SimulationScope.NEXT_WEEK
+        if next_week_clicked
+        else SimulationScope.REMAINDER
+        if remainder_clicked
+        else None
+    )
+
+    if requested_scope is not None:
+        try:
+            with st.spinner(
+                "Simulating eligible games..."
+            ):
+                (
+                    advanced_state,
+                    advance_message,
+                    pause_game_id,
+                ) = execute_calendar_scope(
+                    simulation_state,
+                    controlled_teams=(
+                        controlled_teams
+                    ),
+                    scope=requested_scope,
+                )
+                validate_simulation_league_state(
+                    advanced_state
+                )
+        except (
+            RegularSeasonSimulationControllerError,
+            FranchiseCalendarError,
+            SimulationLeagueStateError,
+            ValueError,
+            KeyError,
+        ) as exc:
+            st.error(
+                "The calendar simulation could not "
+                f"advance. Detail: {exc}"
+            )
+        else:
+            st.session_state[
+                "game_simulator_league_state"
+            ] = advanced_state
+
+            if pause_game_id is not None:
+                prepare_scheduled_game(
+                    advanced_state,
+                    pause_game_id,
+                )
+
+            clear_season_transition_preview()
+            st.session_state[
+                "game_simulator_notice"
+            ] = advance_message
+            st.rerun()
+
+st.markdown(
+    '<div class="gs-section">01 · Build the matchup</div>',
+    unsafe_allow_html=True,
+)
+
+selected_schedule_game_id = (
+    st.session_state.get(
+        "game_simulator_selected_schedule_game_id"
+    )
+)
+selected_schedule_game = (
+    simulation_state.schedule.get(
+        selected_schedule_game_id
+    )
+    if isinstance(
+        selected_schedule_game_id,
+        str,
+    )
+    else None
+)
+selected_schedule_game_ready = bool(
+    selected_schedule_game is not None
+    and selected_schedule_game.status
+    == GameStatus.SCHEDULED
+)
+full_schedule_active = (
+    len(simulation_state.schedule)
+    == LEAGUE_GAME_COUNT
+)
+
+if (
+    selected_schedule_game_ready
+    and (
+        st.session_state.get(
+            "game_simulator_away_team"
+        )
+        != selected_schedule_game.away_team
+        or st.session_state.get(
+            "game_simulator_home_team"
+        )
+        != selected_schedule_game.home_team
+    )
+):
+    clear_franchise_game_selection()
+    selected_schedule_game = None
+    selected_schedule_game_ready = False
+
 selector_columns = st.columns(2)
 
 with selector_columns[0]:
@@ -1307,14 +2107,47 @@ with roster_tabs[1]:
         width="stretch",
     )
 
+if full_schedule_active:
+    if selected_schedule_game_ready:
+        selected_date = date_for_day_index(
+            simulation_state.settings.season_label,
+            selected_schedule_game.day_index,
+        )
+        st.info(
+            "Managing scheduled game "
+            f"{selected_schedule_game.game_id} on "
+            f"{selected_date.strftime('%B %d, %Y')}: "
+            f"{selected_schedule_game.away_team} at "
+            f"{selected_schedule_game.home_team}."
+        )
+    else:
+        st.markdown(
+            '<div class="gs-warning">'
+            'The full franchise schedule is active. Select an '
+            'upcoming game from the calendar before simulating '
+            'or committing a season result.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
 action_columns = st.columns([1.5, 1.5, 5])
 
 with action_columns[0]:
     preview_clicked = st.button(
-        "Simulate game",
+        (
+            "Simulate scheduled game"
+            if selected_schedule_game_ready
+            else "Simulate game"
+        ),
         type="primary",
         width="stretch",
-        disabled=same_team,
+        disabled=(
+            same_team
+            or (
+                full_schedule_active
+                and not selected_schedule_game_ready
+            )
+        ),
         key="game_simulator_preview_button",
     )
 
@@ -1351,31 +2184,45 @@ if preview_clicked:
         )
         + 1
     )
+    existing_schedule_game = bool(
+        selected_schedule_game_ready
+    )
     game_number = (
         len(simulation_state.schedule) + 1
     )
     game_id = (
-        f"UI-GAME-{game_number:04d}"
+        selected_schedule_game.game_id
+        if selected_schedule_game_ready
+        else f"UI-GAME-{game_number:04d}"
     )
     day_index = (
-        simulation_state.current_day_index + 1
+        int(
+            selected_schedule_game.day_index
+        )
+        if selected_schedule_game_ready
+        else (
+            simulation_state.current_day_index
+            + 1
+        )
     )
     trial_state = copy.deepcopy(
         simulation_state
     )
 
     try:
-        add_scheduled_games(
-            trial_state,
-            [
-                ScheduledGame(
-                    game_id=game_id,
-                    day_index=day_index,
-                    home_team=home_team,
-                    away_team=away_team,
-                )
-            ],
-        )
+        if not existing_schedule_game:
+            add_scheduled_games(
+                trial_state,
+                [
+                    ScheduledGame(
+                        game_id=game_id,
+                        day_index=day_index,
+                        home_team=home_team,
+                        away_team=away_team,
+                    )
+                ],
+            )
+
         preview = simulate_scheduled_game(
             trial_state,
             game_id,
@@ -1409,6 +2256,9 @@ if preview_clicked:
             "sit_ids": sit_ids,
             "source_revision": (
                 trade_state.state_revision
+            ),
+            "existing_schedule_game": (
+                existing_schedule_game
             ),
         }
 
@@ -1537,26 +2387,48 @@ if (
         unsafe_allow_html=True,
     )
 
-    request_current = preview_request_matches(
-        preview_request,
-        home_team=home_team,
+    request_current = (
+        preview_request_matches(
+            preview_request,
+            home_team=home_team,
         away_team=away_team,
         locked_seed=locked_seed,
         lock_seed=lock_seed,
-        sit_ids=sit_ids,
-        source_revision=(
-            trade_state.state_revision
-        ),
+            sit_ids=sit_ids,
+            source_revision=(
+                trade_state.state_revision
+            ),
+        )
+        and (
+            not preview_request.get(
+                "existing_schedule_game",
+                False,
+            )
+            or preview_request.get(
+                "game_id"
+            )
+            == selected_schedule_game_id
+        )
     )
 
     with st.container(border=True):
         commit_columns = st.columns([4, 1.4])
 
         with commit_columns[0]:
+            commit_title = (
+                "Commit the scheduled game"
+                if preview_request.get(
+                    "existing_schedule_game",
+                    False,
+                )
+                else "Add this game to the season"
+            )
             st.markdown(
-                '<div class="gs-card-title">'
-                'Add this game to the season'
-                '</div>',
+                (
+                    '<div class="gs-card-title">'
+                    f"{escaped(commit_title)}"
+                    "</div>"
+                ),
                 unsafe_allow_html=True,
             )
             st.markdown(
@@ -1593,29 +2465,34 @@ if (
             game_id = preview_request["game_id"]
 
             try:
-                add_scheduled_games(
-                    simulation_state,
-                    [
-                        ScheduledGame(
-                            game_id=game_id,
-                            day_index=(
-                                preview_request[
-                                    "day_index"
-                                ]
-                            ),
-                            home_team=(
-                                preview_request[
-                                    "home_team"
-                                ]
-                            ),
-                            away_team=(
-                                preview_request[
-                                    "away_team"
-                                ]
-                            ),
-                        )
-                    ],
-                )
+                if not preview_request.get(
+                    "existing_schedule_game",
+                    False,
+                ):
+                    add_scheduled_games(
+                        simulation_state,
+                        [
+                            ScheduledGame(
+                                game_id=game_id,
+                                day_index=(
+                                    preview_request[
+                                        "day_index"
+                                    ]
+                                ),
+                                home_team=(
+                                    preview_request[
+                                        "home_team"
+                                    ]
+                                ),
+                                away_team=(
+                                    preview_request[
+                                        "away_team"
+                                    ]
+                                ),
+                            )
+                        ],
+                    )
+
                 committed = simulate_scheduled_game(
                     simulation_state,
                     game_id,
@@ -1658,6 +2535,7 @@ if (
                 ] = simulation_state
                 clear_game_preview()
                 clear_season_transition_preview()
+                clear_franchise_game_selection()
                 st.session_state[
                     "game_simulator_notice"
                 ] = (

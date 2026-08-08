@@ -88,7 +88,7 @@ from simulation_league_state_v1 import (  # noqa: E402
 
 
 VALIDATOR_VERSION = (
-    "project-validation-runner-v1.13-2026-08-08"
+    "project-validation-runner-v1.15-2026-08-08"
 )
 QUICK_REPORT = (
     OUTPUTS / "project_validation_quick_v1.json"
@@ -288,6 +288,9 @@ def validate_required_files(
             "validate_regular_season_simulation_"
             "controller_v1.py"
         ),
+        SRC / "simulation_module_bootstrap_v1.py",
+        SRC / "franchise_calendar_v1.py",
+        SRC / "validate_franchise_calendar_ui_v1.py",
         SRC / "validate_position_aware_game_stats_v4.py",
         SRC / "freeform_trade_machine_engine_v3.py",
         SRC / "mutable_league_state_v1.py",
@@ -454,6 +457,42 @@ def validate_ui_contract(
         ),
         "transition_state_freshness_guard": (
             "preview_matches_state"
+        ),
+        "simulation_module_bootstrap": (
+            "from simulation_module_bootstrap_v1 import"
+        ),
+        "simulation_module_bootstrap_call": (
+            "ensure_current_simulation_modules()"
+        ),
+        "franchise_calendar_backend": (
+            "from franchise_calendar_v1 import"
+        ),
+        "controlled_team_selection": (
+            '"game_simulator_controlled_teams"'
+        ),
+        "calendar_month_grid": (
+            "build_team_month_calendar"
+        ),
+        "generated_schedule_install": (
+            "install_regular_season_schedule"
+        ),
+        "calendar_game_preparation": (
+            "Prepare matchup"
+        ),
+        "calendar_next_day": (
+            "Sim next day"
+        ),
+        "calendar_next_week": (
+            "Sim next week"
+        ),
+        "calendar_remainder": (
+            "Sim to season end"
+        ),
+        "controlled_team_pause": (
+            "controlled_team_pause"
+        ),
+        "scheduled_game_mode": (
+            '"existing_schedule_game"'
         ),
         "stretch_width_api": 'width="stretch"',
     }
@@ -1783,6 +1822,41 @@ def run_full() -> dict[str, Any]:
             ),
             "--seed",
             "20260808",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="simulation_module_bootstrap_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC / "simulation_module_bootstrap_v1.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="franchise_calendar_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC / "franchise_calendar_v1.py"
+            ),
+            "--self-test",
+            "--seed",
+            "20260808",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="franchise_calendar_ui_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_franchise_calendar_ui_v1.py"
+            ),
         ],
     )
     run_subprocess_suite(
