@@ -88,7 +88,7 @@ from simulation_league_state_v1 import (  # noqa: E402
 
 
 VALIDATOR_VERSION = (
-    "project-validation-runner-v1.12-2026-08-08"
+    "project-validation-runner-v1.13-2026-08-08"
 )
 QUICK_REPORT = (
     OUTPUTS / "project_validation_quick_v1.json"
@@ -281,6 +281,13 @@ def validate_required_files(
         / "validate_game_simulator_season_management_ui_v1.py",
         SRC / "regular_season_schedule_v1.py",
         SRC / "validate_regular_season_schedule_v1.py",
+        SRC
+        / "regular_season_simulation_controller_v1.py",
+        SRC
+        / (
+            "validate_regular_season_simulation_"
+            "controller_v1.py"
+        ),
         SRC / "validate_position_aware_game_stats_v4.py",
         SRC / "freeform_trade_machine_engine_v3.py",
         SRC / "mutable_league_state_v1.py",
@@ -1734,6 +1741,45 @@ def run_full() -> dict[str, Any]:
             str(
                 SRC
                 / "validate_regular_season_schedule_v1.py"
+            ),
+            "--seed",
+            "20260808",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name=(
+            "regular_season_simulation_"
+            "controller_self_test"
+        ),
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / (
+                    "regular_season_simulation_"
+                    "controller_v1.py"
+                )
+            ),
+            "--self-test",
+            "--seed",
+            "20260808",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name=(
+            "regular_season_simulation_"
+            "controller_validation"
+        ),
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / (
+                    "validate_regular_season_"
+                    "simulation_controller_v1.py"
+                )
             ),
             "--seed",
             "20260808",
