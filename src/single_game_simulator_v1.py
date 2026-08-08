@@ -53,7 +53,7 @@ from simulation_player_stat_profiles_v1 import (  # noqa: E402
 )
 
 
-ENGINE_VERSION = "single-game-simulator-v1.3-2026-08-08"
+ENGINE_VERSION = "single-game-simulator-v1.4-2026-08-08"
 SELF_TEST_REPORT = (
     OUTPUTS / "single_game_simulator_v1_self_test.json"
 )
@@ -717,12 +717,37 @@ PROFILE_FACTOR_INFLUENCE: dict[str, float] = {
 def moderated_player_stat_factor(
     player_id: str,
     stat_name: str,
+    *,
+    state: SimulationLeagueState | None = None,
 ) -> float:
-    raw_factor = player_stat_factor(
-        player_id,
-        stat_name,
-        default=1.0,
-    )
+    raw_factor = None
+
+    if state is not None:
+        player = state.players.get(
+            normalize_player_id(player_id)
+        )
+        if player is not None:
+            candidate = player.stat_factors.get(
+                stat_name
+            )
+            if candidate is not None:
+                try:
+                    candidate = float(candidate)
+                except (TypeError, ValueError):
+                    candidate = None
+                if (
+                    candidate is not None
+                    and math.isfinite(candidate)
+                    and candidate > 0
+                ):
+                    raw_factor = candidate
+
+    if raw_factor is None:
+        raw_factor = player_stat_factor(
+            player_id,
+            stat_name,
+            default=1.0,
+        )
     influence = PROFILE_FACTOR_INFLUENCE.get(
         stat_name,
         1.0,
@@ -754,6 +779,8 @@ def profile_adjusted_stat_multiplier(
     player_id: str,
     position: str,
     stat_name: str,
+    *,
+    state: SimulationLeagueState | None = None,
 ) -> float:
     return (
         position_stat_multiplier(
@@ -763,6 +790,7 @@ def profile_adjusted_stat_multiplier(
         * moderated_player_stat_factor(
             player_id,
             stat_name,
+            state=state,
         )
     )
 
@@ -770,6 +798,8 @@ def profile_adjusted_stat_multiplier(
 def usage_weights(
     rng: random.Random,
     plan: TeamGamePlan,
+    *,
+    state: SimulationLeagueState | None = None,
 ) -> dict[str, float]:
     starter_set = set(plan.starter_ids)
     minute_weighted_average = (
@@ -797,6 +827,7 @@ def usage_weights(
             moderated_player_stat_factor(
                 player_id,
                 "points",
+                state=state,
             )
         )
         weights[player_id] = (
@@ -1129,6 +1160,7 @@ def secondary_stat_weights(
                 player_id,
                 player.position,
                 stat_name,
+                state=state,
             )
         )
         usage_factor = 1.0
@@ -1316,7 +1348,11 @@ def build_player_box_scores(
     point_allocation = allocate_integer_units(
         team_score,
         plan.player_ids,
-        usage_weights(rng, plan),
+        usage_weights(
+            rng,
+            plan,
+            state=state,
+        ),
     )
     scoring: dict[str, PlayerScoringProfile] = {}
 
@@ -1796,6 +1832,23 @@ def run_self_test() -> dict[str, Any]:
         )
         >= 2.0
     )
+    checks[
+        "permanent_state_stat_factors_are_active"
+    ] = bool(
+        wemby_id
+        and math.isclose(
+            moderated_player_stat_factor(
+                wemby_id,
+                "blocks",
+                state=state,
+            ),
+            moderated_player_stat_factor(
+                wemby_id,
+                "blocks",
+            ),
+            abs_tol=1e-9,
+        )
+    )
 
     before_preview = state_result_signature(
         state
@@ -2188,6 +2241,15 @@ def run_self_test() -> dict[str, Any]:
                     moderated_player_stat_factor(
                         wemby_id,
                         "blocks",
+                    )
+                    if wemby_id
+                    else None
+                ),
+                "wembanyama_state_block_factor": (
+                    moderated_player_stat_factor(
+                        wemby_id,
+                        "blocks",
+                        state=state,
                     )
                     if wemby_id
                     else None

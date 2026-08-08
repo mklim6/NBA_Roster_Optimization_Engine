@@ -88,7 +88,7 @@ from simulation_league_state_v1 import (  # noqa: E402
 
 
 VALIDATOR_VERSION = (
-    "project-validation-runner-v1.9-2026-08-08"
+    "project-validation-runner-v1.10-2026-08-08"
 )
 QUICK_REPORT = (
     OUTPUTS / "project_validation_quick_v1.json"
@@ -273,7 +273,9 @@ def validate_required_files(
         SRC / "simulation_player_stat_profiles_v1.py",
         SRC / "player_development_engine_v1.py",
         SRC / "validate_player_development_curves_v1.py",
-        SRC / "validate_position_aware_game_stats_v3.py",
+        SRC / "simulation_season_transition_v1.py",
+        SRC / "validate_simulation_season_transition_v1.py",
+        SRC / "validate_position_aware_game_stats_v4.py",
         SRC / "freeform_trade_machine_engine_v3.py",
         SRC / "mutable_league_state_v1.py",
         SRC / "state_runtime_adapter_v1.py",
@@ -891,7 +893,7 @@ def quick_runtime_validation(
         name="position_aware_stat_engine_active",
         condition=(
             GAME_ENGINE_VERSION
-            == "single-game-simulator-v1.3-2026-08-08"
+            == "single-game-simulator-v1.4-2026-08-08"
             and position_stat_multiplier(
                 "C",
                 "rebounds",
@@ -1628,6 +1630,31 @@ def run_full() -> dict[str, Any]:
     )
     run_subprocess_suite(
         checks,
+        name="simulation_season_transition_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "simulation_season_transition_v1.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="simulation_season_transition_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_simulation_season_transition_v1.py"
+            ),
+            "--seed",
+            "20260808",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
         name="single_game_simulator_self_test",
         command=[
             sys.executable,
@@ -1644,7 +1671,7 @@ def run_full() -> dict[str, Any]:
             sys.executable,
             str(
                 SRC
-                / "validate_position_aware_game_stats_v3.py"
+                / "validate_position_aware_game_stats_v4.py"
             ),
             "--games",
             "180",

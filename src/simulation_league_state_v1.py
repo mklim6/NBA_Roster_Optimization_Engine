@@ -39,16 +39,53 @@ from simulation_roster_validator_v1 import (  # noqa: E402
 from state_runtime_adapter_v1 import (  # noqa: E402
     build_state_runtime,
 )
+from simulation_player_stat_profiles_v1 import (  # noqa: E402
+    load_player_stat_profiles,
+)
 
 
 SIMULATION_STATE_VERSION = (
-    "simulation-league-state-v1-2026-08-08"
+    "simulation-league-state-v1.2-2026-08-08"
 )
 SELF_TEST_REPORT = (
     OUTPUTS / "simulation_league_state_v1_self_test.json"
 )
 INITIAL_STATE_REPORT = (
     OUTPUTS / "simulation_league_state_v1_initial.json"
+)
+
+DEVELOPMENT_SKILL_FIELDS = (
+    "scoring_rating",
+    "shooting_rating",
+    "playmaking_rating",
+    "rebounding_rating",
+    "defense_rating",
+    "efficiency_rating",
+    "availability_rating",
+)
+
+DEVELOPMENT_STAT_FACTORS = (
+    "points",
+    "rebounds",
+    "assists",
+    "steals",
+    "blocks",
+    "turnovers",
+    "fouls",
+    "three_attempts",
+    "free_throw_attempts",
+)
+
+BASELINE_PER_36_FIELDS = (
+    "points_per_36",
+    "rebounds_per_36",
+    "assists_per_36",
+    "steals_per_36",
+    "blocks_per_36",
+    "turnovers_per_36",
+    "fouls_per_36",
+    "three_attempts_per_36",
+    "free_throw_attempts_per_36",
 )
 
 
@@ -109,6 +146,23 @@ class SimulationPlayerState:
     rating_source: str
     two_way: bool
     contract: ContractState
+    age: float | None = None
+    potential_rating: float | None = None
+    future_outlook_rating: float | None = None
+    development_direction: str = "Stable"
+    profile_reliability: float = 0.5
+    skill_ratings: dict[str, float] = field(
+        default_factory=dict
+    )
+    stat_factors: dict[str, float] = field(
+        default_factory=dict
+    )
+    baseline_per_36: dict[str, float] = field(
+        default_factory=dict
+    )
+    development_history: list[dict[str, Any]] = field(
+        default_factory=list
+    )
 
 
 @dataclass
@@ -220,6 +274,22 @@ class CompletedGame:
 
 
 @dataclass
+class SeasonArchive:
+    season_label: str
+    standings: dict[str, TeamStanding]
+    player_season_totals: dict[
+        str,
+        PlayerSeasonTotals,
+    ]
+    schedule: dict[str, ScheduledGame]
+    completed_games: dict[str, CompletedGame]
+    transition_engine_version: str = ""
+    development_summary: dict[str, Any] = field(
+        default_factory=dict
+    )
+
+
+@dataclass
 class SimulationLeagueState:
     state_version: str
     source_league_state_revision: int
@@ -239,10 +309,40 @@ class SimulationLeagueState:
     completed_games: dict[str, CompletedGame] = field(
         default_factory=dict
     )
+    transition_count: int = 0
+    season_history: list[SeasonArchive] = field(
+        default_factory=list
+    )
 
 
 def clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def finite_profile_float(
+    value: Any,
+    default: float | None = None,
+) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+
+    return number if math.isfinite(number) else default
+
+
+def normalized_profile_position(
+    profile: dict[str, Any],
+    fallback: str,
+) -> str:
+    position = clean_text(
+        profile.get("position")
+    ).upper()
+    if position and position != "UNK":
+        return position
+
+    fallback = clean_text(fallback).upper()
+    return fallback or "UNK"
 
 
 def listed_salary(
@@ -337,7 +437,72 @@ def player_state_from_simulation_player(
     player: SimulationPlayer,
     *,
     roster_status: str,
+    profile: dict[str, Any] | None = None,
 ) -> SimulationPlayerState:
+    resolved_profile = profile or {}
+    overall = float(player.overall_rating)
+
+    skill_ratings = {
+        field_name: float(
+            finite_profile_float(
+                resolved_profile.get(field_name),
+                overall,
+            )
+            or overall
+        )
+        for field_name in DEVELOPMENT_SKILL_FIELDS
+    }
+
+    raw_factors = resolved_profile.get(
+        "stat_factors"
+    )
+    if not isinstance(raw_factors, dict):
+        raw_factors = {}
+
+    stat_factors = {
+        factor_name: float(
+            finite_profile_float(
+                raw_factors.get(factor_name),
+                1.0,
+            )
+            or 1.0
+        )
+        for factor_name in DEVELOPMENT_STAT_FACTORS
+    }
+    baseline_per_36 = {
+        field_name: float(
+            finite_profile_float(
+                resolved_profile.get(field_name),
+                0.0,
+            )
+            or 0.0
+        )
+        for field_name in BASELINE_PER_36_FIELDS
+    }
+
+    age = finite_profile_float(
+        resolved_profile.get("age_2026_27"),
+        finite_profile_float(
+            resolved_profile.get("age"),
+        ),
+    )
+    potential = finite_profile_float(
+        resolved_profile.get("potential_rating"),
+        overall,
+    )
+    future = finite_profile_float(
+        resolved_profile.get(
+            "future_outlook_rating"
+        ),
+        overall,
+    )
+    reliability = finite_profile_float(
+        resolved_profile.get(
+            "profile_reliability"
+        ),
+        0.5,
+    )
+
     return SimulationPlayerState(
         player_id=player.player_id,
         player_name=player.player_name,
@@ -345,10 +510,11 @@ def player_state_from_simulation_player(
             player.team_abbreviation
         ),
         roster_status=roster_status,
-        overall_rating=float(
-            player.overall_rating
+        overall_rating=overall,
+        position=normalized_profile_position(
+            resolved_profile,
+            player.position,
         ),
-        position=player.position,
         synthetic=player.synthetic,
         rating_source=player.rating_source,
         two_way=player.two_way,
@@ -357,6 +523,25 @@ def player_state_from_simulation_player(
             player,
             roster_status,
         ),
+        age=age,
+        potential_rating=potential,
+        future_outlook_rating=future,
+        development_direction=(
+            clean_text(
+                resolved_profile.get(
+                    "development_direction"
+                )
+            )
+            or "Stable"
+        ),
+        profile_reliability=float(
+            reliability
+            if reliability is not None
+            else 0.5
+        ),
+        skill_ratings=skill_ratings,
+        stat_factors=stat_factors,
+        baseline_per_36=baseline_per_36,
     )
 
 
@@ -396,6 +581,7 @@ def create_simulation_league_state(
             + ", ".join(failed)
         )
 
+    player_profiles = load_player_stat_profiles()
     players: dict[str, SimulationPlayerState] = {}
     teams: dict[str, SimulationTeamState] = {}
 
@@ -413,6 +599,9 @@ def create_simulation_league_state(
                     runtime,
                     player,
                     roster_status=status,
+                    profile=player_profiles.get(
+                        player.player_id
+                    ),
                 )
             )
 
@@ -471,6 +660,9 @@ def create_simulation_league_state(
                 runtime,
                 free_agent_player,
                 roster_status="free_agent",
+                profile=player_profiles.get(
+                    player_id
+                ),
             )
         )
 
@@ -817,6 +1009,50 @@ def validate_simulation_league_state(
             set(state.completed_games)
             .issubset(state.schedule)
         ),
+        "season_label_is_present": bool(
+            clean_text(state.settings.season_label)
+        ),
+        "all_real_players_have_resolved_positions": all(
+            player.synthetic
+            or (
+                clean_text(player.position).upper()
+                not in {"", "UNK"}
+            )
+            for player in state.players.values()
+        ),
+        "all_real_players_have_development_profiles": all(
+            player.synthetic
+            or (
+                player.age is not None
+                and 18 <= player.age <= 50
+                and set(player.skill_ratings)
+                == set(DEVELOPMENT_SKILL_FIELDS)
+                and set(player.stat_factors)
+                == set(DEVELOPMENT_STAT_FACTORS)
+                and set(player.baseline_per_36)
+                == set(BASELINE_PER_36_FIELDS)
+                and 0
+                <= player.profile_reliability
+                <= 1
+            )
+            for player in state.players.values()
+        ),
+        "development_values_are_finite": all(
+            all(
+                math.isfinite(float(value))
+                for value in (
+                    player.overall_rating,
+                    *player.skill_ratings.values(),
+                    *player.stat_factors.values(),
+                    *player.baseline_per_36.values(),
+                )
+            )
+            for player in state.players.values()
+        ),
+        "season_history_matches_transition_count": (
+            len(state.season_history)
+            == state.transition_count
+        ),
     }
 
     failed = [
@@ -1094,6 +1330,11 @@ def initial_state_summary(
             state.completed_games
         ),
         "phase": state.phase.value,
+        "season_label": state.settings.season_label,
+        "transition_count": state.transition_count,
+        "archived_seasons": len(
+            state.season_history
+        ),
         "checks": validate_simulation_league_state(
             state
         ),
@@ -1250,6 +1491,18 @@ def run_self_test() -> dict[str, Any]:
             ]
         )
         == 582
+    )
+    checks["player_development_profiles_loaded"] = all(
+        player.synthetic
+        or (
+            player.age is not None
+            and player.position != "UNK"
+            and len(player.skill_ratings)
+            == len(DEVELOPMENT_SKILL_FIELDS)
+            and len(player.stat_factors)
+            == len(DEVELOPMENT_STAT_FACTORS)
+        )
+        for player in state.players.values()
     )
     checks["active_and_free_agent_counts_reconcile"] = (
         sum(
