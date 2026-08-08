@@ -93,6 +93,15 @@ from single_game_simulator_v1 import (  # noqa: E402
     SingleGameSimulationError,
     simulate_scheduled_game,
 )
+from simulation_season_transition_controller_v1 import (  # noqa: E402
+    CONTROLLER_VERSION as SEASON_CONTROLLER_VERSION,
+    SimulationSeasonTransitionControllerError,
+    build_season_transition_preview,
+    commit_season_transition_preview,
+    incomplete_scheduled_game_ids,
+    next_target_season,
+    preview_matches_state,
+)
 from state_runtime_adapter_v1 import (  # noqa: E402
     StateRuntimeAdapterError,
     build_state_runtime,
@@ -165,6 +174,15 @@ def clear_game_preview() -> None:
     for key in {
         "game_simulator_preview",
         "game_simulator_preview_request",
+    }:
+        st.session_state.pop(key, None)
+
+
+def clear_season_transition_preview() -> None:
+    for key in {
+        "game_simulator_season_transition_preview",
+        "game_simulator_season_transition_confirmation",
+        "game_simulator_season_transition_acknowledged",
     }:
         st.session_state.pop(key, None)
 
@@ -274,6 +292,7 @@ def create_fresh_simulation_state(
         "game_simulator_position_signature"
     ] = current_position_signature()
     clear_game_preview()
+    clear_season_transition_preview()
     return state
 
 
@@ -548,13 +567,15 @@ def render_hero(
   <div class="gs-hero-title">NBA Game Simulator</div>
   <div class="gs-hero-copy">
     Choose a matchup, adjust who plays, preview a seeded result,
-    inspect the full box score, and commit the game to the shared
-    season standings.
+    commit games to permanent standings, and advance the league
+    through player development and regression.
   </div>
 </div>
 <div class="gs-source">
   <span class="gs-dot"></span>
-  Trade universe revision {trade_state.state_revision}
+  Season {escaped(simulation_state.settings.season_label)}
+  · {escaped(simulation_state.phase.value.replace("_", " ").title())}
+  · Trade universe revision {trade_state.state_revision}
   · {len(trade_state.transaction_history)} applied trade(s)
   · {len(simulation_state.completed_games)} completed game(s)
 </div>
@@ -759,6 +780,214 @@ def leaders_dataframe(
             for line in lines
         ]
     )
+
+
+def development_change_dataframe(
+    rows: list[dict[str, Any]]
+    | tuple[dict[str, Any], ...],
+) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Player": row["player_name"],
+                "Age": (
+                    f"{float(row['source_age']):.0f}"
+                    f" → {float(row['target_age']):.0f}"
+                ),
+                "Previous OVR": round(
+                    float(
+                        row[
+                            "current_overall_rating"
+                        ]
+                    ),
+                    2,
+                ),
+                "New OVR": round(
+                    float(
+                        row[
+                            "projected_overall_rating"
+                        ]
+                    ),
+                    2,
+                ),
+                "Change": round(
+                    float(row["overall_delta"]),
+                    2,
+                ),
+                "Performance Signal": round(
+                    float(
+                        row.get(
+                            "performance_signal",
+                            0.0,
+                        )
+                    ),
+                    3,
+                ),
+            }
+            for row in rows
+        ]
+    )
+
+
+def archived_standings_dataframe(
+    archive: Any,
+) -> pd.DataFrame:
+    rows = []
+
+    for team, standing in archive.standings.items():
+        differential = (
+            standing.points_for
+            - standing.points_against
+        )
+        rows.append(
+            {
+                "Team": team,
+                "GP": standing.games_played,
+                "W": standing.wins,
+                "L": standing.losses,
+                "Win%": (
+                    standing.wins
+                    / standing.games_played
+                    if standing.games_played
+                    else 0.0
+                ),
+                "PF": standing.points_for,
+                "PA": standing.points_against,
+                "Diff": differential,
+            }
+        )
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values(
+            ["Win%", "Diff", "PF", "Team"],
+            ascending=[False, False, False, True],
+        )
+        .reset_index(drop=True)
+    )
+
+
+def archived_player_leaders_dataframe(
+    state: SimulationLeagueState,
+    archive: Any,
+) -> pd.DataFrame:
+    rows = []
+
+    for player_id, totals in (
+        archive.player_season_totals.items()
+    ):
+        if totals.games_played <= 0:
+            continue
+
+        player = state.players.get(player_id)
+        rows.append(
+            {
+                "Player": (
+                    player.player_name
+                    if player is not None
+                    else player_id
+                ),
+                "GP": totals.games_played,
+                "MIN": round(totals.minutes, 1),
+                "PTS": totals.points,
+                "REB": totals.rebounds,
+                "AST": totals.assists,
+                "STL": totals.steals,
+                "BLK": totals.blocks,
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "Player",
+                "GP",
+                "MIN",
+                "PTS",
+                "REB",
+                "AST",
+                "STL",
+                "BLK",
+            ]
+        )
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values(
+            ["PTS", "AST", "REB", "Player"],
+            ascending=[False, False, False, True],
+        )
+        .head(25)
+        .reset_index(drop=True)
+    )
+
+
+def archived_season_summary_dataframe(
+    state: SimulationLeagueState,
+) -> pd.DataFrame:
+    rows = []
+
+    for archive in reversed(
+        state.season_history
+    ):
+        standings = archived_standings_dataframe(
+            archive
+        )
+        leader = (
+            standings.iloc[0]
+            if (
+                not standings.empty
+                and len(archive.completed_games) > 0
+            )
+            else None
+        )
+        development = (
+            archive.development_summary
+            if isinstance(
+                archive.development_summary,
+                dict,
+            )
+            else {}
+        )
+        rows.append(
+            {
+                "Season": archive.season_label,
+                "Completed Games": len(
+                    archive.completed_games
+                ),
+                "Top Team": (
+                    str(leader["Team"])
+                    if leader is not None
+                    else ""
+                ),
+                "Top Record": (
+                    f"{int(leader['W'])}-"
+                    f"{int(leader['L'])}"
+                    if leader is not None
+                    else ""
+                ),
+                "Players Developed": (
+                    development.get(
+                        "players_projected",
+                        0,
+                    )
+                ),
+                "Average OVR Change": (
+                    development.get(
+                        "average_overall_delta",
+                        0.0,
+                    )
+                ),
+                "Transitioned To": (
+                    development.get(
+                        "target_season",
+                        "",
+                    )
+                ),
+            }
+        )
+
+    return pd.DataFrame(rows)
 
 
 def render_scoreboard(
@@ -1428,6 +1657,7 @@ if (
                     "game_simulator_league_state"
                 ] = simulation_state
                 clear_game_preview()
+                clear_season_transition_preview()
                 st.session_state[
                     "game_simulator_notice"
                 ] = (
@@ -1444,27 +1674,34 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-season_metrics = st.columns(5)
+season_metrics = st.columns(7)
 season_metrics[0].metric(
+    "Season",
+    simulation_state.settings.season_label,
+)
+season_metrics[1].metric(
+    "Phase",
+    simulation_state.phase.value
+    .replace("_", " ")
+    .title(),
+)
+season_metrics[2].metric(
     "Completed games",
     len(simulation_state.completed_games),
 )
-season_metrics[1].metric(
+season_metrics[3].metric(
     "Total schedule entries",
     len(simulation_state.schedule),
 )
-season_metrics[2].metric(
+season_metrics[4].metric(
     "Current day",
     simulation_state.current_day_index,
 )
-season_metrics[3].metric(
-    "Rostered players",
-    sum(
-        len(team.roster_player_ids)
-        for team in simulation_state.teams.values()
-    ),
+season_metrics[5].metric(
+    "Archived seasons",
+    len(simulation_state.season_history),
 )
-season_metrics[4].metric(
+season_metrics[6].metric(
     "Free agents",
     len(
         simulation_state.free_agent_player_ids
@@ -1515,3 +1752,494 @@ if simulation_state.completed_games:
             hide_index=True,
             width="stretch",
         )
+
+st.markdown(
+    '<div class="gs-section">04 · Season management</div>',
+    unsafe_allow_html=True,
+)
+
+incomplete_games = incomplete_scheduled_game_ids(
+    simulation_state
+)
+target_season = next_target_season(
+    simulation_state
+)
+
+with st.container(border=True):
+    management_columns = st.columns([3.8, 1.3])
+
+    with management_columns[0]:
+        st.markdown(
+            '<div class="gs-card-title">'
+            f'Advance to {escaped(target_season)}'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="gs-card-copy">'
+            'Preview deterministic player progression and '
+            'regression before changing the permanent league. '
+            'The completed season will be archived, every '
+            'player will age one year, rotations will be '
+            're-ranked, and the new season will begin in '
+            'preseason.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        if incomplete_games:
+            st.markdown(
+                '<div class="gs-warning">'
+                'Every scheduled game must be completed first. '
+                f'{len(incomplete_games)} incomplete game(s): '
+                f'{escaped(", ".join(incomplete_games[:6]))}'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        elif not simulation_state.completed_games:
+            st.markdown(
+                '<div class="gs-warning">'
+                'This season has no committed games. Advancing '
+                'is still allowed, but development will rely on '
+                'age, potential, reliability, and deterministic '
+                'variance rather than simulated performance.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+
+    with management_columns[1]:
+        build_transition_clicked = st.button(
+            "Preview transition",
+            width="stretch",
+            disabled=bool(incomplete_games),
+            key=(
+                "game_simulator_build_transition_"
+                f"{simulation_state.settings.season_label}_"
+                f"{simulation_state.transition_count}"
+            ),
+        )
+
+if build_transition_clicked:
+    try:
+        transition_preview = (
+            build_season_transition_preview(
+                simulation_state
+            )
+        )
+    except (
+        SimulationSeasonTransitionControllerError,
+        SimulationLeagueStateError,
+        ValueError,
+        KeyError,
+    ) as exc:
+        st.error(
+            "The season transition could not be previewed. "
+            f"Detail: {exc}"
+        )
+    else:
+        st.session_state[
+            "game_simulator_season_transition_preview"
+        ] = transition_preview
+        st.rerun()
+
+transition_preview = st.session_state.get(
+    "game_simulator_season_transition_preview"
+)
+
+if isinstance(transition_preview, dict):
+    transition_is_current = (
+        preview_matches_state(
+            simulation_state,
+            transition_preview,
+        )
+    )
+    transition_result = transition_preview.get(
+        "result",
+        {},
+    )
+
+    st.markdown(
+        '<div class="gs-section">'
+        'Transition preview'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    preview_metrics = st.columns(6)
+    preview_metrics[0].metric(
+        "Players projected",
+        transition_result.get(
+            "players_projected",
+            0,
+        ),
+    )
+    preview_metrics[1].metric(
+        "Average OVR change",
+        f"{float(transition_result.get('average_overall_delta', 0.0)):+.3f}",
+    )
+    preview_metrics[2].metric(
+        "Improved",
+        transition_result.get(
+            "improved_players",
+            0,
+        ),
+    )
+    preview_metrics[3].metric(
+        "Stable",
+        transition_result.get(
+            "stable_players",
+            0,
+        ),
+    )
+    preview_metrics[4].metric(
+        "Declined",
+        transition_result.get(
+            "declined_players",
+            0,
+        ),
+    )
+    preview_metrics[5].metric(
+        "Performance signals",
+        transition_result.get(
+            "performance_signals_used",
+            0,
+        ),
+    )
+
+    transition_tabs = st.tabs(
+        [
+            "Biggest Risers",
+            "Biggest Fallers",
+            "Transition Detail",
+        ]
+    )
+
+    with transition_tabs[0]:
+        st.dataframe(
+            development_change_dataframe(
+                transition_result.get(
+                    "biggest_risers",
+                    [],
+                )
+            ),
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Change": st.column_config.NumberColumn(
+                    format="%+.2f",
+                ),
+                "Performance Signal": (
+                    st.column_config.NumberColumn(
+                        format="%+.3f",
+                    )
+                ),
+            },
+        )
+
+    with transition_tabs[1]:
+        st.dataframe(
+            development_change_dataframe(
+                transition_result.get(
+                    "biggest_fallers",
+                    [],
+                )
+            ),
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Change": st.column_config.NumberColumn(
+                    format="%+.2f",
+                ),
+                "Performance Signal": (
+                    st.column_config.NumberColumn(
+                        format="%+.3f",
+                    )
+                ),
+            },
+        )
+
+    with transition_tabs[2]:
+        detail_rows = [
+            {
+                "Metric": "Controller",
+                "Value": SEASON_CONTROLLER_VERSION,
+            },
+            {
+                "Metric": "Transition engine",
+                "Value": transition_result.get(
+                    "transition_version",
+                    "",
+                ),
+            },
+            {
+                "Metric": "Development engine",
+                "Value": transition_result.get(
+                    "development_engine_version",
+                    "",
+                ),
+            },
+            {
+                "Metric": "Source season",
+                "Value": transition_preview.get(
+                    "source_season",
+                    "",
+                ),
+            },
+            {
+                "Metric": "Target season",
+                "Value": transition_preview.get(
+                    "target_season",
+                    "",
+                ),
+            },
+            {
+                "Metric": "Synthetic players skipped",
+                "Value": transition_result.get(
+                    "synthetic_players_skipped",
+                    0,
+                ),
+            },
+        ]
+        st.dataframe(
+            pd.DataFrame(detail_rows),
+            hide_index=True,
+            width="stretch",
+        )
+
+    if not transition_is_current:
+        st.markdown(
+            '<div class="gs-warning">'
+            'The live season changed after this preview. '
+            'Build a new transition preview before advancing.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    confirmation_key = (
+        "game_simulator_season_transition_confirmation"
+    )
+    acknowledgement_key = (
+        "game_simulator_season_transition_acknowledged"
+    )
+    confirmation_columns = st.columns([2.2, 2.2, 1.4])
+
+    with confirmation_columns[0]:
+        transition_acknowledged = st.checkbox(
+            (
+                "I understand this archives the current "
+                "season and permanently updates player ratings."
+            ),
+            key=acknowledgement_key,
+        )
+
+    with confirmation_columns[1]:
+        transition_confirmation = st.text_input(
+            (
+                "Type "
+                f"{transition_preview.get('target_season', '')} "
+                "to confirm"
+            ),
+            key=confirmation_key,
+        )
+
+    confirmation_matches = (
+        transition_confirmation.strip()
+        == str(
+            transition_preview.get(
+                "target_season",
+                "",
+            )
+        )
+    )
+
+    with confirmation_columns[2]:
+        advance_transition_clicked = st.button(
+            (
+                "Advance to "
+                f"{transition_preview.get('target_season', '')}"
+            ),
+            type="primary",
+            width="stretch",
+            disabled=not (
+                transition_is_current
+                and transition_acknowledged
+                and confirmation_matches
+            ),
+            key=(
+                "game_simulator_commit_transition_"
+                f"{transition_preview.get('source_season', '')}_"
+                f"{transition_preview.get('target_season', '')}_"
+                f"{simulation_state.transition_count}"
+            ),
+        )
+
+    if advance_transition_clicked:
+        try:
+            (
+                transitioned_state,
+                committed_transition,
+            ) = commit_season_transition_preview(
+                simulation_state,
+                transition_preview,
+            )
+            validate_simulation_league_state(
+                transitioned_state
+            )
+        except (
+            SimulationSeasonTransitionControllerError,
+            SimulationLeagueStateError,
+            ValueError,
+            KeyError,
+        ) as exc:
+            st.error(
+                "The season transition could not be committed. "
+                f"Detail: {exc}"
+            )
+        else:
+            st.session_state[
+                "game_simulator_league_state"
+            ] = transitioned_state
+            clear_game_preview()
+            clear_season_transition_preview()
+            st.session_state[
+                "game_simulator_notice"
+            ] = (
+                f"Advanced from "
+                f"{committed_transition.source_season} "
+                f"to {committed_transition.target_season}. "
+                f"Projected "
+                f"{committed_transition.players_projected} "
+                "players and archived the completed season."
+            )
+            st.rerun()
+
+if simulation_state.season_history:
+    st.markdown(
+        '<div class="gs-section">'
+        'Archived season history'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.dataframe(
+        archived_season_summary_dataframe(
+            simulation_state
+        ),
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Average OVR Change": (
+                st.column_config.NumberColumn(
+                    format="%+.3f",
+                )
+            ),
+        },
+    )
+
+    for archive in reversed(
+        simulation_state.season_history
+    ):
+        with st.expander(
+            f"{archive.season_label} archive",
+            expanded=False,
+        ):
+            archive_tabs = st.tabs(
+                [
+                    "Standings",
+                    "Player Leaders",
+                    "Development",
+                ]
+            )
+
+            with archive_tabs[0]:
+                st.dataframe(
+                    archived_standings_dataframe(
+                        archive
+                    ),
+                    hide_index=True,
+                    width="stretch",
+                    column_config={
+                        "Win%": (
+                            st.column_config.NumberColumn(
+                                format="%.3f",
+                            )
+                        ),
+                    },
+                )
+
+            with archive_tabs[1]:
+                st.dataframe(
+                    archived_player_leaders_dataframe(
+                        simulation_state,
+                        archive,
+                    ),
+                    hide_index=True,
+                    width="stretch",
+                )
+
+            with archive_tabs[2]:
+                development = (
+                    archive.development_summary
+                    if isinstance(
+                        archive.development_summary,
+                        dict,
+                    )
+                    else {}
+                )
+                archive_metrics = st.columns(4)
+                archive_metrics[0].metric(
+                    "Transitioned to",
+                    development.get(
+                        "target_season",
+                        "",
+                    ),
+                )
+                archive_metrics[1].metric(
+                    "Improved",
+                    development.get(
+                        "improved_players",
+                        0,
+                    ),
+                )
+                archive_metrics[2].metric(
+                    "Stable",
+                    development.get(
+                        "stable_players",
+                        0,
+                    ),
+                )
+                archive_metrics[3].metric(
+                    "Declined",
+                    development.get(
+                        "declined_players",
+                        0,
+                    ),
+                )
+
+                development_tabs = st.tabs(
+                    [
+                        "Risers",
+                        "Fallers",
+                    ]
+                )
+                with development_tabs[0]:
+                    st.dataframe(
+                        development_change_dataframe(
+                            development.get(
+                                "biggest_risers",
+                                [],
+                            )
+                        ),
+                        hide_index=True,
+                        width="stretch",
+                    )
+                with development_tabs[1]:
+                    st.dataframe(
+                        development_change_dataframe(
+                            development.get(
+                                "biggest_fallers",
+                                [],
+                            )
+                        ),
+                        hide_index=True,
+                        width="stretch",
+                    )
