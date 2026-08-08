@@ -88,7 +88,7 @@ from simulation_league_state_v1 import (  # noqa: E402
 
 
 VALIDATOR_VERSION = (
-    "project-validation-runner-v1.8-2026-08-08"
+    "project-validation-runner-v1.9-2026-08-08"
 )
 QUICK_REPORT = (
     OUTPUTS / "project_validation_quick_v1.json"
@@ -271,6 +271,8 @@ def validate_required_files(
         SRC
         / "diagnose_player_stat_profile_sources_v1.py",
         SRC / "simulation_player_stat_profiles_v1.py",
+        SRC / "player_development_engine_v1.py",
+        SRC / "validate_player_development_curves_v1.py",
         SRC / "validate_position_aware_game_stats_v3.py",
         SRC / "freeform_trade_machine_engine_v3.py",
         SRC / "mutable_league_state_v1.py",
@@ -1596,6 +1598,32 @@ def run_full() -> dict[str, Any]:
                 / "simulation_player_stat_profiles_v1.py"
             ),
             "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="player_development_engine_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC / "player_development_engine_v1.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="player_development_curve_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_player_development_curves_v1.py"
+            ),
+            "--seed",
+            "20260808",
+            "--variance-scale",
+            "0.55",
         ],
     )
     run_subprocess_suite(
