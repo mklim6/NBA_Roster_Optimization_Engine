@@ -67,9 +67,17 @@ from simulation_league_state_v1 import (  # noqa: E402
     initial_state_summary,
     validate_simulation_league_state,
 )
+from simulation_player_stat_profiles_v1 import (  # noqa: E402
+    PROFILE_DATA_PATH,
+    PROFILE_LOADER_VERSION,
+    load_player_stat_profiles,
+    player_id_by_name,
+    player_stat_factor,
+)
 from single_game_simulator_v1 import (  # noqa: E402
     ENGINE_VERSION as GAME_ENGINE_VERSION,
     position_stat_multiplier,
+    profile_adjusted_stat_multiplier,
     simulate_scheduled_game,
     team_box_score_reconciles,
 )
@@ -80,7 +88,7 @@ from simulation_league_state_v1 import (  # noqa: E402
 
 
 VALIDATOR_VERSION = (
-    "project-validation-runner-v1.7-2026-08-08"
+    "project-validation-runner-v1.8-2026-08-08"
 )
 QUICK_REPORT = (
     OUTPUTS / "project_validation_quick_v1.json"
@@ -255,8 +263,15 @@ def validate_required_files(
         PAGES / "3_Trade_Machine.py",
         PAGES / "4_Game_Simulator.py",
         APP_DATA / "player_positions_2026_27_v1.json",
+        APP_DATA
+        / "simulation_player_stat_profiles_2026_27_v1.json",
         SRC / "build_player_positions_v1.py",
-        SRC / "validate_position_aware_game_stats_v2.py",
+        SRC
+        / "build_simulation_player_stat_profiles_v1.py",
+        SRC
+        / "diagnose_player_stat_profile_sources_v1.py",
+        SRC / "simulation_player_stat_profiles_v1.py",
+        SRC / "validate_position_aware_game_stats_v3.py",
         SRC / "freeform_trade_machine_engine_v3.py",
         SRC / "mutable_league_state_v1.py",
         SRC / "state_runtime_adapter_v1.py",
@@ -604,6 +619,102 @@ def quick_runtime_validation(
         ),
     )
 
+    player_profiles = load_player_stat_profiles()
+    profile_position_mismatches = [
+        player_id
+        for player_id, profile
+        in player_profiles.items()
+        if (
+            player_id not in position_records
+            or str(
+                position_records[player_id].get(
+                    "position"
+                )
+                or ""
+            ).strip().upper()
+            != str(
+                profile.get("position") or ""
+            ).strip().upper()
+        )
+    ]
+    require(
+        checks,
+        phase="player_profiles",
+        name="player_stat_profile_layer_covers_runtime",
+        condition=(
+            PROFILE_DATA_PATH.exists()
+            and len(player_profiles) == 582
+            and set(player_profiles)
+            == set(runtime.ratings_by_id)
+        ),
+        details=(
+            f"loader={PROFILE_LOADER_VERSION}; "
+            f"profiles={len(player_profiles)}; "
+            f"runtime_players={len(runtime.ratings_by_id)}"
+        ),
+    )
+    require(
+        checks,
+        phase="player_profiles",
+        name="player_stat_profiles_match_positions",
+        condition=not profile_position_mismatches,
+        details=(
+            "582 profile positions match"
+            if not profile_position_mismatches
+            else (
+                "mismatched="
+                f"{len(profile_position_mismatches)}; "
+                + ", ".join(
+                    profile_position_mismatches[:8]
+                )
+            )
+        ),
+    )
+
+    jokic_id = (
+        player_id_by_name("Nikola Jokić")
+        or player_id_by_name("Nikola Jokic")
+    )
+    curry_id = player_id_by_name(
+        "Stephen Curry"
+    )
+    wemby_id = player_id_by_name(
+        "Victor Wembanyama"
+    )
+    require(
+        checks,
+        phase="player_profiles",
+        name="player_specific_exception_signals_present",
+        condition=bool(
+            jokic_id
+            and curry_id
+            and wemby_id
+            and player_stat_factor(
+                jokic_id,
+                "assists",
+            )
+            >= 2.50
+            and player_stat_factor(
+                jokic_id,
+                "rebounds",
+            )
+            >= 1.05
+            and player_stat_factor(
+                wemby_id,
+                "blocks",
+            )
+            >= 2.00
+        ),
+        details=(
+            f"Jokic AST="
+            f"{player_stat_factor(jokic_id, 'assists') if jokic_id else 'missing'}; "
+            f"Jokic REB="
+            f"{player_stat_factor(jokic_id, 'rebounds') if jokic_id else 'missing'}; "
+            f"Wemby BLK="
+            f"{player_stat_factor(wemby_id, 'blocks') if wemby_id else 'missing'}"
+        ),
+    )
+
     simulation_state_started = time.perf_counter()
     simulation_state = create_simulation_league_state(
         adapted_initial,
@@ -778,7 +889,7 @@ def quick_runtime_validation(
         name="position_aware_stat_engine_active",
         condition=(
             GAME_ENGINE_VERSION
-            == "single-game-simulator-v1.2-2026-08-08"
+            == "single-game-simulator-v1.3-2026-08-08"
             and position_stat_multiplier(
                 "C",
                 "rebounds",
@@ -808,8 +919,30 @@ def quick_runtime_validation(
                 "blocks",
             )
             > 0.30
+            and jokic_id
+            and curry_id
+            and profile_adjusted_stat_multiplier(
+                jokic_id,
+                player_profiles[jokic_id][
+                    "position"
+                ],
+                "assists",
+            )
+            > profile_adjusted_stat_multiplier(
+                curry_id,
+                player_profiles[curry_id][
+                    "position"
+                ],
+                "assists",
+            )
         ),
-        details=GAME_ENGINE_VERSION,
+        details=(
+            f"{GAME_ENGINE_VERSION}; "
+            f"Jokic adjusted AST="
+            f"{profile_adjusted_stat_multiplier(jokic_id, player_profiles[jokic_id]['position'], 'assists') if jokic_id else 'missing'}; "
+            f"Curry adjusted AST="
+            f"{profile_adjusted_stat_multiplier(curry_id, player_profiles[curry_id]['position'], 'assists') if curry_id else 'missing'}"
+        ),
     )
 
     preview_lines_by_team = {
@@ -1238,6 +1371,26 @@ def quick_runtime_validation(
             ),
         },
         "simulation_rosters": roster_report["summary"],
+        "player_stat_profiles": {
+            "loader_version": PROFILE_LOADER_VERSION,
+            "profiles": len(player_profiles),
+            "jokic_assist_factor": (
+                player_stat_factor(
+                    jokic_id,
+                    "assists",
+                )
+                if jokic_id
+                else None
+            ),
+            "wembanyama_block_factor": (
+                player_stat_factor(
+                    wemby_id,
+                    "blocks",
+                )
+                if wemby_id
+                else None
+            ),
+        },
         "simulation_state": {
             "teams": simulation_summary["teams"],
             "players": simulation_summary["players"],
@@ -1423,6 +1576,30 @@ def run_full() -> dict[str, Any]:
     )
     run_subprocess_suite(
         checks,
+        name="player_stat_profile_builder_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "build_simulation_player_stat_profiles_v1.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="player_stat_profile_loader_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "simulation_player_stat_profiles_v1.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
         name="single_game_simulator_self_test",
         command=[
             sys.executable,
@@ -1434,12 +1611,12 @@ def run_full() -> dict[str, Any]:
     )
     run_subprocess_suite(
         checks,
-        name="position_aware_game_stat_validation",
+        name="player_specific_game_stat_validation",
         command=[
             sys.executable,
             str(
                 SRC
-                / "validate_position_aware_game_stats_v2.py"
+                / "validate_position_aware_game_stats_v3.py"
             ),
             "--games",
             "180",

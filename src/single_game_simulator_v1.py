@@ -45,9 +45,15 @@ from simulation_league_state_v1 import (  # noqa: E402
 from state_runtime_adapter_v1 import (  # noqa: E402
     build_state_runtime,
 )
+from simulation_player_stat_profiles_v1 import (  # noqa: E402
+    PROFILE_LOADER_VERSION,
+    load_player_stat_profiles,
+    player_id_by_name,
+    player_stat_factor,
+)
 
 
-ENGINE_VERSION = "single-game-simulator-v1.2-2026-08-08"
+ENGINE_VERSION = "single-game-simulator-v1.3-2026-08-08"
 SELF_TEST_REPORT = (
     OUTPUTS / "single_game_simulator_v1_self_test.json"
 )
@@ -697,6 +703,70 @@ def simulate_scores(
     )
 
 
+PROFILE_FACTOR_INFLUENCE: dict[str, float] = {
+    "points": 0.55,
+    "rebounds": 1.00,
+    "assists": 1.00,
+    "steals": 0.85,
+    "blocks": 0.90,
+    "turnovers": 0.75,
+    "fouls": 0.50,
+}
+
+
+def moderated_player_stat_factor(
+    player_id: str,
+    stat_name: str,
+) -> float:
+    raw_factor = player_stat_factor(
+        player_id,
+        stat_name,
+        default=1.0,
+    )
+    influence = PROFILE_FACTOR_INFLUENCE.get(
+        stat_name,
+        1.0,
+    )
+    adjusted = 1.0 + influence * (
+        raw_factor - 1.0
+    )
+    limits = {
+        "points": (0.65, 1.55),
+        "rebounds": (0.40, 2.25),
+        "assists": (0.35, 3.50),
+        "steals": (0.45, 2.10),
+        "blocks": (0.30, 3.75),
+        "turnovers": (0.55, 1.90),
+        "fouls": (0.70, 1.45),
+    }
+    minimum, maximum = limits.get(
+        stat_name,
+        (0.35, 3.50),
+    )
+    return clamp(
+        adjusted,
+        minimum,
+        maximum,
+    )
+
+
+def profile_adjusted_stat_multiplier(
+    player_id: str,
+    position: str,
+    stat_name: str,
+) -> float:
+    return (
+        position_stat_multiplier(
+            position,
+            stat_name,
+        )
+        * moderated_player_stat_factor(
+            player_id,
+            stat_name,
+        )
+    )
+
+
 def usage_weights(
     rng: random.Random,
     plan: TeamGamePlan,
@@ -723,6 +793,12 @@ def usage_weights(
             else 0.93
         )
         variation = rng.uniform(0.84, 1.16)
+        profile_usage_factor = (
+            moderated_player_stat_factor(
+                player_id,
+                "points",
+            )
+        )
         weights[player_id] = (
             plan.minutes[player_id]
             * clamp(
@@ -731,6 +807,7 @@ def usage_weights(
                 2.10,
             )
             * role_weight
+            * profile_usage_factor
             * variation
         )
 
@@ -1047,9 +1124,12 @@ def secondary_stat_weights(
             0.72,
             1.24,
         )
-        position_factor = position_stat_multiplier(
-            player.position,
-            stat_name,
+        position_factor = (
+            profile_adjusted_stat_multiplier(
+                player_id,
+                player.position,
+                stat_name,
+            )
         )
         usage_factor = 1.0
 
@@ -1675,6 +1755,48 @@ def run_self_test() -> dict[str, Any]:
         ],
     )
     checks: dict[str, bool] = {}
+    profiles = load_player_stat_profiles()
+    jokic_id = (
+        player_id_by_name("Nikola Jokić")
+        or player_id_by_name("Nikola Jokic")
+    )
+    curry_id = player_id_by_name(
+        "Stephen Curry"
+    )
+    wemby_id = player_id_by_name(
+        "Victor Wembanyama"
+    )
+
+    checks["player_profile_layer_loaded"] = (
+        len(profiles) == 582
+    )
+    checks[
+        "jokic_profile_overrides_center_assist_prior"
+    ] = bool(
+        jokic_id
+        and curry_id
+        and profile_adjusted_stat_multiplier(
+            jokic_id,
+            profiles[jokic_id]["position"],
+            "assists",
+        )
+        > profile_adjusted_stat_multiplier(
+            curry_id,
+            profiles[curry_id]["position"],
+            "assists",
+        )
+    )
+    checks[
+        "wembanyama_profile_amplifies_blocks"
+    ] = bool(
+        wemby_id
+        and moderated_player_stat_factor(
+            wemby_id,
+            "blocks",
+        )
+        >= 2.0
+    )
+
     before_preview = state_result_signature(
         state
     )
@@ -1982,6 +2104,7 @@ def run_self_test() -> dict[str, Any]:
     ]
     report = {
         "script": ENGINE_VERSION,
+        "profile_loader": PROFILE_LOADER_VERSION,
         "checks": checks,
         "failed_checks": failed,
         "summary": {
@@ -2040,6 +2163,34 @@ def run_self_test() -> dict[str, Any]:
                     line.fouls
                     for line in preview_one.game.player_box_scores
                     if line.team_abbreviation == home_team
+                ),
+            },
+            "profile_examples": {
+                "jokic_assist_multiplier": (
+                    profile_adjusted_stat_multiplier(
+                        jokic_id,
+                        profiles[jokic_id]["position"],
+                        "assists",
+                    )
+                    if jokic_id
+                    else None
+                ),
+                "curry_assist_multiplier": (
+                    profile_adjusted_stat_multiplier(
+                        curry_id,
+                        profiles[curry_id]["position"],
+                        "assists",
+                    )
+                    if curry_id
+                    else None
+                ),
+                "wembanyama_block_factor": (
+                    moderated_player_stat_factor(
+                        wemby_id,
+                        "blocks",
+                    )
+                    if wemby_id
+                    else None
                 ),
             },
         },
