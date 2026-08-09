@@ -88,7 +88,7 @@ from simulation_league_state_v1 import (  # noqa: E402
 
 
 VALIDATOR_VERSION = (
-    "project-validation-runner-v1.15-2026-08-08"
+    "project-validation-runner-v1.21-2026-08-08"
 )
 QUICK_REPORT = (
     OUTPUTS / "project_validation_quick_v1.json"
@@ -271,6 +271,7 @@ def validate_required_files(
         SRC
         / "diagnose_player_stat_profile_sources_v1.py",
         SRC / "simulation_player_stat_profiles_v1.py",
+        SRC / "simulation_player_minutes_v1.py",
         SRC / "player_development_engine_v1.py",
         SRC / "validate_player_development_curves_v1.py",
         SRC / "simulation_season_transition_v1.py",
@@ -291,7 +292,22 @@ def validate_required_files(
         SRC / "simulation_module_bootstrap_v1.py",
         SRC / "franchise_calendar_v1.py",
         SRC / "validate_franchise_calendar_ui_v1.py",
-        SRC / "validate_position_aware_game_stats_v4.py",
+        SRC / "franchise_command_center_v1.py",
+        SRC
+        / "validate_franchise_command_center_v1.py",
+        SRC / "simulation_cross_page_state_v1.py",
+        SRC
+        / "validate_cross_page_franchise_state_v1.py",
+        SRC / "simulation_league_alignment_v1.py",
+        SRC / "simulation_trade_sync_v1.py",
+        SRC / "simulation_postseason_v1.py",
+        SRC / "validate_simulation_postseason_v1.py",
+        SRC / "simulation_franchise_checkpoint_v1.py",
+        SRC / "validate_franchise_checkpoint_v1.py",
+        SRC
+        / "validate_franchise_simulation_realism_v1.py",
+        PAGES / "5_Franchise_Mode.py",
+        SRC / "validate_position_aware_game_stats_v6.py",
         SRC / "freeform_trade_machine_engine_v3.py",
         SRC / "mutable_league_state_v1.py",
         SRC / "state_runtime_adapter_v1.py",
@@ -468,7 +484,7 @@ def validate_ui_contract(
             "from franchise_calendar_v1 import"
         ),
         "controlled_team_selection": (
-            '"game_simulator_controlled_teams"'
+            '"franchise_pref_controlled_teams"'
         ),
         "calendar_month_grid": (
             "build_team_month_calendar"
@@ -969,7 +985,7 @@ def quick_runtime_validation(
         name="position_aware_stat_engine_active",
         condition=(
             GAME_ENGINE_VERSION
-            == "single-game-simulator-v1.4-2026-08-08"
+            == "single-game-simulator-v1.6-2026-08-08"
             and position_stat_multiplier(
                 "C",
                 "rebounds",
@@ -1861,6 +1877,140 @@ def run_full() -> dict[str, Any]:
     )
     run_subprocess_suite(
         checks,
+        name="franchise_command_center_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "franchise_command_center_v1.py"
+            ),
+            "--self-test",
+            "--seed",
+            "20260808",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="franchise_command_center_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_franchise_command_center_v1.py"
+            ),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="simulation_cross_page_state_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "simulation_cross_page_state_v1.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="cross_page_franchise_state_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_cross_page_franchise_state_v1.py"
+            ),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="simulation_league_alignment_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "simulation_league_alignment_v1.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="simulation_trade_sync_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "simulation_trade_sync_v1.py"
+            ),
+            "--self-test",
+            "--seed",
+            "20260808",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="simulation_postseason_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "simulation_postseason_v1.py"
+            ),
+            "--self-test",
+            "--seed",
+            "20260808",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="simulation_postseason_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_simulation_postseason_v1.py"
+            ),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="simulation_franchise_checkpoint_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "simulation_franchise_checkpoint_v1.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="franchise_checkpoint_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_franchise_checkpoint_v1.py"
+            ),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="simulation_player_minutes_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "simulation_player_minutes_v1.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
         name="single_game_simulator_self_test",
         command=[
             sys.executable,
@@ -1877,10 +2027,23 @@ def run_full() -> dict[str, Any]:
             sys.executable,
             str(
                 SRC
-                / "validate_position_aware_game_stats_v4.py"
+                / "validate_position_aware_game_stats_v6.py"
             ),
             "--games",
             "180",
+            "--seed",
+            "20260808",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="franchise_simulation_realism_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_franchise_simulation_realism_v1.py"
+            ),
             "--seed",
             "20260808",
         ],

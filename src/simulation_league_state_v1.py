@@ -42,10 +42,16 @@ from state_runtime_adapter_v1 import (  # noqa: E402
 from simulation_player_stat_profiles_v1 import (  # noqa: E402
     load_player_stat_profiles,
 )
+from simulation_player_minutes_v1 import (  # noqa: E402
+    build_historical_minutes_plan,
+)
 
 
 SIMULATION_STATE_VERSION = (
     "simulation-league-state-v1.2-2026-08-08"
+)
+MINUTES_MODEL_VERSION = (
+    "simulation-player-minutes-v1-2026-08-08"
 )
 SELF_TEST_REPORT = (
     OUTPUTS / "simulation_league_state_v1_self_test.json"
@@ -362,46 +368,14 @@ def minutes_targets(
     *,
     regulation_minutes: int,
 ) -> dict[str, float]:
-    if not rotation_ids:
-        return {}
-
-    team_minutes = regulation_minutes * 5
-    starter_set = set(starter_ids)
-    weights = {
-        player_id: (
-            1.25
-            if player_id in starter_set
-            else 0.75
-        )
-        for player_id in rotation_ids
-    }
-    total_weight = sum(weights.values())
-
-    raw = {
-        player_id: (
-            team_minutes
-            * weight
-            / total_weight
-        )
-        for player_id, weight in weights.items()
-    }
-    rounded = {
-        player_id: round(value, 1)
-        for player_id, value in raw.items()
-    }
-    difference = round(
-        team_minutes - sum(rounded.values()),
-        1,
+    profiles = load_player_stat_profiles()
+    plan = build_historical_minutes_plan(
+        rotation_ids,
+        starter_ids,
+        profiles,
+        regulation_minutes=regulation_minutes,
     )
-
-    if rounded and difference:
-        first_id = rotation_ids[0]
-        rounded[first_id] = round(
-            rounded[first_id] + difference,
-            1,
-        )
-
-    return rounded
+    return dict(plan.targets)
 
 
 def contract_state_for_player(
@@ -1526,6 +1500,67 @@ def run_self_test() -> dict[str, Any]:
             for team in state.teams.values()
         )
     )
+    all_minute_targets = [
+        target
+        for team in state.teams.values()
+        for target
+        in team.rotation.minutes_targets.values()
+    ]
+    checks["historical_minutes_model_is_active"] = (
+        MINUTES_MODEL_VERSION
+        == (
+            "simulation-player-minutes-v1-2026-08-08"
+        )
+    )
+    checks["rotation_minutes_are_not_flat"] = (
+        len(
+            {
+                round(value, 1)
+                for value
+                in all_minute_targets
+            }
+        )
+        >= 12
+    )
+
+    player_id_by_name = {
+        player.player_name: player_id
+        for player_id, player
+        in state.players.items()
+    }
+    for star_name in (
+        "Shai Gilgeous-Alexander",
+        "Luka Dončić",
+    ):
+        player_id = player_id_by_name.get(
+            star_name
+        )
+        if player_id is None:
+            checks[
+                "historical_star_minutes_are_above_30"
+            ] = False
+            break
+
+        team = state.players[
+            player_id
+        ].team_abbreviation
+        target = (
+            state.teams[
+                team
+            ].rotation.minutes_targets.get(
+                player_id,
+                0.0,
+            )
+        )
+        if target <= 30.0:
+            checks[
+                "historical_star_minutes_are_above_30"
+            ] = False
+            break
+    else:
+        checks[
+            "historical_star_minutes_are_above_30"
+        ] = True
 
     teams = sorted(state.teams)
     home_team = teams[0]

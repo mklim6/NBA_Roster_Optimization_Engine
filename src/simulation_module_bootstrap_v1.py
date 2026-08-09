@@ -17,7 +17,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 BOOTSTRAP_VERSION = (
-    "simulation-module-bootstrap-v1-2026-08-08"
+    "simulation-module-bootstrap-v1.4-2026-08-08"
 )
 SELF_TEST_REPORT = (
     OUTPUTS
@@ -25,8 +25,16 @@ SELF_TEST_REPORT = (
 )
 
 STATE_MODULE_NAME = "simulation_league_state_v1"
+EXPECTED_MINUTES_MODEL_VERSION = (
+    "simulation-player-minutes-v1-2026-08-08"
+)
+EXPECTED_ENGINE_VERSION = (
+    "single-game-simulator-v1.6-2026-08-08"
+)
+
 REQUIRED_STATE_ATTRIBUTES = (
     "BASELINE_PER_36_FIELDS",
+    "MINUTES_MODEL_VERSION",
     "SIMULATION_STATE_VERSION",
     "SimulationLeagueState",
     "create_simulation_league_state",
@@ -35,15 +43,24 @@ REQUIRED_STATE_ATTRIBUTES = (
 
 # Remove dependents before the foundation module so no imported controller
 # retains references to a stale SimulationLeagueState class.
-SIMULATION_MODULE_RESET_ORDER = (
+DEPENDENT_MODULE_RESET_ORDER = (
+    "franchise_command_center_v1",
     "franchise_calendar_v1",
+    "simulation_trade_sync_v1",
+    "simulation_postseason_v1",
+    "simulation_league_alignment_v1",
+    "simulation_player_minutes_v1",
     "regular_season_simulation_controller_v1",
     "regular_season_schedule_v1",
     "simulation_season_transition_controller_v1",
     "simulation_season_transition_v1",
     "single_game_simulator_v1",
-    "simulation_league_state_v1",
     "simulation_roster_validator_v1",
+)
+
+FULL_MODULE_RESET_ORDER = (
+    *DEPENDENT_MODULE_RESET_ORDER,
+    "simulation_league_state_v1",
 )
 
 
@@ -94,18 +111,21 @@ def state_module_is_current(
         not missing_state_attributes(module)
         and module_path(module)
         == expected_state_path()
+        and getattr(
+            module,
+            "MINUTES_MODEL_VERSION",
+            "",
+        )
+        == EXPECTED_MINUTES_MODEL_VERSION
     )
 
 
-def purge_simulation_modules() -> tuple[
-    str,
-    ...,
-]:
+def purge_module_names(
+    module_names: tuple[str, ...],
+) -> tuple[str, ...]:
     removed: list[str] = []
 
-    for module_name in (
-        SIMULATION_MODULE_RESET_ORDER
-    ):
+    for module_name in module_names:
         if module_name in sys.modules:
             sys.modules.pop(
                 module_name,
@@ -117,13 +137,28 @@ def purge_simulation_modules() -> tuple[
     return tuple(removed)
 
 
-def ensure_current_simulation_modules() -> Any:
-    """Return the exact current local state module.
+def purge_dependent_simulation_modules() -> tuple[str, ...]:
+    return purge_module_names(
+        DEPENDENT_MODULE_RESET_ORDER
+    )
 
-    Streamlit can preload a previous module object before a multipage script
-    starts. A normal import then reuses that object even though the file on
-    disk is newer. This function detects that contract mismatch, clears the
-    dependent simulation chain once, and imports the current local module.
+
+def purge_simulation_modules() -> tuple[
+    str,
+    ...,
+]:
+    return purge_module_names(
+        FULL_MODULE_RESET_ORDER
+    )
+
+
+def ensure_current_simulation_modules() -> Any:
+    """Return the exact current local state module and refresh dependents.
+
+    The permanent state foundation is preserved when its contract and path
+    are current. Every state-dependent controller and game engine is still
+    removed from ``sys.modules`` so Streamlit cannot continue using an older
+    allocator after files are replaced in place.
     """
     existing = sys.modules.get(
         STATE_MODULE_NAME
@@ -135,6 +170,7 @@ def ensure_current_simulation_modules() -> Any:
             existing
         )
     ):
+        purge_dependent_simulation_modules()
         return existing
 
     if existing is None:
@@ -151,6 +187,7 @@ def ensure_current_simulation_modules() -> Any:
                 imported
             )
         ):
+            purge_dependent_simulation_modules()
             return imported
 
     purge_simulation_modules()
@@ -187,6 +224,7 @@ def ensure_current_simulation_modules() -> Any:
             f"{expected_path}."
         )
 
+    purge_dependent_simulation_modules()
     return repaired
 
 
@@ -230,6 +268,21 @@ def run_self_test() -> dict[str, Any]:
             "franchise_calendar_v1"
         )
     )
+    alignment_module = (
+        importlib.import_module(
+            "simulation_league_alignment_v1"
+        )
+    )
+    trade_sync_module = (
+        importlib.import_module(
+            "simulation_trade_sync_v1"
+        )
+    )
+    postseason_module = (
+        importlib.import_module(
+            "simulation_postseason_v1"
+        )
+    )
 
     checks = {
         "bootstrap_version_is_current": (
@@ -263,6 +316,14 @@ def run_self_test() -> dict[str, Any]:
                 "free_throw_attempts_per_36",
             )
         ),
+        "historical_minutes_contract_is_present": (
+            getattr(
+                repaired,
+                "MINUTES_MODEL_VERSION",
+                "",
+            )
+            == EXPECTED_MINUTES_MODEL_VERSION
+        ),
         "season_transition_chain_imports": (
             hasattr(
                 transition_controller,
@@ -280,6 +341,40 @@ def run_self_test() -> dict[str, Any]:
                 calendar_module,
                 "build_team_month_calendar",
             )
+        ),
+        "league_alignment_chain_imports": (
+            hasattr(
+                alignment_module,
+                "apply_nba_team_alignment",
+            )
+        ),
+        "trade_sync_chain_imports": (
+            hasattr(
+                trade_sync_module,
+                "synchronize_simulation_with_trade_state",
+            )
+        ),
+        "postseason_chain_imports": (
+            hasattr(
+                postseason_module,
+                "initialize_postseason",
+            )
+            and hasattr(
+                postseason_module,
+                "advance_postseason",
+            )
+        ),
+        "dependent_modules_are_refreshed_even_when_state_is_current": (
+            "single_game_simulator_v1"
+            in sys.modules
+            and getattr(
+                sys.modules[
+                    "single_game_simulator_v1"
+                ],
+                "ENGINE_VERSION",
+                "",
+            )
+            == EXPECTED_ENGINE_VERSION
         ),
     }
     failed = [

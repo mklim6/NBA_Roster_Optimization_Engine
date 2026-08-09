@@ -53,7 +53,7 @@ from simulation_player_stat_profiles_v1 import (  # noqa: E402
 )
 
 
-ENGINE_VERSION = "single-game-simulator-v1.4-2026-08-08"
+ENGINE_VERSION = "single-game-simulator-v1.6-2026-08-08"
 SELF_TEST_REPORT = (
     OUTPUTS / "single_game_simulator_v1_self_test.json"
 )
@@ -461,8 +461,96 @@ def allocate_integer_units(
     return floors
 
 
+def allocate_bounded_integer_units(
+    total_units: int,
+    ordered_ids: tuple[str, ...],
+    weights: dict[str, float],
+    caps: dict[str, int],
+) -> dict[str, int]:
+    if total_units > sum(
+        max(
+            0,
+            int(
+                caps.get(
+                    player_id,
+                    total_units,
+                )
+            ),
+        )
+        for player_id in ordered_ids
+    ):
+        raise SingleGameSimulationError(
+            "Minute caps cannot absorb the "
+            "required team total."
+        )
+
+    output = {
+        player_id: 0
+        for player_id in ordered_ids
+    }
+    remaining_ids = list(
+        ordered_ids
+    )
+    remaining_units = int(
+        total_units
+    )
+
+    while remaining_ids:
+        proposed = allocate_integer_units(
+            remaining_units,
+            tuple(remaining_ids),
+            {
+                player_id: weights[
+                    player_id
+                ]
+                for player_id
+                in remaining_ids
+            },
+        )
+        capped = [
+            player_id
+            for player_id in remaining_ids
+            if proposed[player_id]
+            > int(
+                caps.get(
+                    player_id,
+                    total_units,
+                )
+            )
+        ]
+
+        if not capped:
+            for player_id in remaining_ids:
+                output[player_id] = (
+                    proposed[player_id]
+                )
+            break
+
+        for player_id in capped:
+            player_cap = int(
+                caps.get(
+                    player_id,
+                    total_units,
+                )
+            )
+            output[player_id] = player_cap
+            remaining_units -= player_cap
+            remaining_ids.remove(
+                player_id
+            )
+
+    if sum(output.values()) != total_units:
+        raise SingleGameSimulationError(
+            "Bounded allocation did not "
+            "reconcile to the team total."
+        )
+
+    return output
+
+
 def allocate_minutes(
     state: SimulationLeagueState,
+    team: str,
     rotation_ids: tuple[str, ...],
     starter_ids: tuple[str, ...],
     *,
@@ -474,49 +562,99 @@ def allocate_minutes(
         * 5
         * overtime_periods
     )
-    starter_set = set(starter_ids)
-    ratings = {
-        player_id: effective_player_rating(
-            state,
-            player_id,
+    if not rotation_ids:
+        raise SingleGameSimulationError(
+            "Cannot allocate minutes without "
+            "available rotation players."
         )
-        for player_id in rotation_ids
-    }
-    team_average = (
-        sum(ratings.values()) / len(ratings)
+
+    starter_set = set(starter_ids)
+    saved_targets = (
+        state.teams[
+            team
+        ].rotation.minutes_targets
     )
-    weights = {}
+    weights: dict[str, float] = {}
 
     for player_id in rotation_ids:
-        role_weight = (
-            1.36
-            if player_id in starter_set
-            else 0.74
-        )
-        rating_weight = clamp(
-            1.0
-            + (
-                ratings[player_id]
-                - team_average
+        saved = float(
+            saved_targets.get(
+                player_id,
+                0.0,
             )
-            * 0.025,
-            0.72,
-            1.30,
+            or 0.0
         )
+        fallback = (
+            30.0
+            if player_id in starter_set
+            else 18.0
+        )
+        # A valid saved target already belongs to a 240-minute team
+        # plan. Applying the starter/bench fallback as a floor would
+        # inflate low-minute bench roles and proportionally reduce
+        # stars. Use the fallback only when no saved target exists.
         weights[player_id] = (
-            role_weight * rating_weight
+            saved
+            if saved > 0.0
+            else max(
+                fallback,
+                1.0,
+            )
         )
 
-    minute_tenths = allocate_integer_units(
-        int(total_minutes * 10),
-        rotation_ids,
-        weights,
+    # Normal rotations keep regular-season workloads below 38 minutes.
+    # Emergency short-handed rotations may exceed that limit only when
+    # required to reconcile the NBA team-minute total.
+    average_required = (
+        total_minutes
+        / len(rotation_ids)
+    )
+    maximum_minutes = min(
+        (
+            state.settings
+            .regulation_minutes
+            + state.settings
+            .overtime_minutes
+            * overtime_periods
+        ),
+        max(
+            38.0
+            + 2.0 * overtime_periods,
+            math.ceil(
+                average_required
+            )
+            + 4.0,
+        ),
+    )
+    minute_tenths = (
+        allocate_bounded_integer_units(
+            int(
+                round(
+                    total_minutes
+                    * 10
+                )
+            ),
+            rotation_ids,
+            weights,
+            {
+                player_id: int(
+                    round(
+                        maximum_minutes
+                        * 10
+                    )
+                )
+                for player_id
+                in rotation_ids
+            },
+        )
     )
     return {
-        player_id: minute_tenths[
-            player_id
-        ]
-        / 10.0
+        player_id: (
+            minute_tenths[
+                player_id
+            ]
+            / 10.0
+        )
         for player_id in rotation_ids
     }
 
@@ -539,6 +677,7 @@ def build_team_game_plan(
     )
     minutes = allocate_minutes(
         state,
+        team,
         rotation_ids,
         starter_ids,
         overtime_periods=overtime_periods,
@@ -795,51 +934,122 @@ def profile_adjusted_stat_multiplier(
     )
 
 
+def baseline_points_per_36(
+    state: SimulationLeagueState,
+    player_id: str,
+) -> float:
+    player = state.players[
+        player_id
+    ]
+    baseline = getattr(
+        player,
+        "baseline_per_36",
+        {},
+    )
+    raw = (
+        baseline.get(
+            "points_per_36"
+        )
+        if isinstance(
+            baseline,
+            dict,
+        )
+        else None
+    )
+
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = (
+            12.0
+            + max(
+                0.0,
+                player.overall_rating
+                - 70.0,
+            )
+            * 0.62
+        )
+
+    if not math.isfinite(value):
+        value = 16.0
+
+    return clamp(
+        value,
+        4.0,
+        38.0,
+    )
+
+
 def usage_weights(
     rng: random.Random,
     plan: TeamGamePlan,
     *,
     state: SimulationLeagueState | None = None,
 ) -> dict[str, float]:
-    starter_set = set(plan.starter_ids)
+    if state is None:
+        raise SingleGameSimulationError(
+            "Player scoring allocation requires "
+            "the permanent simulation state."
+        )
+
     minute_weighted_average = (
         sum(
             plan.minutes[player_id]
             * plan.effective_ratings[player_id]
-            for player_id in plan.player_ids
+            for player_id
+            in plan.player_ids
         )
         / sum(plan.minutes.values())
     )
-    weights = {}
+    weights: dict[str, float] = {}
 
     for player_id in plan.player_ids:
+        player = state.players[
+            player_id
+        ]
         rating_edge = (
-            plan.effective_ratings[player_id]
+            plan.effective_ratings[
+                player_id
+            ]
             - minute_weighted_average
         )
-        role_weight = (
-            1.08
-            if player_id in starter_set
-            else 0.93
-        )
-        variation = rng.uniform(0.84, 1.16)
-        profile_usage_factor = (
-            moderated_player_stat_factor(
+        baseline_expectation = (
+            baseline_points_per_36(
+                state,
                 player_id,
-                "points",
-                state=state,
             )
+            * plan.minutes[
+                player_id
+            ]
+            / 36.0
         )
-        weights[player_id] = (
-            plan.minutes[player_id]
-            * clamp(
-                1.0 + rating_edge * 0.065,
-                0.40,
-                2.10,
-            )
-            * role_weight
-            * profile_usage_factor
-            * variation
+        health_adjustment = clamp(
+            plan.effective_ratings[
+                player_id
+            ]
+            / max(
+                player.overall_rating,
+                1.0,
+            ),
+            0.82,
+            1.05,
+        )
+        rating_adjustment = clamp(
+            1.0
+            + rating_edge * 0.006,
+            0.90,
+            1.10,
+        )
+        game_variation = rng.uniform(
+            0.90,
+            1.10,
+        )
+        weights[player_id] = max(
+            0.25,
+            baseline_expectation
+            * health_adjustment
+            * rating_adjustment
+            * game_variation,
         )
 
     return weights
@@ -1234,11 +1444,11 @@ def build_team_secondary_stat_allocations(
         + 3.0 * (big_share - 0.42)
     )
     assist_rate = clamp(
-        0.60
-        + 0.10 * guard_share
+        0.64
+        + 0.08 * guard_share
         + 0.025 * rating_edge,
-        0.55,
-        0.74,
+        0.60,
+        0.78,
     )
     assist_expected = field_goals_made * assist_rate
 
@@ -1966,6 +2176,60 @@ def run_self_test() -> dict[str, Any]:
         ]
         for team in (home_team, away_team)
     }
+    preview_minutes = [
+        line.minutes
+        for line
+        in preview_one.game.player_box_scores
+    ]
+    checks[
+        "saved_rotation_minutes_anchor_game_plan"
+    ] = all(
+        max(
+            line.minutes
+            for line
+            in preview_team_lines[team]
+        )
+        <= 38.0
+        for team in (
+            home_team,
+            away_team,
+        )
+    )
+    checks[
+        "historical_minute_targets_create_role_variation"
+    ] = all(
+        len(
+            {
+                round(
+                    line.minutes,
+                    1,
+                )
+                for line
+                in preview_team_lines[team]
+            }
+        )
+        >= 5
+        for team in (
+            home_team,
+            away_team,
+        )
+    )
+    checks[
+        "normal_rotation_averages_do_not_create_40_minute_stars"
+    ] = (
+        max(preview_minutes) <= 38.0
+    )
+    checks[
+        "single_game_scoring_has_no_forced_50_point_outlier"
+    ] = (
+        max(
+            line.points
+            for line
+            in preview_one.game.player_box_scores
+        )
+        <= 49
+    )
+
     checks["team_secondary_totals_are_plausible"] = all(
         30 <= sum(line.rebounds for line in lines) <= 60
         and 2 <= sum(line.steals for line in lines) <= 16

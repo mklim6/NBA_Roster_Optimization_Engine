@@ -13,7 +13,7 @@ OUTPUTS = ROOT / "outputs"
 PAGE_PATH = PAGES / "4_Game_Simulator.py"
 
 VALIDATOR_VERSION = (
-    "franchise-calendar-ui-validator-v1.1-2026-08-08"
+    "franchise-calendar-ui-validator-v1.3-2026-08-08"
 )
 REPORT_PATH = (
     OUTPUTS
@@ -47,6 +47,15 @@ def run_validation() -> dict[str, Any]:
         "bootstrap_version_visible": (
             "BOOTSTRAP_VERSION"
         ),
+        "realism_engine_version_imported": (
+            "ENGINE_VERSION"
+        ),
+        "realism_engine_guard_present": (
+            "EXPECTED_REALISM_ENGINE_VERSION"
+        ),
+        "realism_engine_v1_5_required": (
+            "single-game-simulator-v1.6-2026-08-08"
+        ),
         "calendar_backend_imported": (
             "from franchise_calendar_v1 import"
         ),
@@ -60,13 +69,22 @@ def run_validation() -> dict[str, Any]:
             "simulate_regular_season_scope"
         ),
         "controlled_team_selector": (
-            '"game_simulator_controlled_teams"'
+            '"franchise_pref_controlled_teams"'
+        ),
+        "controlled_team_widget_shadow": (
+            '"_game_simulator_controlled_teams_widget"'
         ),
         "viewed_team_selector": (
-            '"game_simulator_viewed_team"'
+            '"franchise_pref_active_team"'
+        ),
+        "viewed_team_widget_shadow": (
+            '"_game_simulator_viewed_team_widget"'
         ),
         "calendar_month_selector": (
-            '"game_simulator_calendar_month"'
+            '"franchise_pref_calendar_month"'
+        ),
+        "calendar_month_widget_shadow": (
+            '"_game_simulator_calendar_month_widget"'
         ),
         "persistent_selected_game": (
             '"game_simulator_selected_schedule_game_id"'

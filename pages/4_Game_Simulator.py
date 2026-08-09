@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import html
+import importlib
 import importlib.util
 import secrets
 import sys
@@ -39,9 +40,26 @@ from simulation_module_bootstrap_v1 import (  # noqa: E402
 )
 
 
-# Streamlit may preload an older simulator module object before this page
-# begins. Repair that chain before importing any state-dependent controller.
+# Repair the state-dependent chain first, then explicitly reload the local
+# cross-page helper before importing symbols added by the latest slice.
 ensure_current_simulation_modules()
+import simulation_cross_page_state_v1 as _cross_page_state  # noqa: E402
+
+_cross_page_state = importlib.reload(
+    _cross_page_state
+)
+
+from simulation_cross_page_state_v1 import (  # noqa: E402
+    CROSS_PAGE_STATE_VERSION,
+    initialize_persistent_widget,
+    persist_widget_value,
+    simulation_matches_trade_state,
+    simulation_source_status,
+    simulation_state_is_compatible,
+    trade_state_is_compatible,
+)
+
+
 def load_local_roster_validator():
     """Load the validator from this project's exact src file.
 
@@ -88,7 +106,12 @@ def load_local_roster_validator():
 
 
 roster_validator = load_local_roster_validator()
+from simulation_league_alignment_v1 import (  # noqa: E402
+    ALIGNMENT_VERSION,
+    apply_nba_team_alignment,
+)
 from simulation_league_state_v1 import (  # noqa: E402
+    MINUTES_MODEL_VERSION,
     SIMULATION_STATE_VERSION,
     GameStatus,
     ScheduledGame,
@@ -99,6 +122,7 @@ from simulation_league_state_v1 import (  # noqa: E402
     validate_simulation_league_state,
 )
 from single_game_simulator_v1 import (  # noqa: E402
+    ENGINE_VERSION,
     GameSimulationMetadata,
     SimulatedGame,
     SingleGameSimulationError,
@@ -141,6 +165,18 @@ from state_runtime_adapter_v1 import (  # noqa: E402
     StateRuntimeAdapterError,
     build_state_runtime,
 )
+
+
+EXPECTED_REALISM_ENGINE_VERSION = (
+    "single-game-simulator-v1.6-2026-08-08"
+)
+
+if ENGINE_VERSION != EXPECTED_REALISM_ENGINE_VERSION:
+    raise ImportError(
+        "Game Simulator loaded an outdated engine: "
+        f"{ENGINE_VERSION}. Expected "
+        f"{EXPECTED_REALISM_ENGINE_VERSION}."
+    )
 
 
 st.set_page_config(
@@ -195,14 +231,25 @@ def get_trade_league_state(
     key = "trade_machine_league_state"
     state = st.session_state.get(key)
 
-    if (
-        not isinstance(state, LeagueState)
-        or state.state_version != STATE_VERSION
+    if not trade_state_is_compatible(
+        state,
+        expected_state_version=STATE_VERSION,
     ):
         state = create_league_state(base_runtime)
         st.session_state[key] = state
 
     return state
+
+
+def persist_simulator_widget(
+    widget_key: str,
+    persistent_key: str,
+) -> None:
+    persist_widget_value(
+        st.session_state,
+        persistent_key=persistent_key,
+        widget_key=widget_key,
+    )
 
 
 def clear_game_preview() -> None:
@@ -449,12 +496,12 @@ def create_fresh_simulation_state(
         state,
         runtime,
     )
+    apply_nba_team_alignment(
+        state
+    )
     st.session_state[
         "game_simulator_league_state"
     ] = state
-    st.session_state[
-        "game_simulator_source_trade_object_id"
-    ] = id(trade_state)
     st.session_state[
         "game_simulator_position_signature"
     ] = current_position_signature()
@@ -472,26 +519,24 @@ def get_simulation_state(
     state = st.session_state.get(key)
     rebuilt = False
 
+    structurally_compatible = (
+        simulation_state_is_compatible(
+            state,
+            expected_state_version=(
+                SIMULATION_STATE_VERSION
+            ),
+        )
+    )
     positions_current = bool(
-        isinstance(state, SimulationLeagueState)
+        structurally_compatible
         and all(
             player.synthetic
             or player.position != "UNK"
             for player in state.players.values()
         )
     )
-    valid = (
-        isinstance(state, SimulationLeagueState)
-        and state.state_version
-        == SIMULATION_STATE_VERSION
-        and state.source_league_state_revision
-        == trade_state.state_revision
-        and state.source_transaction_count
-        == len(trade_state.transaction_history)
-        and st.session_state.get(
-            "game_simulator_source_trade_object_id"
-        )
-        == id(trade_state)
+    structurally_current = (
+        structurally_compatible
         and st.session_state.get(
             "game_simulator_position_signature"
         )
@@ -499,13 +544,39 @@ def get_simulation_state(
         and positions_current
     )
 
-    if not valid:
+    if not structurally_current:
         state = create_fresh_simulation_state(
             runtime,
             trade_state,
         )
+        st.session_state[
+            "game_simulator_trade_sync_required"
+        ] = False
         rebuilt = True
+        return state, rebuilt
 
+    apply_nba_team_alignment(
+        state
+    )
+    source_matches = (
+        simulation_matches_trade_state(
+            state,
+            trade_state,
+        )
+    )
+    st.session_state[
+        "game_simulator_trade_sync_required"
+    ] = not source_matches
+    st.session_state[
+        "game_simulator_trade_source_status"
+    ] = simulation_source_status(
+        state,
+        trade_state,
+    )
+
+    # Never erase an active schedule because another page reconstructed an
+    # equivalent LeagueState object. If a real trade revision changed, keep
+    # the season intact and require an explicit roster sync instead.
     return state, rebuilt
 
 
@@ -853,6 +924,10 @@ def render_hero(
   · {escaped(simulation_state.phase.value.replace("_", " ").title())}
   · Trade universe revision {trade_state.state_revision}
   · Bootstrap {escaped(BOOTSTRAP_VERSION)}
+  · Cross-page {escaped(CROSS_PAGE_STATE_VERSION)}
+  · Alignment {escaped(ALIGNMENT_VERSION)}
+  · Engine {escaped(ENGINE_VERSION)}
+  · Minutes {escaped(MINUTES_MODEL_VERSION)}
   · {len(trade_state.transaction_history)} applied trade(s)
   · {len(simulation_state.completed_games)} completed game(s)
 </div>
@@ -1424,21 +1499,62 @@ notice = st.session_state.pop(
 if notice:
     st.success(notice)
 
+trade_sync_required = bool(
+    st.session_state.get(
+        "game_simulator_trade_sync_required",
+        False,
+    )
+)
+
+if trade_sync_required:
+    source_status = st.session_state.get(
+        "game_simulator_trade_source_status"
+    )
+    detail = ""
+    if source_status is not None:
+        detail = (
+            " Simulation source revision "
+            f"{source_status.simulation_revision}; "
+            "Trade Machine revision "
+            f"{source_status.trade_descriptor.state_revision}."
+        )
+    st.warning(
+        "The Trade Machine league changed after this season began. "
+        "The permanent schedule, results, standings, and statistics "
+        "were preserved rather than reset."
+        + detail
+        + " Apply the pending transaction from Franchise Mode "
+        "before simulating another game."
+    )
+    st.page_link(
+        "pages/5_Franchise_Mode.py",
+        label="Open Franchise Mode to sync trade",
+        icon="🏆",
+    )
+    st.stop()
+
 st.markdown(
     '<div class="gs-section">00 · Franchise calendar</div>',
     unsafe_allow_html=True,
 )
 
 teams = sorted(simulation_state.teams)
-controlled_key = (
-    "game_simulator_controlled_teams"
+controlled_pref_key = (
+    "franchise_pref_controlled_teams"
 )
-if controlled_key not in st.session_state:
-    st.session_state[controlled_key] = (
+controlled_widget_key = (
+    "_game_simulator_controlled_teams_widget"
+)
+initialize_persistent_widget(
+    st.session_state,
+    persistent_key=controlled_pref_key,
+    widget_key=controlled_widget_key,
+    default=(
         ["CHI"]
         if "CHI" in teams
         else [teams[0]]
-    )
+    ),
+)
 
 franchise_control_columns = st.columns(
     [2.4, 1.5, 1.1]
@@ -1449,7 +1565,12 @@ with franchise_control_columns[0]:
         "User-controlled teams",
         options=teams,
         format_func=team_label,
-        key=controlled_key,
+        key=controlled_widget_key,
+        on_change=persist_simulator_widget,
+        args=(
+            controlled_widget_key,
+            controlled_pref_key,
+        ),
         help=(
             "Batch simulation pauses before games involving "
             "any controlled team so you can manage rotations "
@@ -1468,21 +1589,31 @@ except FranchiseCalendarError as exc:
     st.error(str(exc))
     controlled_teams = ()
 
-viewed_key = (
-    "game_simulator_viewed_team"
+viewed_pref_key = (
+    "franchise_pref_active_team"
+)
+viewed_widget_key = (
+    "_game_simulator_viewed_team_widget"
 )
 preferred_viewed_team = (
     controlled_teams[0]
     if controlled_teams
     else teams[0]
 )
-if (
-    viewed_key not in st.session_state
-    or st.session_state[viewed_key]
-    not in teams
-):
+initialize_persistent_widget(
+    st.session_state,
+    persistent_key=viewed_pref_key,
+    widget_key=viewed_widget_key,
+    default=preferred_viewed_team,
+)
+if st.session_state[
+    viewed_widget_key
+] not in teams:
     st.session_state[
-        viewed_key
+        viewed_widget_key
+    ] = preferred_viewed_team
+    st.session_state[
+        viewed_pref_key
     ] = preferred_viewed_team
 
 with franchise_control_columns[1]:
@@ -1490,7 +1621,12 @@ with franchise_control_columns[1]:
         "Calendar team",
         options=teams,
         format_func=team_label,
-        key=viewed_key,
+        key=viewed_widget_key,
+        on_change=persist_simulator_widget,
+        args=(
+            viewed_widget_key,
+            viewed_pref_key,
+        ),
     )
 
 with franchise_control_columns[2]:
@@ -1615,19 +1751,27 @@ else:
             viewed_team,
         )
     )
-    calendar_month_key = (
-        "game_simulator_calendar_month"
+    calendar_month_pref_key = (
+        "franchise_pref_calendar_month"
+    )
+    calendar_month_widget_key = (
+        "_game_simulator_calendar_month_widget"
+    )
+    initialize_persistent_widget(
+        st.session_state,
+        persistent_key=calendar_month_pref_key,
+        widget_key=calendar_month_widget_key,
+        default=default_month_value,
     )
 
-    if (
-        calendar_month_key
-        not in st.session_state
-        or st.session_state[
-            calendar_month_key
-        ] not in calendar_month_options
-    ):
+    if st.session_state[
+        calendar_month_widget_key
+    ] not in calendar_month_options:
         st.session_state[
-            calendar_month_key
+            calendar_month_widget_key
+        ] = default_month_value
+        st.session_state[
+            calendar_month_pref_key
         ] = default_month_value
 
     calendar_header_columns = st.columns(
@@ -1643,7 +1787,12 @@ else:
                 value[1],
                 1,
             ).strftime("%B %Y"),
-            key=calendar_month_key,
+            key=calendar_month_widget_key,
+            on_change=persist_simulator_widget,
+            args=(
+                calendar_month_widget_key,
+                calendar_month_pref_key,
+            ),
         )
 
     calendar_model = (

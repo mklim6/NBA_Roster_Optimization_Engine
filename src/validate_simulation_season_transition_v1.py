@@ -49,7 +49,7 @@ from state_runtime_adapter_v1 import (  # noqa: E402
 
 
 SCRIPT_VERSION = (
-    "simulation-season-transition-validator-v1-2026-08-08"
+    "simulation-season-transition-validator-v1.2-2026-08-08"
 )
 REPORT_PATH = (
     OUTPUTS
@@ -257,7 +257,7 @@ def main() -> int:
         ),
         "game_engine_reads_permanent_state": (
             GAME_ENGINE_VERSION
-            == "single-game-simulator-v1.4-2026-08-08"
+            == "single-game-simulator-v1.6-2026-08-08"
         ),
         "all_582_players_projected": (
             transition.players_projected == 582
