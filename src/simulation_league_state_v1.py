@@ -293,6 +293,16 @@ class SeasonArchive:
     development_summary: dict[str, Any] = field(
         default_factory=dict
     )
+    # Postseason state is attached dynamically during a live season. Keep a
+    # complete copy inside the archive so the bracket, series, box scores,
+    # postseason statistics, champion, and runner-up survive the transition.
+    postseason_state: Any | None = None
+    champion: str = ""
+    runner_up: str = ""
+    conference_champions: dict[str, str] = field(
+        default_factory=dict
+    )
+    postseason_games_completed: int = 0
 
 
 @dataclass

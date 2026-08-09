@@ -669,8 +669,12 @@ def checkpoint_progress_key(
     transition_count = int(
         getattr(
             simulation_state,
-            "season_transition_count",
-            0,
+            "transition_count",
+            getattr(
+                simulation_state,
+                "season_transition_count",
+                0,
+            ),
         )
         or 0
     )

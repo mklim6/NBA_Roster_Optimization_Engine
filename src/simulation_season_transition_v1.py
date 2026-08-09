@@ -53,7 +53,7 @@ from state_runtime_adapter_v1 import (  # noqa: E402
 
 
 TRANSITION_VERSION = (
-    "simulation-season-transition-v1-2026-08-08"
+    "simulation-season-transition-v1.1-2026-08-09"
 )
 SELF_TEST_REPORT = (
     OUTPUTS
@@ -96,6 +96,9 @@ class SeasonTransitionResult:
     biggest_fallers: tuple[dict[str, Any], ...]
     archived_seasons: int
     transition_count: int
+    archived_champion: str = ""
+    archived_runner_up: str = ""
+    archived_postseason_games: int = 0
 
 
 def clean_text(value: Any) -> str:
@@ -432,6 +435,12 @@ def refresh_team_rotations(
 def reset_season_results(
     state: SimulationLeagueState,
 ) -> None:
+    # A postseason belongs to the season being archived. Removing the live
+    # dynamic attribute prevents the completed bracket from leaking into the
+    # new preseason while the archive retains its complete deep copy.
+    if hasattr(state, "postseason_state"):
+        delattr(state, "postseason_state")
+
     state.phase = LeaguePhase.PRESEASON
     state.current_day_index = 0
     state.standings = {
@@ -608,6 +617,44 @@ def advance_simulation_season(
         "biggest_fallers": list(fallers),
     }
 
+    source_postseason = getattr(
+        state,
+        "postseason_state",
+        None,
+    )
+    archived_champion = str(
+        getattr(
+            source_postseason,
+            "champion",
+            "",
+        )
+        or ""
+    )
+    archived_runner_up = str(
+        getattr(
+            source_postseason,
+            "runner_up",
+            "",
+        )
+        or ""
+    )
+    archived_conference_champions = dict(
+        getattr(
+            source_postseason,
+            "conference_champions",
+            {},
+        )
+        or {}
+    )
+    archived_postseason_games = len(
+        getattr(
+            source_postseason,
+            "completed_games",
+            {},
+        )
+        or {}
+    )
+
     archive = SeasonArchive(
         season_label=source_season,
         standings=copy.deepcopy(
@@ -627,6 +674,17 @@ def advance_simulation_season(
         ),
         development_summary=copy.deepcopy(
             development_summary
+        ),
+        postseason_state=copy.deepcopy(
+            source_postseason
+        ),
+        champion=archived_champion,
+        runner_up=archived_runner_up,
+        conference_champions=copy.deepcopy(
+            archived_conference_champions
+        ),
+        postseason_games_completed=(
+            archived_postseason_games
         ),
     )
 
@@ -726,6 +784,11 @@ def advance_simulation_season(
             state.season_history
         ),
         transition_count=state.transition_count,
+        archived_champion=archived_champion,
+        archived_runner_up=archived_runner_up,
+        archived_postseason_games=(
+            archived_postseason_games
+        ),
     )
 
 
@@ -766,6 +829,59 @@ def transition_state_signature(
                 for player_id, player
                 in state.players.items()
             )
+        ),
+        "postseason": (
+            str(
+                getattr(
+                    getattr(
+                        state,
+                        "postseason_state",
+                        None,
+                    ),
+                    "stage",
+                    "",
+                )
+            ),
+            str(
+                getattr(
+                    getattr(
+                        state,
+                        "postseason_state",
+                        None,
+                    ),
+                    "champion",
+                    "",
+                )
+                or ""
+            ),
+            str(
+                getattr(
+                    getattr(
+                        state,
+                        "postseason_state",
+                        None,
+                    ),
+                    "runner_up",
+                    "",
+                )
+                or ""
+            ),
+            tuple(
+                sorted(
+                    (
+                        getattr(
+                            getattr(
+                                state,
+                                "postseason_state",
+                                None,
+                            ),
+                            "completed_games",
+                            {},
+                        )
+                        or {}
+                    )
+                )
+            ),
         ),
         "standings": tuple(
             sorted(

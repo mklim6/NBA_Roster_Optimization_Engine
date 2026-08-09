@@ -30,7 +30,7 @@ REPORT_PATH = (
 )
 
 VALIDATOR_VERSION = (
-    "franchise-checkpoint-validator-v1.2.1-2026-08-08"
+    "franchise-checkpoint-validator-v1.2.2-2026-08-09"
 )
 
 
@@ -206,8 +206,11 @@ def run_validation() -> dict[str, Any]:
         "live_session_migration": (
             "live-session-checkpoint-migration"
         ),
-        "state_commit_saves": (
-            'reason="franchise-state-commit"'
+        "state_commit_default_reason": (
+            'checkpoint_reason: str = "franchise-state-commit"'
+        ),
+        "state_commit_forwards_reason": (
+            "reason=checkpoint_reason"
         ),
         "fresh_state_saves": (
             'reason="fresh-franchise-state"'

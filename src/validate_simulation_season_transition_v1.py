@@ -49,7 +49,7 @@ from state_runtime_adapter_v1 import (  # noqa: E402
 
 
 SCRIPT_VERSION = (
-    "simulation-season-transition-validator-v1.2-2026-08-08"
+    "simulation-season-transition-validator-v1.3-2026-08-09"
 )
 REPORT_PATH = (
     OUTPUTS
@@ -157,7 +157,28 @@ def main() -> int:
         for player_id in sample_ids.values()
     }
 
+    from types import SimpleNamespace
+
     state.phase = LeaguePhase.OFFSEASON
+    state.postseason_state = SimpleNamespace(
+        stage="complete",
+        champion="CHI",
+        runner_up="HOU",
+        conference_champions={
+            "East": "CHI",
+            "West": "HOU",
+        },
+        completed_games={
+            "NBA-FINALS-G1": {
+                "winner": "CHI",
+            }
+        },
+        postseason_player_totals={
+            wemby_id: {
+                "games": 1,
+            }
+        },
+    )
     transition = advance_simulation_season(
         state,
         performance_signals={
@@ -253,7 +274,7 @@ def main() -> int:
     checks = {
         "transition_version_is_current": (
             TRANSITION_VERSION
-            == "simulation-season-transition-v1-2026-08-08"
+            == "simulation-season-transition-v1.1-2026-08-09"
         ),
         "game_engine_reads_permanent_state": (
             GAME_ENGINE_VERSION
@@ -277,6 +298,31 @@ def main() -> int:
                 0
             ].season_label
             == "2026-27"
+        ),
+        "postseason_is_archived_completely": (
+            state.season_history[0].champion == "CHI"
+            and state.season_history[0].runner_up == "HOU"
+            and state.season_history[0]
+            .conference_champions
+            == {
+                "East": "CHI",
+                "West": "HOU",
+            }
+            and state.season_history[0]
+            .postseason_games_completed
+            == 1
+            and state.season_history[0]
+            .postseason_state
+            .champion
+            == "CHI"
+        ),
+        "new_preseason_clears_live_postseason": (
+            not hasattr(state, "postseason_state")
+        ),
+        "transition_result_reports_archived_finals": (
+            transition.archived_champion == "CHI"
+            and transition.archived_runner_up == "HOU"
+            and transition.archived_postseason_games == 1
         ),
         "player_ages_advanced": all(
             math.isclose(

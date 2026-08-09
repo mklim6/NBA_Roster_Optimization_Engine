@@ -28,11 +28,20 @@ from mutable_league_state_v1 import (  # noqa: E402
     LeagueState,
     create_league_state,
 )
-from simulation_module_bootstrap_v1 import (  # noqa: E402
-    BOOTSTRAP_VERSION,
-    ensure_current_simulation_modules,
-)
+import simulation_module_bootstrap_v1 as _simulation_bootstrap  # noqa: E402
 
+
+# Streamlit can preserve the bootstrap module itself across in-place source
+# updates. Reload it before asking it to repair the state-dependent chain.
+_simulation_bootstrap = importlib.reload(
+    _simulation_bootstrap
+)
+BOOTSTRAP_VERSION = (
+    _simulation_bootstrap.BOOTSTRAP_VERSION
+)
+ensure_current_simulation_modules = (
+    _simulation_bootstrap.ensure_current_simulation_modules
+)
 
 # Repair the state-dependent chain first, then explicitly reload the local
 # cross-page helper. Streamlit can otherwise retain its previous module
@@ -151,10 +160,20 @@ from regular_season_simulation_controller_v1 import (  # noqa: E402
     regular_season_progress,
     regular_season_state_fingerprint,
 )
+from simulation_season_transition_controller_v1 import (  # noqa: E402
+    CONTROLLER_VERSION as SEASON_TRANSITION_CONTROLLER_VERSION,
+    SimulationSeasonTransitionControllerError,
+    build_season_transition_preview,
+    commit_season_transition_preview,
+    incomplete_scheduled_game_ids,
+    preview_matches_state,
+)
 from simulation_league_state_v1 import (  # noqa: E402
     MINUTES_MODEL_VERSION,
     SIMULATION_STATE_VERSION,
     GameStatus,
+    LeaguePhase,
+    SeasonArchive,
     SimulationLeagueState,
     SimulationLeagueStateError,
     create_simulation_league_state,
@@ -172,6 +191,9 @@ from state_runtime_adapter_v1 import (  # noqa: E402
 
 EXPECTED_REALISM_ENGINE_VERSION = (
     "single-game-simulator-v1.6-2026-08-08"
+)
+FRANCHISE_OFFSEASON_INTEGRATION_VERSION = (
+    "franchise-offseason-transition-v1-2026-08-09"
 )
 
 if ENGINE_VERSION != EXPECTED_REALISM_ENGINE_VERSION:
@@ -893,6 +915,8 @@ def clear_game_day_preview() -> None:
 
 def set_franchise_state(
     state: SimulationLeagueState,
+    *,
+    checkpoint_reason: str = "franchise-state-commit",
 ) -> None:
     validate_simulation_league_state(
         state
@@ -902,8 +926,572 @@ def set_franchise_state(
     ] = state
     save_current_franchise_checkpoint(
         state,
-        reason="franchise-state-commit",
+        reason=checkpoint_reason,
         copy_payload=False,
+    )
+
+
+FRANCHISE_TRANSITION_PREVIEW_KEY = (
+    "franchise_season_transition_preview"
+)
+FRANCHISE_TRANSITION_ACK_KEY = (
+    "franchise_season_transition_acknowledged"
+)
+
+
+def clear_franchise_transition_preview() -> None:
+    for key in {
+        FRANCHISE_TRANSITION_PREVIEW_KEY,
+        FRANCHISE_TRANSITION_ACK_KEY,
+    }:
+        st.session_state.pop(
+            key,
+            None,
+        )
+
+
+def archive_champion(
+    archive: SeasonArchive,
+) -> str:
+    direct = str(
+        getattr(
+            archive,
+            "champion",
+            "",
+        )
+        or ""
+    )
+    if direct:
+        return direct
+
+    postseason = getattr(
+        archive,
+        "postseason_state",
+        None,
+    )
+    return str(
+        getattr(
+            postseason,
+            "champion",
+            "",
+        )
+        or ""
+    )
+
+
+def archive_runner_up(
+    archive: SeasonArchive,
+) -> str:
+    direct = str(
+        getattr(
+            archive,
+            "runner_up",
+            "",
+        )
+        or ""
+    )
+    if direct:
+        return direct
+
+    postseason = getattr(
+        archive,
+        "postseason_state",
+        None,
+    )
+    return str(
+        getattr(
+            postseason,
+            "runner_up",
+            "",
+        )
+        or ""
+    )
+
+
+def archive_postseason_games(
+    archive: SeasonArchive,
+) -> int:
+    direct = int(
+        getattr(
+            archive,
+            "postseason_games_completed",
+            0,
+        )
+        or 0
+    )
+    if direct:
+        return direct
+
+    postseason = getattr(
+        archive,
+        "postseason_state",
+        None,
+    )
+    return len(
+        getattr(
+            postseason,
+            "completed_games",
+            {},
+        )
+        or {}
+    )
+
+
+def archived_season_rows(
+    state: SimulationLeagueState,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+
+    for archive in reversed(
+        state.season_history
+    ):
+        development = (
+            archive.development_summary
+            if isinstance(
+                archive.development_summary,
+                dict,
+            )
+            else {}
+        )
+        champion = archive_champion(
+            archive
+        )
+        runner_up = archive_runner_up(
+            archive
+        )
+        rows.append(
+            {
+                "Season": archive.season_label,
+                "Champion": (
+                    team_name(champion)
+                    if champion
+                    else "Not recorded"
+                ),
+                "Runner-Up": (
+                    team_name(runner_up)
+                    if runner_up
+                    else "Not recorded"
+                ),
+                "Regular Games": len(
+                    archive.completed_games
+                ),
+                "Postseason Games": (
+                    archive_postseason_games(
+                        archive
+                    )
+                ),
+                "Players Developed": int(
+                    development.get(
+                        "players_projected",
+                        0,
+                    )
+                    or 0
+                ),
+                "Average OVR Change": float(
+                    development.get(
+                        "average_overall_delta",
+                        0.0,
+                    )
+                    or 0.0
+                ),
+                "Advanced To": str(
+                    development.get(
+                        "target_season",
+                        "",
+                    )
+                    or ""
+                ),
+            }
+        )
+
+    return rows
+
+
+def archived_standings_rows(
+    archive: SeasonArchive,
+) -> list[dict[str, Any]]:
+    ordered = sorted(
+        archive.standings.values(),
+        key=lambda standing: (
+            -standing.wins,
+            -(
+                standing.points_for
+                - standing.points_against
+            ),
+            -standing.points_for,
+            standing.team_abbreviation,
+        ),
+    )
+    rows: list[dict[str, Any]] = []
+
+    for rank, standing in enumerate(
+        ordered,
+        start=1,
+    ):
+        games = max(
+            1,
+            int(standing.games_played),
+        )
+        rows.append(
+            {
+                "Rank": rank,
+                "Team": team_name(
+                    standing.team_abbreviation
+                ),
+                "W": standing.wins,
+                "L": standing.losses,
+                "Win%": round(
+                    standing.wins / games,
+                    3,
+                ),
+                "Point Diff": (
+                    standing.points_for
+                    - standing.points_against
+                ),
+            }
+        )
+
+    return rows
+
+
+def render_archived_season_history(
+    state: SimulationLeagueState,
+) -> None:
+    if not state.season_history:
+        return
+
+    st.markdown("## Archived Season History")
+    st.dataframe(
+        pd.DataFrame(
+            archived_season_rows(state)
+        ),
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Average OVR Change": (
+                st.column_config.NumberColumn(
+                    format="%+.3f",
+                )
+            ),
+        },
+    )
+
+    for archive in reversed(
+        state.season_history
+    ):
+        champion = archive_champion(
+            archive
+        )
+        runner_up = archive_runner_up(
+            archive
+        )
+        label = archive.season_label
+        if champion:
+            label += (
+                " · Champion: "
+                + team_name(champion)
+            )
+
+        with st.expander(label):
+            detail_metrics = st.columns(4)
+            detail_metrics[0].metric(
+                "Champion",
+                (
+                    team_name(champion)
+                    if champion
+                    else "Not recorded"
+                ),
+            )
+            detail_metrics[1].metric(
+                "Runner-Up",
+                (
+                    team_name(runner_up)
+                    if runner_up
+                    else "Not recorded"
+                ),
+            )
+            detail_metrics[2].metric(
+                "Regular Games",
+                len(archive.completed_games),
+            )
+            detail_metrics[3].metric(
+                "Postseason Games",
+                archive_postseason_games(
+                    archive
+                ),
+            )
+            st.dataframe(
+                pd.DataFrame(
+                    archived_standings_rows(
+                        archive
+                    )
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+
+
+def render_franchise_season_transition(
+    state: SimulationLeagueState,
+) -> None:
+    st.divider()
+    st.markdown("## Season Transition")
+    st.caption(
+        "Archive the completed season, preserve the full postseason, "
+        "apply permanent player development, and open the next preseason."
+    )
+
+    preview = st.session_state.get(
+        FRANCHISE_TRANSITION_PREVIEW_KEY
+    )
+    incomplete = incomplete_scheduled_game_ids(
+        state
+    )
+    postseason = get_postseason_state(
+        state,
+        required=False,
+    )
+    postseason_complete = bool(
+        postseason is not None
+        and postseason.stage
+        == PostseasonStage.COMPLETE
+    )
+    eligible = bool(
+        state.phase == LeaguePhase.OFFSEASON
+        and not incomplete
+        and postseason_complete
+    )
+
+    if state.phase == LeaguePhase.PRESEASON:
+        st.success(
+            f"{state.settings.season_label} is open. "
+            "The previous season is preserved below."
+        )
+    elif not postseason_complete:
+        st.info(
+            "Complete the postseason before archiving and "
+            "advancing the league year."
+        )
+    elif incomplete:
+        st.warning(
+            "Every scheduled regular-season game must be "
+            "complete before the season can advance."
+        )
+
+    preview_columns = st.columns([2.6, 1.2])
+    with preview_columns[0]:
+        st.markdown(
+            "The transition is transactional. Previewing does "
+            "not mutate the live franchise, and the commit is "
+            "blocked if the state changes afterward."
+        )
+    with preview_columns[1]:
+        preview_clicked = st.button(
+            "Preview next season",
+            type="primary",
+            width="stretch",
+            disabled=not eligible,
+            key=(
+                "franchise_build_season_transition_"
+                f"{state.settings.season_label}_"
+                f"{state.transition_count}"
+            ),
+        )
+
+    if preview_clicked:
+        try:
+            preview = build_season_transition_preview(
+                state
+            )
+        except (
+            SimulationSeasonTransitionControllerError,
+            SimulationLeagueStateError,
+            ValueError,
+            KeyError,
+        ) as exc:
+            st.error(
+                "The season transition could not be previewed. "
+                f"Detail: {exc}"
+            )
+        else:
+            st.session_state[
+                FRANCHISE_TRANSITION_PREVIEW_KEY
+            ] = preview
+            # Continue in this execution so Streamlit keeps
+            # the League & Offseason tab visible.
+
+    if isinstance(preview, dict):
+        result = preview.get(
+            "result",
+            {},
+        )
+        current = preview_matches_state(
+            state,
+            preview,
+        )
+        st.markdown(
+            "### Transition Preview: "
+            f"{preview.get('source_season', '')} → "
+            f"{preview.get('target_season', '')}"
+        )
+        preview_metrics = st.columns(5)
+        preview_metrics[0].metric(
+            "Players Developed",
+            result.get(
+                "players_projected",
+                0,
+            ),
+        )
+        preview_metrics[1].metric(
+            "Improved",
+            result.get(
+                "improved_players",
+                0,
+            ),
+        )
+        preview_metrics[2].metric(
+            "Stable",
+            result.get(
+                "stable_players",
+                0,
+            ),
+        )
+        preview_metrics[3].metric(
+            "Declined",
+            result.get(
+                "declined_players",
+                0,
+            ),
+        )
+        preview_metrics[4].metric(
+            "Average OVR Δ",
+            f"{float(result.get('average_overall_delta', 0.0)):+.3f}",
+        )
+
+        development_tabs = st.tabs(
+            [
+                "Biggest Risers",
+                "Biggest Fallers",
+            ]
+        )
+        with development_tabs[0]:
+            st.dataframe(
+                pd.DataFrame(
+                    result.get(
+                        "biggest_risers",
+                        [],
+                    )
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+        with development_tabs[1]:
+            st.dataframe(
+                pd.DataFrame(
+                    result.get(
+                        "biggest_fallers",
+                        [],
+                    )
+                ),
+                hide_index=True,
+                width="stretch",
+            )
+
+        if not current:
+            st.warning(
+                "The live franchise changed after this preview. "
+                "Build a new preview before advancing."
+            )
+
+        target_season = str(
+            preview.get(
+                "target_season",
+                "",
+            )
+        ).strip()
+        confirmation_columns = st.columns(
+            [3.6, 1.4]
+        )
+        with confirmation_columns[0]:
+            acknowledged = st.checkbox(
+                "I understand this archives the completed season "
+                "and permanently updates player ratings.",
+                key=FRANCHISE_TRANSITION_ACK_KEY,
+            )
+            st.caption(
+                "The next league year is calculated automatically "
+                "from the current season."
+            )
+        with confirmation_columns[1]:
+            commit_clicked = st.button(
+                (
+                    f"Advance to {target_season}"
+                    if target_season
+                    else "Advance season"
+                ),
+                type="primary",
+                width="stretch",
+                disabled=not (
+                    current
+                    and acknowledged
+                    and bool(target_season)
+                ),
+                key=(
+                    "franchise_commit_season_transition_"
+                    f"{preview.get('source_season', '')}_"
+                    f"{target_season}_"
+                    f"{state.transition_count}"
+                ),
+            )
+
+        if commit_clicked:
+            try:
+                transitioned_state, committed = (
+                    commit_season_transition_preview(
+                        state,
+                        preview,
+                    )
+                )
+                validate_simulation_league_state(
+                    transitioned_state
+                )
+                set_franchise_state(
+                    transitioned_state,
+                    checkpoint_reason=(
+                        "franchise-season-transition"
+                    ),
+                )
+            except (
+                SimulationSeasonTransitionControllerError,
+                SimulationLeagueStateError,
+                ValueError,
+                KeyError,
+            ) as exc:
+                st.error(
+                    "The season transition could not be committed. "
+                    f"Detail: {exc}"
+                )
+            else:
+                clear_franchise_transition_preview()
+                clear_game_day_preview()
+                champion = committed.archived_champion
+                champion_text = (
+                    f" {team_name(champion)}'s championship "
+                    "was preserved."
+                    if champion
+                    else ""
+                )
+                st.session_state[
+                    "franchise_notice"
+                ] = (
+                    f"Archived {committed.source_season} and "
+                    f"advanced to {committed.target_season}."
+                    f"{champion_text}"
+                )
+                st.rerun()
+
+    render_archived_season_history(
+        state
     )
 
 
@@ -2803,17 +3391,17 @@ if not state.schedule:
 
         with schedule_columns[0]:
             st.subheader(
-                "Create the generated 2026–27 season"
+                f"Create the {state.settings.season_label} schedule"
             )
             st.caption(
-                "Installs the validated realistic "
-                "1,230-game filler schedule. It is "
+                "Installs the validated, realistic "
+                "1,230-game generated schedule. It is "
                 "not the official NBA schedule."
             )
 
         with schedule_columns[1]:
             generate_clicked = st.button(
-                "Generate season",
+                f"Generate {state.settings.season_label} schedule",
                 type="primary",
                 width="stretch",
             )
@@ -2849,6 +3437,7 @@ if not state.schedule:
                 "franchise_notice"
             ] = (
                 "Generated the full "
+                f"{state.settings.season_label} "
                 "82-game schedule."
             )
             st.rerun()
@@ -2870,6 +3459,26 @@ snapshot = build_team_snapshot(
 primary, secondary = team_colors(
     active_team
 )
+games_played = (
+    int(snapshot.wins)
+    + int(snapshot.losses)
+)
+has_played_games = games_played > 0
+conference_rank_copy = (
+    f"Conference rank #{snapshot.conference_rank}"
+    if has_played_games
+    else "Conference rank —"
+)
+conference_metric_value = (
+    f"#{snapshot.conference_rank}"
+    if has_played_games
+    else "—"
+)
+league_metric_value = (
+    f"#{snapshot.league_rank}"
+    if has_played_games
+    else "—"
+)
 next_copy = (
     (
         f"{snapshot.next_location} vs "
@@ -2877,7 +3486,11 @@ next_copy = (
         f"{snapshot.next_game_date}"
     )
     if snapshot.next_game_id
-    else "Regular season complete"
+    else (
+        f"Generate the {state.settings.season_label} schedule"
+        if not state.schedule
+        else "Regular season complete"
+    )
 )
 
 st.markdown(
@@ -2894,7 +3507,7 @@ st.markdown(
         f"{escaped(snapshot.conference)} · "
         f"{escaped(snapshot.division)} · "
         f"{snapshot.wins}-{snapshot.losses} · "
-        f"Conference rank #{snapshot.conference_rank}"
+        f"{conference_rank_copy}"
         "</div>"
         f'<div class="fm-next">'
         f"Next: {escaped(next_copy)}"
@@ -2962,7 +3575,8 @@ if bool(stat_health["contaminated"]):
             st.session_state[
                 "franchise_notice"
             ] = (
-                "Started a clean 2026-27 season using "
+                f"Started a clean {state.settings.season_label} "
+                "season using "
                 f"{ENGINE_VERSION} and "
                 f"{MINUTES_MODEL_VERSION}."
             )
@@ -2988,11 +3602,11 @@ with tabs[0]:
     )
     metrics[1].metric(
         "Conference",
-        f"#{snapshot.conference_rank}",
+        conference_metric_value,
     )
     metrics[2].metric(
         "League",
-        f"#{snapshot.league_rank}",
+        league_metric_value,
     )
     metrics[3].metric(
         "Point diff",
@@ -4542,6 +5156,10 @@ with tabs[6]:
                             )
                             st.rerun()
 
+    render_franchise_season_transition(
+        state
+    )
+
     st.divider()
     st.markdown("## Offseason Setup")
 
@@ -4591,6 +5209,12 @@ with tabs[6]:
                 ),
             },
             {
+                "System": "Season archival",
+                "Status": (
+                    "Active with durable history"
+                ),
+            },
+            {
                 "System": "Draft lottery",
                 "Status": (
                     "Next offseason slice"
@@ -4634,6 +5258,8 @@ st.caption(
     f"{ENGINE_VERSION} · "
     f"{MINUTES_MODEL_VERSION} · "
     f"{POSTSEASON_VERSION} · "
+    f"{SEASON_TRANSITION_CONTROLLER_VERSION} · "
+    f"{FRANCHISE_OFFSEASON_INTEGRATION_VERSION} · "
     f"{CHECKPOINT_VERSION} · "
     f"{CHECKPOINT_IMPLEMENTATION_VERSION}"
 )

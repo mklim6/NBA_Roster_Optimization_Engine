@@ -279,6 +279,8 @@ def validate_required_files(
         / "simulation_season_transition_controller_v1.py",
         SRC / "validate_simulation_season_transition_v1.py",
         SRC
+        / "validate_franchise_offseason_transition_v1.py",
+        SRC
         / "validate_game_simulator_season_management_ui_v1.py",
         SRC / "regular_season_schedule_v1.py",
         SRC / "validate_regular_season_schedule_v1.py",
@@ -1758,6 +1760,20 @@ def run_full() -> dict[str, Any]:
                 )
             ),
             "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="franchise_offseason_transition_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / (
+                    "validate_franchise_offseason_"
+                    "transition_v1.py"
+                )
+            ),
         ],
     )
     run_subprocess_suite(

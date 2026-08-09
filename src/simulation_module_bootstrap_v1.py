@@ -5,6 +5,7 @@ import importlib
 import json
 import sys
 import types
+from dataclasses import fields, is_dataclass, make_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 BOOTSTRAP_VERSION = (
-    "simulation-module-bootstrap-v1.4-2026-08-08"
+    "simulation-module-bootstrap-v1.5-2026-08-09"
 )
 SELF_TEST_REPORT = (
     OUTPUTS
@@ -36,9 +37,25 @@ REQUIRED_STATE_ATTRIBUTES = (
     "BASELINE_PER_36_FIELDS",
     "MINUTES_MODEL_VERSION",
     "SIMULATION_STATE_VERSION",
+    "SeasonArchive",
     "SimulationLeagueState",
     "create_simulation_league_state",
     "validate_simulation_league_state",
+)
+
+REQUIRED_SEASON_ARCHIVE_FIELDS = (
+    "season_label",
+    "standings",
+    "player_season_totals",
+    "schedule",
+    "completed_games",
+    "transition_engine_version",
+    "development_summary",
+    "postseason_state",
+    "champion",
+    "runner_up",
+    "conference_champions",
+    "postseason_games_completed",
 )
 
 # Remove dependents before the foundation module so no imported controller
@@ -46,6 +63,8 @@ REQUIRED_STATE_ATTRIBUTES = (
 DEPENDENT_MODULE_RESET_ORDER = (
     "franchise_command_center_v1",
     "franchise_calendar_v1",
+    "simulation_cross_page_state_v1",
+    "simulation_franchise_checkpoint_v1",
     "simulation_trade_sync_v1",
     "simulation_postseason_v1",
     "simulation_league_alignment_v1",
@@ -104,11 +123,56 @@ def module_path(
         return None
 
 
+def season_archive_field_names(
+    module: Any,
+) -> tuple[str, ...]:
+    archive_class = getattr(
+        module,
+        "SeasonArchive",
+        None,
+    )
+
+    if (
+        archive_class is None
+        or not is_dataclass(archive_class)
+    ):
+        return ()
+
+    return tuple(
+        field.name
+        for field in fields(archive_class)
+    )
+
+
+def missing_season_archive_fields(
+    module: Any,
+) -> tuple[str, ...]:
+    available = set(
+        season_archive_field_names(module)
+    )
+    return tuple(
+        name
+        for name in REQUIRED_SEASON_ARCHIVE_FIELDS
+        if name not in available
+    )
+
+
+def season_archive_contract_is_current(
+    module: Any,
+) -> bool:
+    return not missing_season_archive_fields(
+        module
+    )
+
+
 def state_module_is_current(
     module: Any,
 ) -> bool:
     return bool(
         not missing_state_attributes(module)
+        and not missing_season_archive_fields(
+            module
+        )
         and module_path(module)
         == expected_state_path()
         and getattr(
@@ -217,11 +281,40 @@ def ensure_current_simulation_modules() -> Any:
             + f". Loaded from {actual_path}."
         )
 
+    missing_archive_fields = (
+        missing_season_archive_fields(
+            repaired
+        )
+    )
+
+    if missing_archive_fields:
+        raise SimulationModuleBootstrapError(
+            "The reloaded SeasonArchive contract "
+            "is missing: "
+            + ", ".join(
+                missing_archive_fields
+            )
+            + f". Loaded from {actual_path}."
+        )
+
     if actual_path != expected_path:
         raise SimulationModuleBootstrapError(
             "The simulation state module resolved "
             f"to {actual_path}, expected "
             f"{expected_path}."
+        )
+
+    if (
+        getattr(
+            repaired,
+            "MINUTES_MODEL_VERSION",
+            "",
+        )
+        != EXPECTED_MINUTES_MODEL_VERSION
+    ):
+        raise SimulationModuleBootstrapError(
+            "The reloaded simulation state uses "
+            "an outdated minutes-model contract."
         )
 
     purge_dependent_simulation_modules()
@@ -237,9 +330,56 @@ def run_self_test() -> dict[str, Any]:
     stale.__file__ = str(
         expected_state_path()
     )
+    stale.BASELINE_PER_36_FIELDS = (
+        "points_per_36",
+        "rebounds_per_36",
+        "assists_per_36",
+        "steals_per_36",
+        "blocks_per_36",
+        "turnovers_per_36",
+        "fouls_per_36",
+        "three_attempts_per_36",
+        "free_throw_attempts_per_36",
+    )
+    stale.MINUTES_MODEL_VERSION = (
+        EXPECTED_MINUTES_MODEL_VERSION
+    )
     stale.SIMULATION_STATE_VERSION = (
         "stale-test-module"
     )
+    stale.SeasonArchive = make_dataclass(
+        "SeasonArchive",
+        [
+            ("season_label", str),
+            ("standings", dict),
+            ("player_season_totals", dict),
+            ("schedule", dict),
+            ("completed_games", dict),
+        ],
+    )
+    stale.SimulationLeagueState = object
+    stale.create_simulation_league_state = (
+        lambda *args, **kwargs: None
+    )
+    stale.validate_simulation_league_state = (
+        lambda *args, **kwargs: None
+    )
+
+    stale_surface_is_complete = (
+        not missing_state_attributes(stale)
+    )
+    stale_archive_fields = (
+        missing_season_archive_fields(
+            stale
+        )
+    )
+    stale_archive_contract_is_rejected = (
+        bool(stale_archive_fields)
+        and not state_module_is_current(
+            stale
+        )
+    )
+
     sys.modules[
         STATE_MODULE_NAME
     ] = stale
@@ -286,15 +426,23 @@ def run_self_test() -> dict[str, Any]:
 
     checks = {
         "bootstrap_version_is_current": (
-            BOOTSTRAP_VERSION.endswith(
-                "2026-08-08"
-            )
+            BOOTSTRAP_VERSION
+            == "simulation-module-bootstrap-v1.5-2026-08-09"
+        ),
+        "stale_module_has_legacy_surface": (
+            stale_surface_is_complete
+        ),
+        "stale_archive_schema_is_rejected": (
+            stale_archive_contract_is_rejected
         ),
         "stale_module_is_replaced": (
             repaired is not stale
         ),
         "repaired_module_has_required_contract": (
             not repaired_missing
+            and season_archive_contract_is_current(
+                repaired
+            )
         ),
         "repaired_module_uses_exact_local_path": (
             module_path(repaired)
@@ -400,6 +548,17 @@ def run_self_test() -> dict[str, Any]:
             ),
             "required_attributes": list(
                 REQUIRED_STATE_ATTRIBUTES
+            ),
+            "required_season_archive_fields": list(
+                REQUIRED_SEASON_ARCHIVE_FIELDS
+            ),
+            "actual_season_archive_fields": list(
+                season_archive_field_names(
+                    repaired
+                )
+            ),
+            "stale_missing_archive_fields": list(
+                stale_archive_fields
             ),
         },
         "passed": not failed,
