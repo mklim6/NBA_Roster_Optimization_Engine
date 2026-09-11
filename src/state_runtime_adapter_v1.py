@@ -402,6 +402,17 @@ def build_state_runtime(
 ) -> RuntimeData:
     validate_state(state, base_runtime)
 
+    # TRADE_MACHINE_CANONICAL_HYDRATION_REPAIR_V1:
+    # Capture immutable source ownership before adapting it. A rebased
+    # LeagueState.initial_snapshot is valid durable state and is not evidence
+    # that base_runtime itself was mutated.
+    base_player_teams_before = {
+        player_id: normalize_team(
+            record.get("current_team_2026_27")
+        )
+        for player_id, record in base_runtime.trade_by_id.items()
+    }
+
     trade_pool = update_player_team_column(
         base_runtime.trade_pool,
         state,
@@ -504,6 +515,7 @@ def build_state_runtime(
         base_runtime,
         runtime,
         state,
+        expected_base_player_teams=base_player_teams_before,
     )
     return runtime
 
@@ -512,7 +524,17 @@ def validate_state_runtime(
     base_runtime: RuntimeData,
     runtime: RuntimeData,
     state: LeagueState,
+    *,
+    expected_base_player_teams: dict[str, str] | None = None,
 ) -> dict[str, bool]:
+    if expected_base_player_teams is None:
+        expected_base_player_teams = {
+            player_id: normalize_team(
+                record.get("current_team_2026_27")
+            )
+            for player_id, record in base_runtime.trade_by_id.items()
+        }
+
     checks = {
         "trade_pool_player_ownership_matches_state": all(
             normalize_team(
@@ -590,24 +612,15 @@ def validate_state_runtime(
             )
             for team in state.team_financials
         ),
-        "base_runtime_not_mutated": all(
-            normalize_team(
-                base_runtime.trade_by_id[player_id].get(
-                    "current_team_2026_27"
+        "base_runtime_not_mutated": (
+            {
+                player_id: normalize_team(
+                    record.get("current_team_2026_27")
                 )
-            )
-            == (
-                state.initial_snapshot.player_team_by_id[
-                    player_id
-                ]
-                if state.initial_snapshot is not None
-                else normalize_team(
-                    base_runtime.trade_by_id[
-                        player_id
-                    ].get("current_team_2026_27")
-                )
-            )
-            for player_id in base_runtime.trade_by_id
+                for player_id, record
+                in base_runtime.trade_by_id.items()
+            }
+            == expected_base_player_teams
         ),
     }
 

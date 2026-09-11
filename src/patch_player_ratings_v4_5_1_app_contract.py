@@ -1,4 +1,4 @@
-"""Repair the V4.5.1 Player Ratings app payload and self-test contract.
+r"""Repair the V4.5.1 Player Ratings app payload and self-test contract.
 
 This patch does not recalculate or change any player ratings.
 

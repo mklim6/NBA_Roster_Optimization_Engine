@@ -30,7 +30,7 @@ REPORT_PATH = (
 )
 
 VALIDATOR_VERSION = (
-    "franchise-checkpoint-validator-v1.2.2-2026-08-09"
+    "franchise-checkpoint-validator-v1.2.3-2026-08-09"
 )
 
 
@@ -81,6 +81,9 @@ def run_validation() -> dict[str, Any]:
     page_text = texts[
         "franchise_page"
     ]
+    normalized_page_text = " ".join(
+        page_text.split()
+    )
 
     checkpoint_markers = {
         "atomic_temporary_write": (
@@ -221,8 +224,8 @@ def run_validation() -> dict[str, Any]:
         "progress_status": (
             "with st.status("
         ),
-        "periodic_checkpoint": (
-            "if count % 3 == 0:"
+        "round_boundary_checkpoint": (
+            "postseason-round-boundary-"
         ),
         "bounded_next_game": (
             ".NEXT_CONTROLLED_GAME: 12"
@@ -231,13 +234,13 @@ def run_validation() -> dict[str, Any]:
             ".CURRENT_STAGE: 20"
         ),
         "final_checkpoint": (
-            'reason=(\n                "postseason-advance-complete"'
+            'reason="postseason-advance-complete"'
         ),
         "restore_notice": (
             "Restored the durable Franchise Mode"
         ),
         "checkpoint_timestamp": (
-            "Durable franchise checkpoint:"
+            "Autosave checkpoint ·"
         ),
         "footer_provenance": (
             "CHECKPOINT_VERSION"
@@ -293,16 +296,18 @@ def run_validation() -> dict[str, Any]:
     checks[
         "checkpoint_restore_does_not_override_live_session"
     ] = (
-        '"game_simulator_league_state"\n        in st.session_state'
+        '"franchise_simulation_league_state" in st.session_state'
+        in normalized_page_text
+        and "# FRANCHISE_SIMULATION_SESSION_ISOLATION_V1"
         in page_text
     )
     checks[
         "checkpoint_restores_trade_and_simulation_state"
     ] = (
-        '"game_simulator_league_state"\n    ] = simulation_state'
-        in page_text
-        and '"trade_machine_league_state"\n    ] = trade_state'
-        in page_text
+        'st.session_state[ "franchise_simulation_league_state" ] = simulation_state'
+        in normalized_page_text
+        and 'st.session_state[ "franchise_trade_league_state" ] = trade_state'
+        in normalized_page_text
     )
     checks[
         "long_postseason_calls_use_progress_wrapper"

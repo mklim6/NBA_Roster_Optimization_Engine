@@ -34,10 +34,15 @@ import requests
 from bs4 import BeautifulSoup
 
 
-SCRIPT_VERSION = "player-ratings-current-2k-audit-v1-2026-08-06"
+SCRIPT_VERSION = "player-ratings-current-2k-audit-v1.1-source-sanity-2026-09-11"
 SOURCE_BASE = "https://www.2kratings.com"
 SOURCE_INDEX = f"{SOURCE_BASE}/current-teams"
 SOURCE_LABEL = "2KRatings current NBA 2K27 snapshot"
+# Current NBA roster overalls on the source sit well above this floor.  Values
+# below it are retained as raw source evidence but withheld from aggregate
+# calibration because a source-side field regression can otherwise look like a
+# 30-40 point model miss (observed for Russell Westbrook on 2026-09-10).
+MIN_PLAUSIBLE_CURRENT_NBA_OVERALL = 60
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -655,7 +660,12 @@ def parse_current_roster_table(
     rows: list[dict[str, Any]] = []
 
     for row in roster_table.find_all("tr"):
-        cells = row.find_all(["td", "th"])
+        # Header rows contain the words "Player" and "OVR" but no player.
+        # Restrict extraction to body/data cells so every team page does not
+        # contribute one synthetic player named "Player".
+        cells = row.find_all("td")
+        if not cells:
+            continue
         required_index = max(player_index, ovr_index)
         if len(cells) <= required_index:
             continue
@@ -663,6 +673,11 @@ def parse_current_roster_table(
         player_cell = cells[player_index]
         overall_text = clean_text(cells[ovr_index].get_text(" ", strip=True))
         overall_match = re.search(r"\b(\d{2})\b", overall_text)
+        raw_overall = int(overall_match.group(1)) if overall_match else None
+        overall_is_plausible = bool(
+            raw_overall is not None
+            and MIN_PLAUSIBLE_CURRENT_NBA_OVERALL <= raw_overall <= 99
+        )
 
         anchor = choose_player_anchor(player_cell)
         if anchor is not None:
@@ -701,16 +716,19 @@ def parse_current_roster_table(
                 "source_player_name": player_name,
                 "source_name_key": normalize_name(player_name),
                 "source_team": team_abbr,
-                "source_overall": (
-                    int(overall_match.group(1))
-                    if overall_match
-                    else np.nan
-                ),
+                "source_overall": raw_overall if overall_is_plausible else np.nan,
+                "source_overall_raw": raw_overall if raw_overall is not None else np.nan,
                 "source_position": position,
                 "source_archetype": archetype,
                 "source_player_url": player_url,
                 "source_team_url": source_url,
                 "source_overall_released": bool(overall_match),
+                "source_overall_valid_for_audit": overall_is_plausible,
+                "source_overall_anomaly_reason": (
+                    "outside_current_nba_plausibility_range"
+                    if raw_overall is not None and not overall_is_plausible
+                    else ""
+                ),
             }
         )
 
@@ -1124,7 +1142,13 @@ def build_summary(
             "model_players": int(len(model)),
             "source_players_total": int(len(source)),
             "source_players_with_released_overall": int(
+                source["source_overall_released"].sum()
+            ),
+            "source_overalls_valid_for_audit": int(
                 source["source_overall"].notna().sum()
+            ),
+            "source_overall_anomalies_withheld": int(
+                source["source_overall_anomaly_reason"].ne("").sum()
             ),
             "matched_players": int(len(audit)),
             "matched_with_both_overalls": int(len(valid)),
@@ -1184,6 +1208,19 @@ def build_summary(
 
 
 def run_self_test() -> None:
+    source_sanity_fixture = """
+    <table><thead><tr><th>Player</th><th>OVR</th></tr></thead><tbody>
+      <tr><td><a class="player-name" href="/valid-player">Valid Player</a></td>
+          <td><span data-order="81">81</span></td></tr>
+      <tr><td><a class="player-name" href="/bad-source-row">Bad Source Row</a></td>
+          <td><span data-order="42">42</span></td></tr>
+    </tbody></table>
+    """
+    parsed_fixture = parse_current_roster_table(
+        source_sanity_fixture,
+        "FA",
+        "https://example.test/free-agency",
+    )
     checks = {
         "accent_normalization": (
             normalize_name("Nikola Jokić") == "nikola jokic"
@@ -1197,6 +1234,17 @@ def run_self_test() -> None:
         "team_normalization": normalized_team("PHO") == "PHX",
         "difference_band_positive": difference_band(5.3) == "+5 to +7.9",
         "rank_bucket_122": rank_bucket(122) == "101-150",
+        "source_sanity_accepts_normal_overall": (
+            parsed_fixture[0]["source_overall"] == 81
+            and parsed_fixture[0]["source_overall_valid_for_audit"] is True
+        ),
+        "source_sanity_withholds_implausible_overall": (
+            math.isnan(parsed_fixture[1]["source_overall"])
+            and parsed_fixture[1]["source_overall_raw"] == 42
+            and parsed_fixture[1]["source_overall_released"] is True
+            and parsed_fixture[1]["source_overall_anomaly_reason"]
+            == "outside_current_nba_plausibility_range"
+        ),
     }
 
     print(json.dumps({"checks": checks}, indent=2))
@@ -1243,9 +1291,12 @@ def main() -> int:
     )
     print("2K rows collected:", len(source))
     print(
-        "2K released OVR rows:",
+        "2K valid OVR rows:",
         int(source["source_overall"].notna().sum()),
     )
+    anomaly_count = int(source["source_overall_anomaly_reason"].ne("").sum())
+    if anomaly_count:
+        print("2K source OVR anomalies withheld:", anomaly_count)
 
     audit, unmatched_model, unmatched_source = match_players(model, source)
 
@@ -1370,4 +1421,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     raise SystemExit(main())

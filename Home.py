@@ -618,19 +618,20 @@ def render_page() -> None:
       <span class="feature-item">✓ Explicit confidence and risk labels</span>
     </div>
   </div>
-  <div class="product-card future">
-    <div class="product-icon">▶</div>
-    <span class="hero-kicker">Coming next</span>
-    <h3>Season Simulator</h3>
+  <div class="product-card active">
+    <div class="product-icon">🏆</div>
+    <span class="hero-kicker">Flagship experience</span>
+    <h3>FRANCHISE MODE</h3>
     <p>
-      Apply a roster move, simulate a full season, and compare projected wins,
-      playoff odds, seeding, team strength, and long-term outcomes.
+      Run a persistent NBA universe through the regular season, playoffs,
+      awards, the 3-2-1 Draft Lottery, scouting, NBA Draft Night, player
+      development, health, and multi-season progression.
     </p>
     <div class="feature-list">
-      <span class="feature-item">○ Before-and-after team projections</span>
-      <span class="feature-item">○ Monte Carlo season outcomes</span>
-      <span class="feature-item">○ Playoff and conference seeding odds</span>
-      <span class="feature-item">○ Multi-season progression roadmap</span>
+      <span class="feature-item">✓ Persistent multi-season league state</span>
+      <span class="feature-item">✓ NBA Draft Lottery + live On-the-Clock Draft Night</span>
+      <span class="feature-item">✓ Awards, postseason honors, health and development</span>
+      <span class="feature-item">✓ Player photography and dynamic team branding</span>
     </div>
   </div>
 </div>
@@ -652,8 +653,27 @@ def render_page() -> None:
         None,
     )
 
-    action_columns = st.columns([1, 1, 2])
+    # FRANCHISE_FLAGSHIP_OFFSEASON_EXPERIENCE_V1
+    # Franchise Mode is the primary product. Specialist workspaces
+    # remain directly accessible without visually outranking it.
+    action_columns = st.columns([1.35, 1.0, 1.65])
     with action_columns[0]:
+        franchise_page = Path("pages/5_Franchise_Mode.py")
+        if franchise_page.exists():
+            st.page_link(
+                str(franchise_page),
+                label="Open Franchise Mode",
+                icon="🏆",
+                width="stretch",
+            )
+        else:
+            st.button(
+                "Franchise Mode",
+                disabled=True,
+                width="stretch",
+            )
+
+    with action_columns[1]:
         if trade_page:
             st.page_link(
                 trade_page,
@@ -666,11 +686,11 @@ def render_page() -> None:
                 "Move the V3 page into `pages/1_Trade_Lab.py` "
                 "to activate this navigation button."
             )
-    with action_columns[1]:
-        st.button(
-            "Season Simulator coming next",
-            disabled=True,
-            width="stretch",
+    with action_columns[2]:
+        st.caption(
+            "Franchise Mode is the main front-office experience. "
+            "Trade Lab, Trade Machine, Game Simulator, and Free Agency "
+            "are specialist workspaces that support the same franchise."
         )
 
     if featured:

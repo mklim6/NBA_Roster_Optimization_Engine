@@ -45,6 +45,9 @@ from simulation_season_transition_v1 import (  # noqa: E402
 from state_runtime_adapter_v1 import (  # noqa: E402
     build_state_runtime,
 )
+from franchise_offseason_market_season_v1 import (  # noqa: E402
+    COMPLETED_SEASON_CLOSEOUT_ATTR,
+)
 
 
 CONTROLLER_VERSION = (
@@ -423,6 +426,16 @@ def run_self_test() -> dict[str, Any]:
     state = create_simulation_league_state(
         runtime,
         trade_state,
+    )
+    setattr(
+        state,
+        COMPLETED_SEASON_CLOSEOUT_ATTR,
+        {
+            "status": "applied",
+            "source_season": state.settings.season_label,
+            "target_market_season": next_season_label(state.settings.season_label),
+            "fixture_scope": "simulation_season_transition_controller_self_test",
+        },
     )
 
     source_fingerprint = (

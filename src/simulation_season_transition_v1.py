@@ -30,6 +30,10 @@ from player_development_engine_v1 import (  # noqa: E402
     next_season_label,
     project_player_development,
 )
+from franchise_staff_system_v1 import (  # noqa: E402
+    STAFF_SYSTEM_VERSION,
+    team_development_modifier,
+)
 from simulation_league_state_v1 import (  # noqa: E402
     AvailabilityStatus,
     BASELINE_PER_36_FIELDS,
@@ -125,6 +129,56 @@ def player_development_profile(
             "career development projections."
         )
 
+    totals = state.player_season_totals.get(player_id)
+    games_played = int(
+        getattr(totals, "games_played", 0) or 0
+    )
+    total_minutes = float(
+        getattr(totals, "minutes", 0.0) or 0.0
+    )
+    minutes_per_game = (
+        total_minutes / games_played
+        if games_played > 0
+        else 0.0
+    )
+
+    years_of_service = getattr(
+        player,
+        "years_of_service",
+        None,
+    )
+    if years_of_service is None:
+        years_of_service = len(
+            getattr(
+                player,
+                "development_history",
+                [],
+            )
+            or []
+        )
+
+    # Generated players need a season-clock fallback because older draft
+    # checkpoints may still carry years_of_service=0 after the rookie year.
+    if bool(getattr(player, "generated_prospect", False)):
+        draft_year = getattr(player, "draft_year", None)
+        try:
+            source_start = int(
+                str(state.settings.season_label).split("-", 1)[0]
+            )
+            derived_service = max(
+                0,
+                source_start - int(draft_year) + 1,
+            )
+        except (TypeError, ValueError):
+            derived_service = 0
+        try:
+            years_of_service = max(
+                int(years_of_service),
+                derived_service,
+            )
+        except (TypeError, ValueError):
+            years_of_service = derived_service
+
     return {
         "player_id": player.player_id,
         "player_name": player.player_name,
@@ -148,11 +202,46 @@ def player_development_profile(
         "profile_reliability": (
             player.profile_reliability
         ),
+        "games_played": games_played,
+        "total_minutes": total_minutes,
+        "minutes_per_game": minutes_per_game,
+        "years_of_service": years_of_service,
+        "development_history_count": len(
+            getattr(
+                player,
+                "development_history",
+                [],
+            )
+            or []
+        ),
+        "draft_year": getattr(
+            player,
+            "draft_year",
+            None,
+        ),
+        "draft_round": getattr(
+            player,
+            "draft_round",
+            None,
+        ),
+        "draft_pick": getattr(
+            player,
+            "draft_pick",
+            None,
+        ),
+        "generated_prospect": bool(
+            getattr(
+                player,
+                "generated_prospect",
+                False,
+            )
+        ),
         **{
             field_name: player.skill_ratings[
                 field_name
             ]
-            for field_name in DEVELOPMENT_SKILL_FIELDS
+            for field_name
+            in DEVELOPMENT_SKILL_FIELDS
         },
         "stat_factors": dict(
             player.stat_factors
@@ -384,9 +473,123 @@ def projected_baseline_per_36(
 
 def refresh_team_rotations(
     state: SimulationLeagueState,
+    *,
+    team_abbreviations: tuple[str, ...] | None = None,
 ) -> None:
+    """Rebuild selected rotations with protected quality plus youth opportunity.
+
+    ``team_abbreviations`` keeps transaction previews copy-on-write: callers may
+    repair one cloned team without mutating the shared team objects belonging to
+    the rest of the source league. Omitting it preserves the original league-wide
+    transition behavior.
+    """
+
+    selected_teams = (
+        None
+        if team_abbreviations is None
+        else {
+            str(team_abbreviation).strip().upper()
+            for team_abbreviation in team_abbreviations
+        }
+    )
+
+    def youth_priority(player_id: str) -> float:
+        player = state.players[player_id]
+        age = float(
+            player.age
+            if player.age is not None
+            else 99.0
+        )
+        if age > 24.0:
+            return 0.0
+
+        overall = float(player.overall_rating)
+        potential = float(
+            player.potential_rating
+            if player.potential_rating is not None
+            else overall
+        )
+        gap = max(0.0, potential - overall)
+
+        years = getattr(
+            player,
+            "years_of_service",
+            None,
+        )
+        if years is None:
+            years = len(
+                getattr(
+                    player,
+                    "development_history",
+                    [],
+                )
+                or []
+            )
+        try:
+            years = int(years)
+        except (TypeError, ValueError):
+            years = 99
+
+        if bool(getattr(player, "generated_prospect", False)):
+            draft_year = getattr(player, "draft_year", None)
+            try:
+                current_start = int(
+                    str(state.settings.season_label).split("-", 1)[0]
+                )
+                years = max(
+                    years,
+                    current_start - int(draft_year),
+                )
+            except (TypeError, ValueError):
+                pass
+
+        if years > 3:
+            return 0.0
+
+        if age <= 21:
+            age_bonus = 0.80
+        elif age <= 23:
+            age_bonus = 0.45
+        else:
+            age_bonus = 0.20
+
+        gap_bonus = min(3.10, 0.22 * gap)
+
+        pick = getattr(player, "draft_pick", None)
+        try:
+            pick_number = int(pick)
+        except (TypeError, ValueError):
+            pick_number = 999
+
+        if pick_number <= 5:
+            pedigree_bonus = 1.00
+        elif pick_number <= 14:
+            pedigree_bonus = 0.75
+        elif pick_number <= 30:
+            pedigree_bonus = 0.40
+        else:
+            pedigree_bonus = 0.0
+
+        experience_decay = {
+            0: 1.00,
+            1: 1.00,
+            2: 0.70,
+            3: 0.35,
+        }.get(years, 0.0)
+
+        return (
+            age_bonus
+            + gap_bonus
+            + pedigree_bonus * experience_decay
+        )
+
     for team in state.teams.values():
-        ordered = tuple(
+        if (
+            selected_teams is not None
+            and team.team_abbreviation not in selected_teams
+        ):
+            continue
+        ordered_by_overall = tuple(
             sorted(
                 team.roster_player_ids,
                 key=lambda player_id: (
@@ -402,19 +605,111 @@ def refresh_team_rotations(
         )
         rotation_size = min(
             state.settings.rotation_size,
-            len(ordered),
+            len(ordered_by_overall),
         )
-        rotation_ids = ordered[:rotation_size]
-        starter_ids = rotation_ids[:5]
 
-        if len(starter_ids) != 5:
+        if rotation_size < 5:
+            if state.phase == LeaguePhase.OFFSEASON:
+                # A completed-season offseason may temporarily contain fewer
+                # than five signed players. Preserve exact ownership without
+                # inventing user-team or CPU signings. Game-playing phases
+                # still require a complete five-man lineup.
+                partial_ids = tuple(ordered_by_overall)
+                team.rotation = RotationState(
+                    starter_ids=partial_ids,
+                    rotation_player_ids=partial_ids,
+                    minutes_targets={},
+                )
+                team.active_player_ids = partial_ids
+                team.inactive_player_ids = ()
+                continue
             raise SimulationSeasonTransitionError(
                 f"{team.team_abbreviation} does not have "
                 "five players after development."
             )
 
+        starter_ids = ordered_by_overall[:5]
+
+        # Keep the top seven players by current ability protected when a
+        # standard 10-man rotation is available. The final development
+        # slots may then go to a young high-upside player who is close
+        # enough to the NBA rotation on current ability.
+        protected_count = min(
+            rotation_size,
+            max(5, rotation_size - 3),
+        )
+        protected = list(
+            ordered_by_overall[:protected_count]
+        )
+        remaining = [
+            player_id
+            for player_id in ordered_by_overall
+            if player_id not in set(protected)
+        ]
+        remaining.sort(
+            key=lambda player_id: (
+                -(
+                    float(
+                        state.players[
+                            player_id
+                        ].overall_rating
+                    )
+                    + youth_priority(player_id)
+                ),
+                -float(
+                    state.players[
+                        player_id
+                    ].overall_rating
+                ),
+                state.players[
+                    player_id
+                ].player_name,
+                player_id,
+            )
+        )
+
+        selected = protected + remaining[
+            : max(
+                0,
+                rotation_size - len(protected),
+            )
+        ]
+
+        # Starters stay ordered first. Bench order follows opportunity-
+        # adjusted value so the default minute allocator gives meaningful
+        # development reps to selected prospects.
+        bench = [
+            player_id
+            for player_id in selected
+            if player_id not in set(starter_ids)
+        ]
+        bench.sort(
+            key=lambda player_id: (
+                -(
+                    float(
+                        state.players[
+                            player_id
+                        ].overall_rating
+                    )
+                    + youth_priority(player_id)
+                ),
+                -float(
+                    state.players[
+                        player_id
+                    ].overall_rating
+                ),
+                state.players[
+                    player_id
+                ].player_name,
+                player_id,
+            )
+        )
+        rotation_ids = tuple(
+            list(starter_ids) + bench
+        )[:rotation_size]
+
         team.rotation = RotationState(
-            starter_ids=starter_ids,
+            starter_ids=tuple(starter_ids),
             rotation_player_ids=rotation_ids,
             minutes_targets=minutes_targets(
                 rotation_ids,
@@ -427,7 +722,7 @@ def refresh_team_rotations(
         team.active_player_ids = rotation_ids
         team.inactive_player_ids = tuple(
             player_id
-            for player_id in ordered
+            for player_id in ordered_by_overall
             if player_id not in set(rotation_ids)
         )
 
@@ -484,6 +779,149 @@ def projection_summary_row(
         "performance_signal": (
             projection.performance_signal
         ),
+        "games_played": getattr(
+            projection,
+            "games_played",
+            0,
+        ),
+        "minutes_per_game": getattr(
+            projection,
+            "minutes_per_game",
+            0.0,
+        ),
+        "opportunity_score": getattr(
+            projection,
+            "opportunity_score",
+            0.0,
+        ),
+        "opportunity_component": getattr(
+            projection,
+            "opportunity_component",
+            0.0,
+        ),
+        "draft_pedigree_component": getattr(
+            projection,
+            "draft_pedigree_component",
+            0.0,
+        ),
+        "breakout_component": getattr(
+            projection,
+            "breakout_component",
+            0.0,
+        ),
+    }
+
+
+# MULTI_YEAR_CONTRACT_CLOCK_V1
+def advance_rostered_contract_clock_v1(
+    state: SimulationLeagueState,
+) -> dict[str, Any]:
+    free_agents = {
+        str(player_id).strip()
+        for player_id
+        in getattr(state, "free_agent_player_ids", ()) or ()
+        if str(player_id).strip()
+    }
+
+    decremented: list[str] = []
+    expired: list[str] = []
+
+    for team_code in sorted(state.teams):
+        team_state = state.teams[team_code]
+        kept: list[str] = []
+
+        for raw_player_id in tuple(
+            getattr(team_state, "roster_player_ids", ()) or ()
+        ):
+            player_id = str(raw_player_id).strip()
+            player = state.players.get(player_id)
+            if player is None:
+                kept.append(player_id)
+                continue
+
+            contract = getattr(player, "contract", None)
+            if contract is None:
+                kept.append(player_id)
+                continue
+
+            # GENERATED_ROOKIE_PENDING_CONTRACT_CLOCK_GUARD_V1
+            # A pending drafted-rookie placeholder has not played a contract year.
+            if str(getattr(contract, "status", "") or "").strip().lower() == "rookie_scale_pending":
+                kept.append(player_id)
+                continue
+
+            raw_years = getattr(contract, "years_remaining", None)
+            try:
+                years_remaining = (
+                    int(raw_years)
+                    if raw_years is not None
+                    else None
+                )
+            except (TypeError, ValueError):
+                years_remaining = None
+
+            if years_remaining is None or years_remaining <= 0:
+                kept.append(player_id)
+                continue
+
+            if years_remaining > 1:
+                updated_contract = replace(
+                    contract,
+                    years_remaining=years_remaining - 1,
+                )
+                # dataclasses.replace() copies declared fields only. Preserve
+                # dynamic contract-lineage metadata used by the multi-year
+                # salary-schedule continuity bridge.
+                for attr_name, attr_value in vars(contract).items():
+                    if not hasattr(updated_contract, attr_name):
+                        setattr(
+                            updated_contract,
+                            attr_name,
+                            copy.deepcopy(attr_value),
+                        )
+                player.contract = updated_contract
+                kept.append(player_id)
+                decremented.append(player_id)
+                continue
+
+            updated_contract = replace(
+                contract,
+                status="free_agent_pool",
+                years_remaining=0,
+            )
+            for attr_name, attr_value in vars(contract).items():
+                if not hasattr(updated_contract, attr_name):
+                    setattr(
+                        updated_contract,
+                        attr_name,
+                        copy.deepcopy(attr_value),
+                    )
+            player.contract = updated_contract
+            player.team_abbreviation = ""
+            player.roster_status = "free_agent"
+            free_agents.add(player_id)
+            expired.append(player_id)
+
+        team_state.roster_player_ids = tuple(kept)
+
+    state.free_agent_player_ids = tuple(
+        sorted(
+            free_agents,
+            key=lambda player_id: (
+                state.players[player_id].player_name
+                if player_id in state.players
+                else "",
+                player_id,
+            ),
+        )
+    )
+
+    return {
+        "version": "multi-year-contract-clock-v1-2026-08-17",
+        "decremented_player_ids": tuple(sorted(decremented)),
+        "expired_player_ids": tuple(sorted(expired)),
+        "decremented_count": len(decremented),
+        "expired_count": len(expired),
     }
 
 
@@ -545,6 +983,10 @@ def advance_simulation_season(
                     player_id
                 ],
                 config=config,
+                development_modifier=team_development_modifier(
+                    state,
+                    player.team_abbreviation,
+                ),
             )
         )
 
@@ -595,6 +1037,10 @@ def advance_simulation_season(
         "transition_version": TRANSITION_VERSION,
         "development_engine_version": (
             DEVELOPMENT_ENGINE_VERSION
+        ),
+        "staff_system_version": STAFF_SYSTEM_VERSION,
+        "staff_development_active": bool(
+            getattr(state, "franchise_staff_state_v1", None)
         ),
         "source_season": source_season,
         "target_season": resolved_target,
@@ -745,10 +1191,74 @@ def advance_simulation_season(
             )
         )
 
+    # COMPLETED_SEASON_CONTRACT_CLOSEOUT_V1
+    # Normal Franchise flow now closes the contract clock immediately after the
+    # postseason, before Free Agency and the Draft. Keep this transition-level
+    # fallback for legacy/non-Franchise callers, but never decrement twice.
+    from franchise_offseason_market_season_v1 import (
+        completed_season_closeout_applied,
+    )
+    from franchise_legacy_contract_continuity_v1 import (
+        LEGACY_CONTRACT_CONTINUITY_VERSION,
+        prepare_legacy_contracts_for_closeout,
+        roll_legacy_contracts_to_target_season,
+    )
+
+    preclosed_contract_clock = completed_season_closeout_applied(
+        state,
+        source_season,
+    )
+    if preclosed_contract_clock:
+        continuity_prepare = None
+        contract_clock = {
+            "version": "multi-year-contract-clock-v1-preclosed-at-completed-season-boundary",
+            "decremented_player_ids": (),
+            "expired_player_ids": (),
+            "decremented_count": 0,
+            "expired_count": 0,
+            "skipped_preclosed": True,
+        }
+    else:
+        continuity_prepare = prepare_legacy_contracts_for_closeout(
+            state,
+            season_label=source_season,
+        )
+        contract_clock = advance_rostered_contract_clock_v1(
+            state
+        )
+    development_summary[
+        "contract_clock_version"
+    ] = contract_clock["version"]
+    development_summary[
+        "contracts_decremented"
+    ] = contract_clock["decremented_count"]
+    development_summary[
+        "contracts_expired"
+    ] = contract_clock["expired_count"]
+    development_summary[
+        "contract_clock_preclosed"
+    ] = bool(contract_clock.get("skipped_preclosed", False))
+    development_summary[
+        "legacy_contract_continuity_version"
+    ] = LEGACY_CONTRACT_CONTINUITY_VERSION
+    development_summary[
+        "legacy_contracts_seeded_at_transition_fallback"
+    ] = (
+        int(continuity_prepare.seeded_count)
+        if continuity_prepare is not None
+        else 0
+    )
     state.settings = replace(
         state.settings,
         season_label=resolved_target,
     )
+    contract_rollover = roll_legacy_contracts_to_target_season(
+        state,
+        resolved_target,
+    )
+    development_summary[
+        "legacy_contract_salary_rollovers"
+    ] = int(contract_rollover.rolled_count)
     state.transition_count += 1
     state.season_history.append(archive)
 
@@ -995,6 +1505,25 @@ def run_self_test() -> dict[str, Any]:
         ]
     )
 
+    # The production Franchise path closes the completed-season contract clock
+    # before Free Agency and the Draft. This unit fixture is testing the season
+    # transition/development boundary, so represent that modern precondition
+    # instead of expiring the untouched baseline roster a second time here.
+    from franchise_offseason_market_season_v1 import (
+        COMPLETED_SEASON_CLOSEOUT_ATTR,
+    )
+
+    setattr(
+        state,
+        COMPLETED_SEASON_CLOSEOUT_ATTR,
+        {
+            "status": "applied",
+            "source_season": source_label,
+            "target_market_season": next_season_label(source_label),
+            "fixture_scope": "simulation_season_transition_self_test",
+        },
+    )
+
     result = advance_simulation_season(
         state,
         development_config=DevelopmentConfig(
@@ -1006,7 +1535,7 @@ def run_self_test() -> dict[str, Any]:
     checks = {
         "transition_engine_uses_development_v1_1": (
             DEVELOPMENT_ENGINE_VERSION
-            == "player-development-engine-v1.1-2026-08-08"
+            == "player-development-engine-v2.0-2026-08-11"
         ),
         "season_advances_exactly_one_year": (
             result.source_season

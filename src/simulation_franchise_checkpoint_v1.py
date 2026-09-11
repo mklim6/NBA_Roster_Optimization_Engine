@@ -30,7 +30,7 @@ CHECKPOINT_VERSION = (
     "simulation-franchise-checkpoint-v1-2026-08-08"
 )
 CHECKPOINT_IMPLEMENTATION_VERSION = (
-    "simulation-franchise-checkpoint-v1.2-2026-08-08"
+    "simulation-franchise-checkpoint-v1.3-2026-09-09"
 )
 DEFAULT_CHECKPOINT_PATH = (
     RUNTIME_DIR
@@ -179,6 +179,84 @@ def set_runtime_attribute(
             name,
             value,
         )
+
+
+def runtime_graph_is_current(value: Any) -> bool:
+    """Return True when every resolvable runtime class already matches imports.
+
+    A normal checkpoint load historically rebuilt the entire object graph to
+    protect Streamlit hot reloads. Mature franchise checkpoints are large, and
+    rebuilding a graph that is already current creates avoidable allocation
+    pressure. This read-only scan caches type resolution and only asks the
+    expensive rebinder to run when a stale class identity is actually found.
+    """
+    memo: set[int] = set()
+    type_cache: dict[type[Any], bool] = {}
+    field_cache: dict[type[Any], tuple[str, ...]] = {}
+    field_set_cache: dict[type[Any], frozenset[str]] = {}
+
+    primitive_types = (
+        bool, int, float, complex, str, bytes, bytearray, Path, datetime
+    )
+
+    def visit(item: Any) -> bool:
+        item_id = id(item)
+        if item_id in memo:
+            return True
+        memo.add(item_id)
+
+        if isinstance(item, Enum):
+            item_type = type(item)
+            current = type_cache.get(item_type)
+            if current is None:
+                resolved = resolve_current_type(item_type)
+                current = resolved is None or item_type is resolved
+                type_cache[item_type] = current
+            return current
+
+        if item is None or isinstance(item, primitive_types):
+            return True
+
+        if isinstance(item, dict):
+            for key, nested in item.items():
+                if not visit(key) or not visit(nested):
+                    return False
+            return True
+
+        if isinstance(item, (list, tuple, set, frozenset)):
+            return all(visit(nested) for nested in item)
+
+        item_type = type(item)
+        current = type_cache.get(item_type)
+        if current is None:
+            resolved = resolve_current_type(item_type)
+            current = resolved is None or item_type is resolved
+            type_cache[item_type] = current
+        if not current:
+            return False
+
+        if is_dataclass(item):
+            field_names = field_cache.get(item_type)
+            if field_names is None:
+                field_names = tuple(field_info.name for field_info in fields(item))
+                field_cache[item_type] = field_names
+                field_set_cache[item_type] = frozenset(field_names)
+            for name in field_names:
+                if not visit(getattr(item, name)):
+                    return False
+            extras = getattr(item, "__dict__", {})
+            field_set = field_set_cache[item_type]
+            for name, nested in extras.items():
+                if name not in field_set and not visit(nested):
+                    return False
+            return True
+
+        attributes = getattr(item, "__dict__", None)
+        if isinstance(attributes, dict):
+            return all(visit(nested) for nested in attributes.values())
+        return True
+
+    return visit(value)
 
 
 def rebind_runtime_graph(
@@ -627,11 +705,12 @@ def decode_checkpoint(
                     payload
                 )
             )
-            payload_object = (
-                rebind_runtime_graph(
-                    payload_object
+            if not runtime_graph_is_current(payload_object):
+                payload_object = (
+                    rebind_runtime_graph(
+                        payload_object
+                    )
                 )
-            )
         else:
             # Backward compatibility with every checkpoint written by the
             # V1 and V1.1 writers.
@@ -678,6 +757,13 @@ def checkpoint_progress_key(
         )
         or 0
     )
+    phase_value = enum_text(
+        getattr(
+            simulation_state,
+            "phase",
+            "",
+        )
+    )
     phase_rank = {
         "preseason": 0,
         "regular_season": 1,
@@ -685,13 +771,7 @@ def checkpoint_progress_key(
         "playoffs": 3,
         "offseason": 4,
     }.get(
-        enum_text(
-            getattr(
-                simulation_state,
-                "phase",
-                "",
-            )
-        ),
+        phase_value,
         -1,
     )
     completed_regular = len(
@@ -734,6 +814,18 @@ def checkpoint_progress_key(
         )
         or {}
     )
+
+    # Franchise Mode begins in an opening offseason for the SAME season
+    # whose regular-season schedule is already installed. That opening
+    # offseason is earlier than REGULAR_SEASON, unlike a completed season's
+    # offseason. Preserve the normal OFFSEASON=4 rank once any regular-season
+    # or postseason progress exists.
+    if (
+        phase_value == "offseason"
+        and completed_regular == 0
+        and completed_postseason == 0
+    ):
+        phase_rank = 0
 
     return (
         transition_count,
@@ -860,16 +952,19 @@ def write_encoded_checkpoint(
 def copy_valid_primary_to_backup(
     primary: Path,
     backup: Path,
+    *,
+    primary_already_valid: bool = False,
 ) -> None:
     if not primary.exists():
         return
 
-    try:
-        load_checkpoint_path(
-            primary
-        )
-    except FranchiseCheckpointError:
-        return
+    if not primary_already_valid:
+        try:
+            load_checkpoint_path(
+                primary
+            )
+        except FranchiseCheckpointError:
+            return
 
     backup.parent.mkdir(
         parents=True,
@@ -897,6 +992,11 @@ def save_franchise_checkpoint(
         DEFAULT_CHECKPOINT_PATH
     ),
     copy_payload: bool = True,
+    force_replace: bool = False,
+    _return_verified: bool = False,
+    _existing_checkpoint: FranchiseCheckpoint | None = None,
+    _expected_existing_sha256: str = "",
+    _verify_encoded_bytes_only: bool = False,
 ) -> FranchiseCheckpoint:
     checkpoint = FranchiseCheckpoint(
         version=CHECKPOINT_VERSION,
@@ -936,17 +1036,35 @@ def save_franchise_checkpoint(
     )
 
     try:
-        existing = (
-            load_franchise_checkpoint(
-                path=resolved_path,
-                allow_backup=False,
+        if _expected_existing_sha256:
+            if _existing_checkpoint is None or not resolved_path.exists():
+                raise FranchiseCheckpointError(
+                    "Expected existing checkpoint evidence is unavailable.",
+                    stage="verify-existing-checkpoint-evidence",
+                )
+            digest = hashlib.sha256()
+            with resolved_path.open("rb") as handle:
+                for block in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(block)
+            if digest.hexdigest() != str(_expected_existing_sha256):
+                raise FranchiseCheckpointError(
+                    "Checkpoint changed before the durable write.",
+                    stage="verify-existing-checkpoint-sha256",
+                )
+            existing = _existing_checkpoint
+        else:
+            existing = (
+                load_franchise_checkpoint(
+                    path=resolved_path,
+                    allow_backup=False,
+                )
+                if resolved_path.exists()
+                else None
             )
-            if resolved_path.exists()
-            else None
-        )
 
         if (
-            existing is not None
+            not force_replace
+            and existing is not None
             and checkpoint_season_label(
                 existing.simulation_state
             )
@@ -970,25 +1088,50 @@ def save_franchise_checkpoint(
         copy_valid_primary_to_backup(
             resolved_path,
             backup_path,
+            primary_already_valid=existing is not None,
         )
         write_encoded_checkpoint(
             resolved_path,
             encoded,
         )
-        verified = load_checkpoint_path(
-            resolved_path
-        )
-
-        if (
-            verified.saved_at_utc
-            != checkpoint.saved_at_utc
-            or verified.reason
-            != checkpoint.reason
-        ):
-            raise FranchiseCheckpointError(
-                "Checkpoint verification returned the wrong revision.",
-                stage="verify-written-revision",
+        if _verify_encoded_bytes_only:
+            # Batched CPU Free Agency already holds the exact object graph that
+            # was encoded. Verify the atomic gzip payload byte-for-byte here and
+            # perform one ordinary semantic decode at the end of the round.
+            try:
+                with gzip.open(resolved_path, "rb") as handle:
+                    observed_encoded = handle.read()
+            except Exception as exc:
+                raise FranchiseCheckpointError(
+                    "Checkpoint byte verification could not read the written file.",
+                    stage="verify-written-encoded-bytes",
+                    cause=exc,
+                ) from exc
+            if (
+                len(observed_encoded) != len(encoded)
+                or hashlib.sha256(observed_encoded).digest()
+                != hashlib.sha256(encoded).digest()
+            ):
+                raise FranchiseCheckpointError(
+                    "Checkpoint byte verification did not match the encoded payload.",
+                    stage="verify-written-encoded-bytes",
+                )
+            verified = checkpoint
+        else:
+            verified = load_checkpoint_path(
+                resolved_path
             )
+
+            if (
+                verified.saved_at_utc
+                != checkpoint.saved_at_utc
+                or verified.reason
+                != checkpoint.reason
+            ):
+                raise FranchiseCheckpointError(
+                    "Checkpoint verification returned the wrong revision.",
+                    stage="verify-written-revision",
+                )
     except FranchiseCheckpointError:
         raise
     except Exception as exc:
@@ -998,7 +1141,7 @@ def save_franchise_checkpoint(
             cause=exc,
         ) from exc
 
-    return checkpoint
+    return verified if _return_verified else checkpoint
 
 
 def load_checkpoint_path(
@@ -1326,6 +1469,30 @@ def run_self_test() -> dict[str, Any]:
                 path=regression_path
             )
         )
+        intentional_replace_state = SimpleNamespace(
+            settings=SimpleNamespace(
+                season_label="2026-27"
+            ),
+            season_transition_count=0,
+            phase="offseason",
+            completed_games={},
+            postseason_state=SimpleNamespace(
+                stage="not_started",
+                completed_games={},
+                champion="",
+            ),
+        )
+        intentional_replace_result = save_franchise_checkpoint(
+            intentional_replace_state,
+            {"revision": 11},
+            reason="intentional-universe-replace",
+            path=regression_path,
+            copy_payload=False,
+            force_replace=True,
+        )
+        intentional_replace_loaded = load_franchise_checkpoint(
+            path=regression_path
+        )
         clear_franchise_checkpoint(
             path=regression_path
         )
@@ -1352,7 +1519,7 @@ def run_self_test() -> dict[str, Any]:
             "implementation_version_is_current": (
                 CHECKPOINT_IMPLEMENTATION_VERSION
                 == (
-                    "simulation-franchise-checkpoint-v1.2-2026-08-08"
+                    "simulation-franchise-checkpoint-v1.3-2026-09-09"
                 )
             ),
             "checkpoint_round_trip_preserves_state": (
@@ -1397,6 +1564,19 @@ def run_self_test() -> dict[str, Any]:
                     "",
                 )
                 == "CHI"
+            ),
+            "explicit_universe_replace_can_regress_same_season": (
+                intentional_replace_result.reason
+                == "intentional-universe-replace"
+                and intentional_replace_loaded is not None
+                and intentional_replace_loaded.reason
+                == "intentional-universe-replace"
+                and enum_text(
+                    intentional_replace_loaded.simulation_state.phase
+                )
+                == "offseason"
+                and not intentional_replace_loaded.simulation_state.completed_games
+                and intentional_replace_loaded.trade_state.get("revision") == 11
             ),
             "corrupted_primary_recovers_backup": (
                 recovered is not None
@@ -1474,7 +1654,7 @@ def main() -> int:
         )
         print(
             "\nSIMULATION FRANCHISE "
-            "CHECKPOINT V1.2 SELF-TEST PASSED"
+            "CHECKPOINT V1.3 SELF-TEST PASSED"
         )
         return 0
 

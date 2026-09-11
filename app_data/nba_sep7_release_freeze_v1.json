@@ -1,0 +1,62 @@
+{
+  "version": "nba-sep7-release-data-freeze-v1.0-2026-09-09",
+  "release_id": "live_2026_09_07_release_candidate_v1",
+  "release_name": "Live Sep. 7, 2026",
+  "cutoff_date": "2026-09-07",
+  "frozen_at_utc": "2026-09-10T02:52:45Z",
+  "immutable": true,
+  "reference_layer_only": false,
+  "future_updates_policy": "Do not edit any frozen file in place. Create a new release freeze version for any post-2026-09-07 NBA data update.",
+  "expected_live_start": {
+    "config_version": "nba-live-franchise-start-config-v1.4-2026-09-09",
+    "engine_version": "franchise-live-start-v1.4-2026-09-09",
+    "live_start_fingerprint": "748bfcd58d6cecf8abab666b34b5d44d176d2e3456baef9a0fff6e033e08bd7b",
+    "reference_player_count": 49,
+    "materialized_player_count": 19,
+    "total_player_count": 601,
+    "rostered_player_count": 415,
+    "free_agent_count": 186,
+    "schedule_game_count": 1230,
+    "two_way_count": 10,
+    "exhibit_10_count": 8,
+    "contract_override_count": 10,
+    "draft_asset_override_count": 3,
+    "international_rights_transfer_count": 1,
+    "released_external_rating_count": 8,
+    "empirical_proxy_rating_count": 11,
+    "profile_source_counts": {
+      "nba": 2,
+      "gleague": 9,
+      "ncaa": 7,
+      "international": 1
+    },
+    "clippers_forfeited_first_round_pick_count": 5
+  },
+  "frozen_files": [
+    {
+      "path": "app_data/nba_current_reference_manifest.json",
+      "sha256": "281fdc8ab16a7751fd170b3a3aca07ce0ed61028a1ed5cf58e5ce1a0423dc8af"
+    },
+    {
+      "path": "app_data/nba_current_reference_overlay_2026_09_07.json",
+      "sha256": "b8ace36d2f9d52cd98c1f755f694b9a3027720ab3fe38d29882e48c549aa3611"
+    },
+    {
+      "path": "app_data/nba_live_franchise_start_2026_09_07.json",
+      "sha256": "f3c9a1ecdaf8c04e572466106142e5504bf496ac95bdbdef9d04306903f55cd7"
+    },
+    {
+      "path": "data/reference/nba_current_reference_overlay_2026_09_07.csv",
+      "sha256": "b3ba480555f7027b42ca6aa3b14e11bd2764fd69f7a0545e6289cbe2d7899721"
+    },
+    {
+      "path": "data/reference/nba_player_movement_delta_2026_08_04_to_2026_09_07.csv",
+      "sha256": "42fdb623fed082fc85056ea012b2ca331a25085d2ee2dc39d8a8afcc602edeb0"
+    }
+  ],
+  "notes": [
+    "This manifest freezes the Sep. 7 delta/reference layer and the live-start configuration, not the user's active franchise checkpoint.",
+    "The full release gate remains responsible for behavioral simulation, save/load, and checkpoint rollback verification.",
+    "The freeze validator is read-only and must not mutate the active franchise checkpoint."
+  ]
+}

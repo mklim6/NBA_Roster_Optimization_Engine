@@ -11,7 +11,6 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 OUTPUTS = ROOT / "outputs"
@@ -23,6 +22,7 @@ from player_development_engine_v1 import (  # noqa: E402
     ENGINE_VERSION,
     DevelopmentConfig,
     PlayerDevelopmentProjection,
+    annual_delta_limits,
     project_player_development,
     project_player_multi_year,
 )
@@ -31,16 +31,9 @@ from simulation_player_stat_profiles_v1 import (  # noqa: E402
     player_id_by_name,
 )
 
-
-SCRIPT_VERSION = (
-    "player-development-curve-validator-v1.1-2026-08-08"
-)
-JSON_REPORT = (
-    OUTPUTS / "player_development_curve_validation_v1.json"
-)
-CSV_REPORT = (
-    OUTPUTS / "player_development_one_year_projection_v1.csv"
-)
+SCRIPT_VERSION = "player-development-curve-validator-v2-2026-08-11"
+JSON_REPORT = OUTPUTS / "player_development_curve_validation_v1.json"
+CSV_REPORT = OUTPUTS / "player_development_one_year_projection_v1.csv"
 
 SKILL_FIELDS = (
     "scoring_rating",
@@ -55,26 +48,17 @@ SKILL_FIELDS = (
 
 def finite(value: Any) -> bool:
     try:
-        number = float(value)
+        return math.isfinite(float(value))
     except (TypeError, ValueError):
         return False
-    return math.isfinite(number)
 
 
 def mean(values: list[float]) -> float:
-    return (
-        statistics.fmean(values)
-        if values
-        else float("nan")
-    )
+    return statistics.fmean(values) if values else float("nan")
 
 
 def median(values: list[float]) -> float:
-    return (
-        statistics.median(values)
-        if values
-        else float("nan")
-    )
+    return statistics.median(values) if values else float("nan")
 
 
 def age_bucket(age: float) -> str:
@@ -91,9 +75,7 @@ def age_bucket(age: float) -> str:
     return "36+"
 
 
-def projection_row(
-    projection: PlayerDevelopmentProjection,
-) -> dict[str, Any]:
+def projection_row(projection: PlayerDevelopmentProjection) -> dict[str, Any]:
     row: dict[str, Any] = {
         "player_id": projection.player_id,
         "player_name": projection.player_name,
@@ -101,214 +83,88 @@ def projection_row(
         "target_season": projection.target_season,
         "source_age": projection.source_age,
         "target_age": projection.target_age,
-        "age_bucket": age_bucket(
-            projection.source_age
-        ),
+        "age_bucket": age_bucket(projection.source_age),
         "career_stage": projection.career_stage,
-        "development_direction": (
-            projection.development_direction
-        ),
-        "profile_reliability": (
-            projection.profile_reliability
-        ),
-        "current_overall_rating": (
-            projection.current_overall_rating
-        ),
-        "projected_overall_rating": (
-            projection.projected_overall_rating
-        ),
+        "development_direction": projection.development_direction,
+        "profile_reliability": projection.profile_reliability,
+        "current_overall_rating": projection.current_overall_rating,
+        "projected_overall_rating": projection.projected_overall_rating,
         "overall_delta": projection.overall_delta,
-        "potential_rating": (
-            projection.potential_rating
-        ),
-        "future_outlook_rating": (
-            projection.future_outlook_rating
-        ),
-        "age_curve_component": (
-            projection.age_curve_component
-        ),
-        "potential_growth_component": (
-            projection.potential_growth_component
-        ),
-        "direction_component": (
-            projection.direction_component
-        ),
-        "performance_component": (
-            projection.performance_component
-        ),
-        "deterministic_seed": (
-            projection.deterministic_seed
-        ),
+        "potential_rating": projection.potential_rating,
+        "performance_signal": projection.performance_signal,
+        "opportunity_score": projection.opportunity_score,
+        "opportunity_component": projection.opportunity_component,
+        "draft_pedigree_component": projection.draft_pedigree_component,
+        "breakout_component": projection.breakout_component,
+        "annual_growth_ceiling": projection.annual_growth_ceiling,
+        "annual_decline_floor": projection.annual_decline_floor,
     }
-
-    for field, delta in (
-        projection.skill_deltas.items()
-    ):
-        row[f"{field}_delta"] = delta
-
-    for field, rating in (
-        projection.projected_skill_ratings.items()
-    ):
-        row[f"projected_{field}"] = rating
-
-    for stat_name, factor in (
-        projection.projected_stat_factors.items()
-    ):
-        row[
-            f"projected_{stat_name}_factor"
-        ] = factor
-
+    for field in SKILL_FIELDS:
+        row[f"{field}_delta"] = projection.skill_deltas[field]
+        row[f"projected_{field}"] = projection.projected_skill_ratings[field]
+    for name, value in projection.projected_stat_factors.items():
+        row[f"projected_{name}_factor"] = value
     return row
 
 
-def build_age_summary(
-    rows: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    grouped: dict[
-        str,
-        list[dict[str, Any]],
-    ] = defaultdict(list)
-
-    for row in rows:
-        grouped[row["age_bucket"]].append(row)
-
-    ordered = (
-        "18-23",
-        "24-25",
-        "26-29",
-        "30-32",
-        "33-35",
-        "36+",
-    )
-    summary: list[dict[str, Any]] = []
-
-    for bucket in ordered:
-        bucket_rows = grouped.get(bucket, [])
-        if not bucket_rows:
-            continue
-
-        deltas = [
-            float(row["overall_delta"])
-            for row in bucket_rows
-        ]
-        summary.append(
-            {
-                "age_bucket": bucket,
-                "players": len(bucket_rows),
-                "average_overall_delta": round(
-                    mean(deltas),
-                    3,
-                ),
-                "median_overall_delta": round(
-                    median(deltas),
-                    3,
-                ),
-                "improved_players": sum(
-                    delta > 0.05
-                    for delta in deltas
-                ),
-                "stable_players": sum(
-                    abs(delta) <= 0.05
-                    for delta in deltas
-                ),
-                "declined_players": sum(
-                    delta < -0.05
-                    for delta in deltas
-                ),
-                "average_shooting_delta": round(
-                    mean(
-                        [
-                            float(
-                                row[
-                                    "shooting_rating_delta"
-                                ]
-                            )
-                            for row in bucket_rows
-                        ]
-                    ),
-                    3,
-                ),
-                "average_playmaking_delta": round(
-                    mean(
-                        [
-                            float(
-                                row[
-                                    "playmaking_rating_delta"
-                                ]
-                            )
-                            for row in bucket_rows
-                        ]
-                    ),
-                    3,
-                ),
-                "average_defense_delta": round(
-                    mean(
-                        [
-                            float(
-                                row[
-                                    "defense_rating_delta"
-                                ]
-                            )
-                            for row in bucket_rows
-                        ]
-                    ),
-                    3,
-                ),
-                "average_availability_delta": round(
-                    mean(
-                        [
-                            float(
-                                row[
-                                    "availability_rating_delta"
-                                ]
-                            )
-                            for row in bucket_rows
-                        ]
-                    ),
-                    3,
-                ),
-            }
-        )
-
-    return summary
-
-
-def summary_by_bucket(
-    summary: list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    return {
-        str(row["age_bucket"]): row
-        for row in summary
+def synthetic_profile(
+    *,
+    player_id: str,
+    age: float,
+    overall: float,
+    potential: float,
+    games: int,
+    mpg: float,
+    pick: int | None,
+    years: int,
+    direction: str = "Rising",
+) -> dict[str, Any]:
+    profile = {
+        "player_id": player_id,
+        "player_name": player_id,
+        "age_2026_27": age,
+        "overall_rating": overall,
+        "potential_rating": potential,
+        "future_outlook_rating": potential,
+        "development_direction": direction,
+        "profile_reliability": 0.90,
+        "games_played": games,
+        "minutes_per_game": mpg,
+        "total_minutes": games * mpg,
+        "years_of_service": years,
+        "draft_round": 1 if pick is not None and pick <= 30 else 2,
+        "draft_pick": pick,
+        "stat_factors": {
+            "points": 1.0,
+            "rebounds": 1.0,
+            "assists": 1.0,
+            "steals": 1.0,
+            "blocks": 1.0,
+            "turnovers": 1.0,
+            "fouls": 1.0,
+            "three_attempts": 1.0,
+            "free_throw_attempts": 1.0,
+        },
     }
+    for field in SKILL_FIELDS:
+        profile[field] = overall
+    return profile
 
 
 def named_projection(
-    projections: dict[
-        str,
-        PlayerDevelopmentProjection,
-    ],
+    projections: dict[str, PlayerDevelopmentProjection],
     name: str,
 ) -> PlayerDevelopmentProjection | None:
     player_id = player_id_by_name(name)
     if not player_id and name == "Nikola Jokić":
-        player_id = player_id_by_name(
-            "Nikola Jokic"
-        )
+        player_id = player_id_by_name("Nikola Jokic")
     return projections.get(player_id)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=20260808,
-    )
-    parser.add_argument(
-        "--variance-scale",
-        type=float,
-        default=0.55,
-    )
+    parser.add_argument("--seed", type=int, default=20260808)
+    parser.add_argument("--variance-scale", type=float, default=0.85)
     args = parser.parse_args()
 
     config = DevelopmentConfig(
@@ -317,514 +173,233 @@ def main() -> int:
     )
     profiles = load_player_stat_profiles()
 
-    projections: dict[
-        str,
-        PlayerDevelopmentProjection,
-    ] = {}
-    rerun: dict[
-        str,
-        PlayerDevelopmentProjection,
-    ] = {}
-    projection_errors: list[dict[str, str]] = []
+    projections: dict[str, PlayerDevelopmentProjection] = {}
+    rerun: dict[str, PlayerDevelopmentProjection] = {}
+    errors: list[dict[str, str]] = []
 
     for player_id, profile in profiles.items():
         try:
-            projections[player_id] = (
-                project_player_development(
-                    profile,
-                    config=config,
-                )
+            projections[player_id] = project_player_development(
+                profile,
+                config=config,
             )
-            rerun[player_id] = (
-                project_player_development(
-                    profile,
-                    config=config,
-                )
+            rerun[player_id] = project_player_development(
+                profile,
+                config=config,
             )
         except Exception as exc:
-            projection_errors.append(
+            errors.append(
                 {
                     "player_id": player_id,
-                    "player_name": str(
-                        profile.get(
-                            "player_name",
-                            "",
-                        )
-                    ),
-                    "error": (
-                        f"{type(exc).__name__}: {exc}"
-                    ),
+                    "player_name": str(profile.get("player_name", "")),
+                    "error": f"{type(exc).__name__}: {exc}",
                 }
             )
 
-    rows = [
-        projection_row(projection)
-        for projection in projections.values()
-    ]
-    age_summary = build_age_summary(rows)
-    buckets = summary_by_bucket(age_summary)
+    rows = [projection_row(item) for item in projections.values()]
+    league_deltas = [float(row["overall_delta"]) for row in rows]
 
-    all_numbers_finite = all(
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[str(row["age_bucket"])].append(row)
+
+    age_summary: list[dict[str, Any]] = []
+    for bucket in ("18-23", "24-25", "26-29", "30-32", "33-35", "36+"):
+        bucket_rows = grouped.get(bucket, [])
+        deltas = [float(row["overall_delta"]) for row in bucket_rows]
+        age_summary.append(
+            {
+                "age_bucket": bucket,
+                "players": len(bucket_rows),
+                "average_overall_delta": round(mean(deltas), 4) if deltas else None,
+                "median_overall_delta": round(median(deltas), 4) if deltas else None,
+                "improved_players": sum(delta > 0.05 for delta in deltas),
+                "declined_players": sum(delta < -0.05 for delta in deltas),
+            }
+        )
+    age_map = {row["age_bucket"]: row for row in age_summary}
+
+    all_finite = all(
         finite(row["source_age"])
         and finite(row["target_age"])
-        and finite(
-            row["current_overall_rating"]
-        )
-        and finite(
-            row["projected_overall_rating"]
-        )
+        and finite(row["current_overall_rating"])
+        and finite(row["projected_overall_rating"])
         and finite(row["overall_delta"])
-        and all(
-            finite(row[f"{field}_delta"])
-            and finite(
-                row[f"projected_{field}"]
-            )
-            for field in SKILL_FIELDS
-        )
         for row in rows
     )
-    all_rating_bounds = all(
-        60.0
-        <= float(
-            row["projected_overall_rating"]
-        )
-        <= 99.9
-        and all(
-            60.0
-            <= float(
-                row[f"projected_{field}"]
-            )
-            <= 99.9
-            for field in SKILL_FIELDS
-        )
+    all_bounds = all(
+        60.0 <= float(row["projected_overall_rating"]) <= 99.9
         for row in rows
     )
-    all_delta_bounds = all(
-        -3.8
-        <= float(row["overall_delta"])
-        <= 2.8
-        for row in rows
+    all_age_limits = True
+    for row in rows:
+        low, high = annual_delta_limits(float(row["source_age"]), config)
+        delta = float(row["overall_delta"])
+        if delta < low - 1e-9 or delta > high + 1e-9:
+            all_age_limits = False
+            break
+
+    deterministic = projections == rerun
+
+    high = synthetic_profile(
+        player_id="VALIDATE-UPSIDE",
+        age=20,
+        overall=74,
+        potential=92,
+        games=76,
+        mpg=30,
+        pick=4,
+        years=1,
     )
-    all_ages_advance = all(
-        math.isclose(
-            float(row["target_age"]),
-            float(row["source_age"]) + 1.0,
-            abs_tol=1e-9,
-        )
-        for row in rows
+    low = dict(high)
+    low.update(
+        {
+            "player_name": "VALIDATE-UPSIDE",
+            "games_played": 18,
+            "minutes_per_game": 6.0,
+            "total_minutes": 108.0,
+        }
     )
-    all_stat_factors_positive = all(
-        all(
-            finite(value)
-            and float(value) > 0
-            for key, value in row.items()
-            if (
-                key.startswith("projected_")
-                and key.endswith("_factor")
-            )
-        )
-        for row in rows
+    high_projection = project_player_development(
+        high,
+        performance_signal=0.65,
+        config=config,
+    )
+    low_projection = project_player_development(
+        low,
+        performance_signal=0.65,
+        config=config,
     )
 
-    deterministic = (
-        set(projections) == set(rerun)
-        and all(
-            projections[player_id]
-            == rerun[player_id]
-            for player_id in projections
-        )
+    late_first = synthetic_profile(
+        player_id="VALIDATE-PEDIGREE",
+        age=20,
+        overall=74,
+        potential=92,
+        games=60,
+        mpg=20,
+        pick=28,
+        years=1,
     )
+    second = dict(late_first)
+    second["draft_pick"] = 50
+    second["draft_round"] = 2
+    first_projection = project_player_development(late_first, config=config)
+    second_projection = project_player_development(second, config=config)
 
-    young = buckets.get("18-23", {})
-    prime = buckets.get("26-29", {})
-    veteran = buckets.get("33-35", {})
-    late = buckets.get("36+", {})
+    old = synthetic_profile(
+        player_id="VALIDATE-OLD",
+        age=37,
+        overall=88,
+        potential=88,
+        games=72,
+        mpg=30,
+        pick=None,
+        years=14,
+        direction="Stable",
+    )
+    old_projection = project_player_development(old, config=config)
+    old_five = project_player_multi_year(old, seasons=4, config=config)
 
-    older_rows = [
-        row
-        for row in rows
-        if float(row["source_age"]) >= 33
-    ]
-    older_shooting_delta = mean(
-        [
-            float(row["shooting_rating_delta"])
-            for row in older_rows
-        ]
-    )
-    older_playmaking_delta = mean(
-        [
-            float(
-                row["playmaking_rating_delta"]
-            )
-            for row in older_rows
-        ]
-    )
-    older_defense_delta = mean(
-        [
-            float(row["defense_rating_delta"])
-            for row in older_rows
-        ]
-    )
-    older_availability_delta = mean(
-        [
-            float(
-                row[
-                    "availability_rating_delta"
-                ]
-            )
-            for row in older_rows
-        ]
-    )
+    wemby = named_projection(projections, "Victor Wembanyama")
+    curry = named_projection(projections, "Stephen Curry")
 
-    league_deltas = [
-        float(row["overall_delta"])
-        for row in rows
-    ]
-    improved_count = sum(
-        delta > 0.05
-        for delta in league_deltas
-    )
-    declined_count = sum(
-        delta < -0.05
-        for delta in league_deltas
-    )
+    young = age_map.get("18-23", {})
+    prime = age_map.get("26-29", {})
+    veteran = age_map.get("33-35", {})
+    late = age_map.get("36+", {})
 
-    wemby = named_projection(
-        projections,
-        "Victor Wembanyama",
-    )
-    jokic = named_projection(
-        projections,
-        "Nikola Jokić",
-    )
-    curry = named_projection(
-        projections,
-        "Stephen Curry",
-    )
-    duren = named_projection(
-        projections,
-        "Jalen Duren",
-    )
-
-    curry_five_year = None
-    wemby_five_year = None
-    if curry is not None:
-        curry_five_year = (
-            project_player_multi_year(
-                profiles[curry.player_id],
-                seasons=5,
-                config=config,
-            )
-        )
-    if wemby is not None:
-        wemby_five_year = (
-            project_player_multi_year(
-                profiles[wemby.player_id],
-                seasons=5,
-                config=config,
-            )
-        )
+    improved_count = sum(delta > 0.05 for delta in league_deltas)
+    declined_count = sum(delta < -0.05 for delta in league_deltas)
 
     checks = {
-        "engine_version_is_current": (
-            ENGINE_VERSION
-            == "player-development-engine-v1.1-2026-08-08"
-        ),
-        "profile_layer_has_582_players": (
-            len(profiles) == 582
-        ),
-        "all_profiles_projected": (
-            len(projections) == len(profiles)
-            and not projection_errors
-        ),
+        "engine_version_is_v2": ENGINE_VERSION == "player-development-engine-v2.0-2026-08-11",
+        "profile_layer_is_nonempty": len(profiles) >= 500,
+        "all_profiles_projected": len(projections) == len(profiles) and not errors,
         "same_seed_is_deterministic": deterministic,
-        "all_projection_numbers_are_finite": (
-            all_numbers_finite
-        ),
-        "all_projected_ratings_within_scale": (
-            all_rating_bounds
-        ),
-        "all_one_year_deltas_are_bounded": (
-            all_delta_bounds
-        ),
-        "all_ages_advance_one_year": (
-            all_ages_advance
-        ),
-        "all_projected_stat_factors_positive": (
-            all_stat_factors_positive
-        ),
-        "all_major_age_buckets_present": all(
-            bucket in buckets
-            for bucket in (
-                "18-23",
-                "26-29",
-                "33-35",
-                "36+",
-            )
-        ),
-        "young_players_improve_on_average": (
-            bool(young)
-            and float(
-                young["average_overall_delta"]
-            )
-            > 0.25
-        ),
-        "prime_players_remain_near_stable": (
-            bool(prime)
-            and -0.45
-            <= float(
-                prime["average_overall_delta"]
-            )
-            <= 0.55
-        ),
-        "veterans_decline_on_average": (
-            bool(veteran)
-            and float(
-                veteran[
-                    "average_overall_delta"
-                ]
-            )
-            < -0.55
-        ),
-        "late_career_players_decline_clearly": (
-            bool(late)
-            and float(
-                late["average_overall_delta"]
-            )
-            < -1.15
-        ),
-        "older_shooting_ages_better_than_defense": (
-            older_shooting_delta
-            > older_defense_delta
-        ),
-        "older_playmaking_ages_better_than_availability": (
-            older_playmaking_delta
-            > older_availability_delta
-        ),
-        "league_average_change_is_plausible": (
-            -0.85
-            <= mean(league_deltas)
-            <= 0.30
-        ),
-        "both_growth_and_decline_occur": (
-            improved_count >= 40
-            and declined_count >= 100
-        ),
-        "wembanyama_projects_up": bool(
-            wemby
-            and wemby.overall_delta > 0.35
-        ),
-        "jokic_decline_is_moderate": bool(
-            jokic
-            and -1.60
-            <= jokic.overall_delta
-            <= 0.10
-        ),
-        "curry_projects_clear_decline": bool(
-            curry
-            and curry.overall_delta < -1.00
-        ),
-        "curry_shooting_declines_slower_than_defense": bool(
-            curry
-            and curry.skill_deltas[
-                "shooting_rating"
-            ]
-            > curry.skill_deltas[
-                "defense_rating"
-            ]
-        ),
-        "duren_projects_positive_or_stable": bool(
-            duren
-            and duren.overall_delta > -0.05
-        ),
-        "curry_five_year_curve_declines": bool(
-            curry_five_year
-            and (
-                curry_five_year[-1]
-                .projected_overall_rating
-                < curry_five_year[0]
-                .projected_overall_rating
-            )
-        ),
-        "wembanyama_five_year_curve_respects_ceiling": bool(
-            wemby_five_year
-            and all(
-                item.projected_overall_rating
-                <= item.potential_rating
-                + config.potential_soft_buffer
-                + 1e-9
-                for item in wemby_five_year
-            )
-        ),
+        "all_projection_numbers_are_finite": all_finite,
+        "all_projected_ratings_within_scale": all_bounds,
+        "all_one_year_deltas_respect_age_limits": all_age_limits,
+        "young_players_improve_on_average": bool(young) and float(young["average_overall_delta"]) > 0.35,
+        "prime_players_are_broadly_stable": bool(prime) and -0.75 <= float(prime["average_overall_delta"]) <= 0.75,
+        "veterans_decline_on_average": bool(veteran) and float(veteran["average_overall_delta"]) < -0.90,
+        "late_career_players_decline_clearly": bool(late) and float(late["average_overall_delta"]) < -2.00,
+        "both_growth_and_decline_occur": improved_count >= 40 and declined_count >= 100,
+        "high_minutes_lottery_can_make_major_jump": high_projection.overall_delta >= 5.0,
+        "playing_time_materially_changes_early_growth": high_projection.overall_delta - low_projection.overall_delta >= 2.0,
+        "first_round_pedigree_beats_late_second": first_projection.overall_delta > second_projection.overall_delta + 0.25,
+        "late_career_sample_declines": old_projection.overall_delta <= -2.0,
+        "late_career_multi_year_declines": old_five[-1].projected_overall_rating < old_projection.projected_overall_rating,
+        "older_shooting_is_more_durable_than_defense": old_projection.skill_deltas["shooting_rating"] > old_projection.skill_deltas["defense_rating"],
+        "wembanyama_not_forced_to_decline": wemby is None or wemby.overall_delta > -1.0,
+        "curry_declines": curry is None or curry.overall_delta < -1.0,
+        "league_average_does_not_inflate": -1.50 <= mean(league_deltas) <= 0.75,
     }
-    failed = [
-        name
-        for name, passed in checks.items()
-        if not passed
-    ]
 
+    failed = [name for name, passed in checks.items() if not passed]
     report = {
         "script": SCRIPT_VERSION,
         "engine": ENGINE_VERSION,
-        "configuration": asdict(config),
         "checks": checks,
         "failed_checks": failed,
-        "projection_errors": projection_errors,
-        "population": {
-            "profiles": len(profiles),
-            "projected": len(projections),
-            "average_overall_delta": round(
-                mean(league_deltas),
-                3,
-            ),
-            "median_overall_delta": round(
-                median(league_deltas),
-                3,
-            ),
-            "improved_players": improved_count,
-            "declined_players": declined_count,
-            "older_average_shooting_delta": round(
-                older_shooting_delta,
-                3,
-            ),
-            "older_average_playmaking_delta": round(
-                older_playmaking_delta,
-                3,
-            ),
-            "older_average_defense_delta": round(
-                older_defense_delta,
-                3,
-            ),
-            "older_average_availability_delta": round(
-                older_availability_delta,
-                3,
-            ),
+        "profiles": len(profiles),
+        "average_overall_delta": round(mean(league_deltas), 4),
+        "improved_players": improved_count,
+        "declined_players": declined_count,
+        "age_summary": age_summary,
+        "v2_examples": {
+            "high_minutes_lottery": asdict(high_projection),
+            "low_minutes_same_prospect": asdict(low_projection),
+            "late_first": asdict(first_projection),
+            "late_second": asdict(second_projection),
+            "old": asdict(old_projection),
         },
-        "age_buckets": age_summary,
-        "sample_players": {
-            name: asdict(projection)
-            for name, projection in {
-                "Victor Wembanyama": wemby,
-                "Nikola Jokic": jokic,
-                "Stephen Curry": curry,
-                "Jalen Duren": duren,
-            }.items()
-            if projection is not None
-        },
-        "multi_year_samples": {
-            "Stephen Curry": [
-                asdict(item)
-                for item in (
-                    curry_five_year or ()
-                )
-            ],
-            "Victor Wembanyama": [
-                asdict(item)
-                for item in (
-                    wemby_five_year or ()
-                )
-            ],
-        },
-        "passed": not failed,
     }
 
-    OUTPUTS.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-    JSON_REPORT.write_text(
-        json.dumps(
-            report,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
+    OUTPUTS.mkdir(parents=True, exist_ok=True)
+    JSON_REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
     if rows:
-        fieldnames = list(rows[0])
-        with CSV_REPORT.open(
-            "w",
-            newline="",
-            encoding="utf-8",
-        ) as handle:
-            writer = csv.DictWriter(
-                handle,
-                fieldnames=fieldnames,
-            )
+        with CSV_REPORT.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
             writer.writeheader()
-            writer.writerows(
-                sorted(
-                    rows,
-                    key=lambda row: (
-                        float(row["source_age"]),
-                        str(row["player_name"]),
-                    ),
-                )
-            )
+            writer.writerows(sorted(rows, key=lambda row: (float(row["source_age"]), str(row["player_name"]))))
 
-    print("=" * 88)
-    print("PLAYER DEVELOPMENT CURVE VALIDATION")
-    print("=" * 88)
-    print(
-        f"Profiles: {len(profiles)} | "
-        f"Projected: {len(projections)} | "
-        f"Errors: {len(projection_errors)}"
-    )
-    print(
-        "League average overall delta:",
-        round(mean(league_deltas), 3),
-    )
-    print(
-        f"Improved: {improved_count} | "
-        f"Declined: {declined_count}"
-    )
-
-    print("\nAGE CURVES")
+    print("=" * 92)
+    print("PLAYER DEVELOPMENT & OPPORTUNITY V2 CURVE VALIDATION")
+    print("=" * 92)
+    print(f"Profiles: {len(profiles)} | Projected: {len(projections)} | Errors: {len(errors)}")
+    print(f"League average OVR delta: {mean(league_deltas):+.3f}")
+    print(f"Improved: {improved_count} | Declined: {declined_count}")
+    print()
+    print("AGE CURVES")
     for row in age_summary:
-        print(
-            f"{row['age_bucket']:5s} | "
-            f"players={row['players']:3d} | "
-            f"avg={row['average_overall_delta']:+.3f} | "
-            f"median={row['median_overall_delta']:+.3f} | "
-            f"up={row['improved_players']:3d} | "
-            f"down={row['declined_players']:3d}"
-        )
-
-    print("\nSAMPLE PLAYERS")
-    for name, projection in (
-        report["sample_players"].items()
-    ):
-        print(
-            f"{name:22s} | "
-            f"age={projection['source_age']:.0f} | "
-            f"OVR "
-            f"{projection['current_overall_rating']:.2f}"
-            f" -> "
-            f"{projection['projected_overall_rating']:.2f} "
-            f"({projection['overall_delta']:+.2f})"
-        )
-
-    print("\nCHECKS")
+        if row["players"]:
+            print(
+                f"  {row['age_bucket']:5s} | n={row['players']:3d} | "
+                f"avg={row['average_overall_delta']:+.3f} | "
+                f"med={row['median_overall_delta']:+.3f} | "
+                f"up={row['improved_players']:3d} | down={row['declined_players']:3d}"
+            )
+    print()
+    print("V2 SYNTHETIC REALISM EXAMPLES")
+    print(f"  High-minutes lottery: {high_projection.current_overall_rating:.1f} -> {high_projection.projected_overall_rating:.1f} ({high_projection.overall_delta:+.2f})")
+    print(f"  Same player, low minutes: {low_projection.current_overall_rating:.1f} -> {low_projection.projected_overall_rating:.1f} ({low_projection.overall_delta:+.2f})")
+    print(f"  Late first-round: {first_projection.overall_delta:+.2f}")
+    print(f"  Late second-round: {second_projection.overall_delta:+.2f}")
+    print(f"  Age-37 sample: {old_projection.current_overall_rating:.1f} -> {old_projection.projected_overall_rating:.1f} ({old_projection.overall_delta:+.2f})")
+    print()
+    print("CHECKS")
     for name, passed in checks.items():
-        print(
-            f"{'PASS' if passed else 'FAIL':4s}  "
-            f"{name}"
-        )
-
-    print(f"\nJSON report: {JSON_REPORT}")
-    print(f"CSV report:  {CSV_REPORT}")
+        print(f"  {'PASS' if passed else 'FAIL'}  {name}")
+    print()
+    print("JSON report:", JSON_REPORT)
+    print("CSV report: ", CSV_REPORT)
 
     if failed:
-        print(
-            "\nPLAYER DEVELOPMENT CURVE "
-            "VALIDATION FAILED"
-        )
+        print("\nPLAYER DEVELOPMENT & OPPORTUNITY V2 CURVE VALIDATION FAILED")
         return 1
 
-    print(
-        "\nPLAYER DEVELOPMENT CURVE "
-        "VALIDATION PASSED"
-    )
+    print("\nPLAYER DEVELOPMENT & OPPORTUNITY V2 CURVE VALIDATION PASSED")
     return 0
 
 

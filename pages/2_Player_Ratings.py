@@ -16,11 +16,22 @@ import argparse
 import html
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Any
 
 
-SCRIPT_VERSION = "player-ratings-streamlit-v1-3-2026-08-06"
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from nba_current_reference_overlay_v1 import (  # noqa: E402
+    CurrentReferenceOverlayError,
+    load_current_reference_overlay,
+)
+
+SCRIPT_VERSION = "player-ratings-streamlit-v1-4-2026-09-08"
 RATINGS_FILENAME = "player_ratings_2026_27_v2.json"
 
 TEAM_NAMES = {
@@ -397,6 +408,75 @@ def sorted_teams(records: list[dict[str, Any]]) -> list[str]:
     return sorted(
         represented,
         key=lambda team: TEAM_NAMES.get(team, team),
+    )
+
+
+def render_current_reference(st: Any, records: list[dict[str, Any]]) -> None:
+    import pandas as pd
+
+    st.markdown("## Current NBA reference changes")
+    st.caption(
+        "Confirmed roster-affiliation changes through September 7, 2026. "
+        "This is a read-only real-world reference layer; it does not alter the "
+        "April 12 Franchise Mode scenario or its saved checkpoint."
+    )
+    try:
+        overlay = load_current_reference_overlay()
+    except CurrentReferenceOverlayError as exc:
+        st.error(f"The current-reference snapshot failed validation: {exc}")
+        return
+
+    names = {
+        normalize_player_id(record.get("player_id")): str(record.get("player_name", "")).strip()
+        for record in records
+    }
+    rows = []
+    for player_id, current in overlay.items():
+        slug_name = str(current.get("player_slug", "")).replace("-", " ").title()
+        rows.append({
+            "Date": current.get("latest_event_date", ""),
+            "Player": names.get(player_id) or slug_name or player_id,
+            "NBA ID": player_id,
+            "Current team": current.get("current_reference_team") or "FA",
+            "Status": str(current.get("current_reference_status", "")).replace("_", " ").title(),
+            "Latest action": str(current.get("contract_reference_action", "")).replace("_", " ").title(),
+            "Description": current.get("latest_description", ""),
+            "Source": current.get("source_name", ""),
+        })
+
+    status_options = sorted({row["Status"] for row in rows})
+    team_options = sorted({row["Current team"] for row in rows})
+    f1, f2 = st.columns(2)
+    selected_status = f1.multiselect(
+        "Reference status",
+        status_options,
+        default=status_options,
+        key="ratings_current_reference_status",
+    )
+    selected_teams = f2.multiselect(
+        "Current team",
+        team_options,
+        default=team_options,
+        key="ratings_current_reference_team",
+    )
+    visible = [
+        row for row in rows
+        if row["Status"] in selected_status and row["Current team"] in selected_teams
+    ]
+    visible.sort(key=lambda row: (row["Date"], row["Player"]), reverse=True)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Players in snapshot", len(rows))
+    c2.metric("Visible", len(visible))
+    c3.metric("Reference cutoff", "Sep. 7, 2026")
+    st.dataframe(
+        pd.DataFrame(visible),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Description": st.column_config.TextColumn(width="large"),
+            "Source": st.column_config.TextColumn(width="medium"),
+        },
     )
 
 
@@ -1630,6 +1710,7 @@ value, and trade value.
             "Player profile",
             "League rankings",
             "Compare players",
+            "Current-reference changes",
         ]
     )
 
@@ -1644,6 +1725,9 @@ value, and trade value.
 
     with tabs[2]:
         render_comparison(st, records, by_id)
+
+    with tabs[3]:
+        render_current_reference(st, records)
 
     render_methodology(st, payload)
 

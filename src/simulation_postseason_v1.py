@@ -5,6 +5,7 @@ import copy
 import json
 import math
 import sys
+import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -36,6 +37,9 @@ from simulation_league_state_v1 import (  # noqa: E402
     add_player_totals,
     validate_simulation_league_state,
 )
+from simulation_injury_fatigue_v1 import (  # noqa: E402
+    INJURY_FATIGUE_VERSION,
+)
 from single_game_simulator_v1 import (  # noqa: E402
     SimulatedGame,
     simulate_scheduled_game,
@@ -49,7 +53,7 @@ POSTSEASON_INTERFACE_VERSION = (
     "postseason-command-game-center-v1.1-2026-08-08"
 )
 POSTSEASON_EXECUTION_VERSION = (
-    "postseason-checkpointed-advance-v1-2026-08-08"
+    "postseason-batch-performance-v1-2026-08-09"
 )
 SELF_TEST_REPORT = (
     OUTPUTS
@@ -1037,10 +1041,9 @@ def scratch_state_for_game(
     state: SimulationLeagueState,
     game: PostseasonGame,
 ) -> SimulationLeagueState:
+    """Compatibility helper for callers that explicitly need a preview copy."""
     scratch = copy.deepcopy(state)
-    scratch.schedule[
-        game.game_id
-    ] = ScheduledGame(
+    scratch.schedule[game.game_id] = ScheduledGame(
         game_id=game.game_id,
         day_index=game.day_index,
         home_team=game.home_team,
@@ -1050,6 +1053,38 @@ def scratch_state_for_game(
     return scratch
 
 
+def _simulate_postseason_game_on_private_state(
+    state: SimulationLeagueState,
+    game: PostseasonGame,
+    *,
+    seed: int | None = None,
+    sit_player_ids: Iterable[str] = (),
+) -> SimulatedGame:
+    """Simulate on a caller-owned private transaction without another copy."""
+    existing_schedule_entry = state.schedule.get(game.game_id)
+    state.schedule[game.game_id] = ScheduledGame(
+        game_id=game.game_id,
+        day_index=game.day_index,
+        home_team=game.home_team,
+        away_team=game.away_team,
+        status=GameStatus.SCHEDULED,
+    )
+    try:
+        return simulate_scheduled_game(
+            state,
+            game.game_id,
+            seed=seed,
+            commit=False,
+            sit_player_ids=sit_player_ids,
+            _private_working_state=True,
+        )
+    finally:
+        if existing_schedule_entry is None:
+            state.schedule.pop(game.game_id, None)
+        else:
+            state.schedule[game.game_id] = existing_schedule_entry
+
+
 def simulate_postseason_game(
     state: SimulationLeagueState,
     game_id: str,
@@ -1057,39 +1092,27 @@ def simulate_postseason_game(
     seed: int | None = None,
     sit_player_ids: Iterable[str] = (),
 ) -> SimulatedGame:
-    postseason = get_postseason_state(
-        state
-    )
-    game = postseason.games.get(
-        str(game_id).strip()
-    )
+    postseason = get_postseason_state(state)
+    game = postseason.games.get(str(game_id).strip())
 
     if game is None:
         raise SimulationPostseasonError(
             f"Unknown postseason game: {game_id}."
         )
 
-    if (
-        game.status
-        != PostseasonGameStatus.SCHEDULED
-    ):
+    if game.status != PostseasonGameStatus.SCHEDULED:
         raise SimulationPostseasonError(
-            f"Postseason game {game_id} "
-            "is already completed."
+            f"Postseason game {game_id} is already completed."
         )
 
-    scratch = scratch_state_for_game(
-        state,
-        game,
-    )
-    return simulate_scheduled_game(
+    # Public previews remain nonmutating, but now require only one full copy.
+    scratch = copy.deepcopy(state)
+    scratch_game = get_postseason_state(scratch).games[game.game_id]
+    return _simulate_postseason_game_on_private_state(
         scratch,
-        game.game_id,
+        scratch_game,
         seed=seed,
-        commit=False,
-        sit_player_ids=(
-            sit_player_ids
-        ),
+        sit_player_ids=sit_player_ids,
     )
 
 
@@ -1797,146 +1820,123 @@ def advance_bracket_structure(
         state.phase = LeaguePhase.OFFSEASON
 
 
-def commit_postseason_game(
+def _regular_season_sections_match(
+    source: SimulationLeagueState,
+    updated: SimulationLeagueState,
+) -> bool:
+    return bool(
+        source.standings == updated.standings
+        and source.player_season_totals == updated.player_season_totals
+        and source.schedule == updated.schedule
+        and source.completed_games == updated.completed_games
+    )
+
+
+def _commit_postseason_game_in_place(
     state: SimulationLeagueState,
     game_id: str,
     *,
     seed: int | None = None,
     sit_player_ids: Iterable[str] = (),
-) -> tuple[
-    SimulationLeagueState,
-    SimulatedGame,
-]:
-    source = copy.deepcopy(state)
-    updated = copy.deepcopy(state)
-    postseason = get_postseason_state(
-        updated
-    )
-    game = postseason.games.get(
-        str(game_id).strip()
-    )
+    validate_full_state: bool = False,
+) -> SimulatedGame:
+    """Commit one playoff game inside an already-private transaction."""
+    postseason = get_postseason_state(state)
+    game = postseason.games.get(str(game_id).strip())
 
     if game is None:
         raise SimulationPostseasonError(
             f"Unknown postseason game: {game_id}."
         )
+    if game.status != PostseasonGameStatus.SCHEDULED:
+        raise SimulationPostseasonError(
+            f"Postseason game {game_id} is already completed."
+        )
 
-    simulated = simulate_postseason_game(
-        updated,
-        game.game_id,
+    simulated = _simulate_postseason_game_on_private_state(
+        state,
+        game,
         seed=seed,
         sit_player_ids=sit_player_ids,
     )
     completed = simulated.game
-    game.status = (
-        PostseasonGameStatus.COMPLETED
-    )
-    game.winner = game_winner(
-        completed
-    )
-    game.loser = game_loser(
-        completed
-    )
-    game.home_score = (
-        completed.home_score
-    )
-    game.away_score = (
-        completed.away_score
-    )
-    game.overtime_periods = (
-        completed.overtime_periods
-    )
-    postseason.completed_games[
-        game.game_id
-    ] = completed
+    game.status = PostseasonGameStatus.COMPLETED
+    game.winner = game_winner(completed)
+    game.loser = game_loser(completed)
+    game.home_score = completed.home_score
+    game.away_score = completed.away_score
+    game.overtime_periods = completed.overtime_periods
+    postseason.completed_games[game.game_id] = completed
 
     for line in completed.player_box_scores:
         add_player_totals(
-            postseason
-            .postseason_player_totals[
-                line.player_id
-            ],
+            postseason.postseason_player_totals[line.player_id],
             line,
         )
 
     if game.series_id:
-        series = postseason.series[
-            game.series_id
-        ]
-
-        if (
-            game.winner
-            == series.higher_seed_team
-        ):
+        series = postseason.series[game.series_id]
+        if game.winner == series.higher_seed_team:
             series.higher_seed_wins += 1
-        elif (
-            game.winner
-            == series.lower_seed_team
-        ):
+        elif game.winner == series.lower_seed_team:
             series.lower_seed_wins += 1
         else:
             raise SimulationPostseasonError(
-                "Series winner is not a "
-                "participating team."
+                "Series winner is not a participating team."
             )
 
-        if (
-            series.higher_seed_wins >= 4
-            or series.lower_seed_wins >= 4
-        ):
+        if series.higher_seed_wins >= 4 or series.lower_seed_wins >= 4:
             series.winner = (
                 series.higher_seed_team
-                if series.higher_seed_wins
-                > series.lower_seed_wins
+                if series.higher_seed_wins > series.lower_seed_wins
                 else series.lower_seed_team
             )
             series.loser = (
                 series.lower_seed_team
-                if series.winner
-                == series.higher_seed_team
+                if series.winner == series.higher_seed_team
                 else series.higher_seed_team
             )
         else:
             schedule_series_game(
                 postseason,
                 series,
-                game_number=(
-                    game.game_number + 1
-                ),
-                day_index=(
-                    game.day_index + 2
-                ),
+                game_number=game.game_number + 1,
+                day_index=game.day_index + 2,
             )
 
-    updated.current_day_index = max(
-        int(updated.current_day_index),
+    state.current_day_index = max(
+        int(state.current_day_index),
         int(game.day_index),
     )
-    advance_bracket_structure(
-        updated
-    )
-    validate_postseason_state(
-        updated
-    )
-    validate_simulation_league_state(
-        updated
-    )
+    advance_bracket_structure(state)
+    validate_postseason_state(state)
+    if validate_full_state:
+        validate_simulation_league_state(state)
+    return simulated
 
-    if (
-        source.standings
-        != updated.standings
-        or source.player_season_totals
-        != updated.player_season_totals
-        or source.schedule
-        != updated.schedule
-        or source.completed_games
-        != updated.completed_games
-    ):
+
+def commit_postseason_game(
+    state: SimulationLeagueState,
+    game_id: str,
+    *,
+    seed: int | None = None,
+    sit_player_ids: Iterable[str] = (),
+) -> tuple[SimulationLeagueState, SimulatedGame]:
+    # A user-controlled single game remains fully transactional. Only one
+    # complete state copy is needed, rather than source + updated + scratch.
+    updated = copy.deepcopy(state)
+    simulated = _commit_postseason_game_in_place(
+        updated,
+        game_id,
+        seed=seed,
+        sit_player_ids=sit_player_ids,
+        validate_full_state=True,
+    )
+    if not _regular_season_sections_match(state, updated):
         raise SimulationPostseasonError(
-            "Postseason commit changed regular-season "
-            "standings, schedule, or statistics."
+            "Postseason commit changed regular-season standings, "
+            "schedule, or statistics."
         )
-
     return updated, simulated
 
 
@@ -2178,16 +2178,19 @@ def advance_postseason(
         committed_game_id = (
             next_game.game_id
         )
-        updated, _ = (
-            commit_postseason_game(
-                updated,
-                committed_game_id,
-                seed=game_seed,
-            )
+        stage_before_game = postseason.stage
+        _commit_postseason_game_in_place(
+            updated,
+            committed_game_id,
+            seed=game_seed,
+            validate_full_state=False,
         )
-        postseason = get_postseason_state(
-            updated
-        )
+        postseason = get_postseason_state(updated)
+        if postseason.stage != stage_before_game:
+            # Full validation at round boundaries catches structural errors
+            # without rescanning the complete 1,230-game season after every
+            # playoff game.
+            validate_simulation_league_state(updated)
         completed_after = len(
             postseason.completed_games
         )
@@ -2231,11 +2234,13 @@ def advance_postseason(
         ):
             break
 
-    final_postseason = (
-        get_postseason_state(
-            updated
+    validate_simulation_league_state(updated)
+    if not _regular_season_sections_match(state, updated):
+        raise SimulationPostseasonError(
+            "Bulk postseason advancement changed regular-season standings, "
+            "schedule, or statistics."
         )
-    )
+    final_postseason = get_postseason_state(updated)
     result = PostseasonAdvanceResult(
         version=POSTSEASON_VERSION,
         scope=resolved_scope,
@@ -2346,40 +2351,99 @@ def postseason_seed_rows(
     ]
 
 
+PLAYOFF_STAT_STAGES = {
+    PostseasonStage.FIRST_ROUND,
+    PostseasonStage.CONFERENCE_SEMIFINALS,
+    PostseasonStage.CONFERENCE_FINALS,
+    PostseasonStage.NBA_FINALS,
+}
+
+
+def scoped_postseason_player_totals(
+    state: SimulationLeagueState,
+    *,
+    include_play_in: bool = True,
+) -> dict[str, PlayerSeasonTotals]:
+    postseason = get_postseason_state(
+        state
+    )
+
+    if include_play_in:
+        return postseason.postseason_player_totals
+
+    totals_by_player: dict[
+        str,
+        PlayerSeasonTotals,
+    ] = {}
+
+    for game_id, completed in (
+        postseason.completed_games.items()
+    ):
+        game = postseason.games.get(
+            game_id
+        )
+        if (
+            game is None
+            or game.stage
+            not in PLAYOFF_STAT_STAGES
+        ):
+            continue
+
+        for line in completed.player_box_scores:
+            totals = totals_by_player.setdefault(
+                line.player_id,
+                PlayerSeasonTotals(
+                    player_id=line.player_id,
+                ),
+            )
+            add_player_totals(
+                totals,
+                line,
+            )
+
+    return totals_by_player
+
+
+def shooting_percentage(
+    made: int,
+    attempted: int,
+) -> float:
+    if attempted <= 0:
+        return 0.0
+    return round(
+        100.0 * made / attempted,
+        1,
+    )
+
+
 def postseason_player_rows(
     state: SimulationLeagueState,
     *,
     minimum_games: int = 1,
     limit: int = 50,
+    include_play_in: bool = True,
 ) -> list[dict[str, Any]]:
-    postseason = get_postseason_state(
-        state
+    totals_by_player = (
+        scoped_postseason_player_totals(
+            state,
+            include_play_in=include_play_in,
+        )
     )
     rows: list[dict[str, Any]] = []
 
     for player_id, totals in (
-        postseason
-        .postseason_player_totals
-        .items()
+        totals_by_player.items()
     ):
-        if (
-            totals.games_played
-            < minimum_games
-        ):
+        if totals.games_played < minimum_games:
             continue
 
-        player = state.players[
-            player_id
-        ]
+        player = state.players[player_id]
         games = totals.games_played
         rows.append(
             {
-                "Player": (
-                    player.player_name
-                ),
-                "Team": (
-                    player.team_abbreviation
-                ),
+                "Player": player.player_name,
+                "Team": player.team_abbreviation,
+                "Pos": player.position,
                 "GP": games,
                 "MIN": round(
                     totals.minutes / games,
@@ -2405,18 +2469,181 @@ def postseason_player_rows(
                     totals.blocks / games,
                     1,
                 ),
+                "TO": round(
+                    totals.turnovers / games,
+                    1,
+                ),
+                "PF": round(
+                    totals.fouls / games,
+                    1,
+                ),
+                "FG%": shooting_percentage(
+                    totals.field_goals_made,
+                    totals.field_goals_attempted,
+                ),
+                "3P%": shooting_percentage(
+                    totals.three_pointers_made,
+                    totals.three_pointers_attempted,
+                ),
+                "FT%": shooting_percentage(
+                    totals.free_throws_made,
+                    totals.free_throws_attempted,
+                ),
             }
         )
 
     rows.sort(
         key=lambda row: (
             -row["PTS"],
+            -row["AST"],
             row["Player"],
         )
     )
-    return rows[
-        : int(limit)
-    ]
+    return rows[: int(limit)]
+
+
+def postseason_team_rows(
+    state: SimulationLeagueState,
+    *,
+    include_play_in: bool = False,
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    postseason = get_postseason_state(
+        state
+    )
+    stage_order = {
+        stage: index
+        for index, stage in enumerate(
+            PostseasonStage
+        )
+    }
+    records: dict[str, dict[str, Any]] = {}
+
+    def row_for(team: str) -> dict[str, Any]:
+        return records.setdefault(
+            team,
+            {
+                "team": team,
+                "games": 0,
+                "wins": 0,
+                "losses": 0,
+                "points_for": 0,
+                "points_against": 0,
+                "furthest_stage": (
+                    PostseasonStage.NOT_STARTED
+                ),
+                "furthest_round": "",
+            },
+        )
+
+    for game_id, completed in (
+        postseason.completed_games.items()
+    ):
+        game = postseason.games.get(
+            game_id
+        )
+        if game is None:
+            continue
+        if (
+            not include_play_in
+            and game.stage
+            not in PLAYOFF_STAT_STAGES
+        ):
+            continue
+
+        for team, points_for, points_against in (
+            (
+                completed.home_team,
+                completed.home_score,
+                completed.away_score,
+            ),
+            (
+                completed.away_team,
+                completed.away_score,
+                completed.home_score,
+            ),
+        ):
+            record = row_for(team)
+            record["games"] += 1
+            record["points_for"] += points_for
+            record["points_against"] += (
+                points_against
+            )
+            if points_for > points_against:
+                record["wins"] += 1
+            else:
+                record["losses"] += 1
+
+            if (
+                stage_order[game.stage]
+                >= stage_order[
+                    record["furthest_stage"]
+                ]
+            ):
+                record["furthest_stage"] = (
+                    game.stage
+                )
+                record["furthest_round"] = (
+                    game.round_label
+                )
+
+    rows: list[dict[str, Any]] = []
+    for team, record in records.items():
+        games = int(record["games"])
+        wins = int(record["wins"])
+        losses = int(record["losses"])
+        points_for = int(record["points_for"])
+        points_against = int(
+            record["points_against"]
+        )
+        rows.append(
+            {
+                "Seed": postseason.seed_by_team.get(
+                    team
+                ),
+                "Team": team,
+                "Conf": conference_for_team(team),
+                "GP": games,
+                "W": wins,
+                "L": losses,
+                "Win%": round(
+                    wins / games,
+                    3,
+                ),
+                "PF": round(
+                    points_for / games,
+                    1,
+                ),
+                "PA": round(
+                    points_against / games,
+                    1,
+                ),
+                "Diff": round(
+                    (
+                        points_for
+                        - points_against
+                    ) / games,
+                    1,
+                ),
+                "Furthest Round": (
+                    "NBA Champion"
+                    if team == postseason.champion
+                    else record["furthest_round"]
+                ),
+            }
+        )
+
+    rows.sort(
+        key=lambda row: (
+            -row["W"],
+            -row["Diff"],
+            row["Seed"]
+            if row["Seed"] is not None
+            else 99,
+            row["Team"],
+        )
+    )
+    return rows[: int(limit)]
 
 
 def validate_postseason_state(
@@ -2674,6 +2901,7 @@ def run_self_test(
         )
     )
 
+    postseason_started = time.perf_counter()
     state, result = advance_postseason(
         state,
         scope=(
@@ -2685,6 +2913,10 @@ def run_self_test(
             .FREE_SIMULATION
         ),
         seed=seed,
+    )
+    postseason_runtime_seconds = round(
+        time.perf_counter() - postseason_started,
+        3,
     )
     postseason = get_postseason_state(
         state
@@ -2725,6 +2957,17 @@ def run_self_test(
         for totals
         in postseason
         .postseason_player_totals.values()
+    )
+    playoff_player_rows = postseason_player_rows(
+        state,
+        minimum_games=1,
+        limit=600,
+        include_play_in=False,
+    )
+    playoff_team_rows = postseason_team_rows(
+        state,
+        include_play_in=False,
+        limit=30,
     )
 
     checks = {
@@ -2867,6 +3110,48 @@ def run_self_test(
             postseason_games_played
             > 0
         ),
+        "playoff_player_rows_exclude_play_in_and_have_full_stats": (
+            bool(playoff_player_rows)
+            and all(
+                {
+                    "Player",
+                    "Team",
+                    "Pos",
+                    "GP",
+                    "MIN",
+                    "PTS",
+                    "REB",
+                    "AST",
+                    "STL",
+                    "BLK",
+                    "TO",
+                    "PF",
+                    "FG%",
+                    "3P%",
+                    "FT%",
+                }.issubset(row)
+                for row in playoff_player_rows
+            )
+        ),
+        "playoff_team_rows_reconcile": (
+            bool(playoff_team_rows)
+            and all(
+                row["GP"]
+                == row["W"] + row["L"]
+                for row in playoff_team_rows
+            )
+            and sum(
+                row["GP"]
+                for row in playoff_team_rows
+            )
+            == 2 * sum(
+                1
+                for game_id
+                in postseason.completed_games
+                if postseason.games[game_id].stage
+                in PLAYOFF_STAT_STAGES
+            )
+        ),
         "completed_game_history_exposes_box_scores": (
             bool(
                 completed_postseason_games(
@@ -2887,6 +3172,9 @@ def run_self_test(
         "advance_result_reports_champion": (
             result.champion
             == postseason.champion
+        ),
+        "batch_postseason_runtime_is_interactive": (
+            postseason_runtime_seconds < 15.0
         ),
     }
     checks.update(
@@ -2922,6 +3210,13 @@ def run_self_test(
             "postseason_games": (
                 total_postseason_games
             ),
+            "postseason_runtime_seconds": postseason_runtime_seconds,
+            "postseason_games_per_second": round(
+                total_postseason_games
+                / max(postseason_runtime_seconds, 0.001),
+                2,
+            ),
+            "execution_version": POSTSEASON_EXECUTION_VERSION,
             "series_count": len(
                 postseason.series
             ),
@@ -2933,6 +3228,21 @@ def run_self_test(
                     state,
                     minimum_games=4,
                     limit=10,
+                )
+            ),
+            "top_playoff_players": (
+                postseason_player_rows(
+                    state,
+                    minimum_games=4,
+                    limit=10,
+                    include_play_in=False,
+                )
+            ),
+            "playoff_team_records": (
+                postseason_team_rows(
+                    state,
+                    include_play_in=False,
+                    limit=30,
                 )
             ),
         },

@@ -25,7 +25,7 @@ REPORT_PATH = (
 )
 
 VALIDATOR_VERSION = (
-    "franchise-command-center-validator-v1.2-2026-08-08"
+    "franchise-command-center-validator-v1.3-2026-08-09"
 )
 
 
@@ -71,7 +71,7 @@ def run_validation() -> dict[str, Any]:
 
     page_markers = {
         "shared_permanent_state": (
-            '"game_simulator_league_state"'
+            '"franchise_simulation_league_state"'
         ),
         "controlled_team_selector": (
             '"franchise_pref_controlled_teams"'
@@ -83,7 +83,7 @@ def run_validation() -> dict[str, Any]:
             '"franchise_pref_simulation_policy"'
         ),
         "cross_page_state_guard": (
-            "simulation_matches_trade_state("
+            "FRANCHISE_TRADE_AUTHORITY_V1"
         ),
         "cross_page_preference_restore": (
             "initialize_persistent_widget("
@@ -95,10 +95,10 @@ def run_validation() -> dict[str, Any]:
             "synchronize_simulation_with_trade_state"
         ),
         "trade_sync_action": (
-            "Apply trade to active season"
+            "Build and commit live franchise trades"
         ),
         "trade_sync_preservation_copy": (
-            "schedule, scores, standings"
+            "checkpoint-owned"
         ),
         "command_center_tab": (
             '"Command Center"'
@@ -134,7 +134,7 @@ def run_validation() -> dict[str, Any]:
             '"Next week"'
         ),
         "season_end_control": (
-            '"Season end"'
+            'key="franchise_season_end"'
         ),
         "rotation_editor": (
             "st.data_editor("
@@ -145,26 +145,35 @@ def run_validation() -> dict[str, Any]:
         "rotation_240_copy": (
             "exactly 240 total minutes"
         ),
-        "game_day_preview": (
-            '"Preview game"'
+        "persistent_workspace_navigation": (
+            "FRANCHISE_SECTION_KEY"
         ),
-        "quick_commit": (
-            '"Quick sim & commit"'
+        "one_way_game_simulation": (
+            '"Simulate game"'
+        ),
+        "advanced_what_if_lab": (
+            '"Advanced What-If Lab"'
+        ),
+        "what_if_invalidation": (
+            "current_preview_request"
+        ),
+        "latest_committed_result": (
+            "Latest committed result"
         ),
         "automatic_next_game": (
-            "Loaded the next controlled game"
+            "matchup has been loaded."
         ),
         "standings_tables": (
             "standings_rows("
         ),
         "player_leaders": (
-            "player_leader_rows("
+            '"Regular Season Leaders"'
         ),
         "trade_needs": (
-            "team_needs_rows("
+            "render_live_asset_ledger("
         ),
         "trade_machine_link": (
-            "Open Trade Machine"
+            "Open Trade Center"
         ),
         "draft_strength_setting": (
             "Generated draft-class strength"

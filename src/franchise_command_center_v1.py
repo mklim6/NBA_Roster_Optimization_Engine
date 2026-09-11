@@ -40,6 +40,12 @@ from regular_season_simulation_controller_v1 import (  # noqa: E402
     regular_season_state_fingerprint,
     simulate_regular_season_scope,
 )
+from simulation_injury_fatigue_v1 import (  # noqa: E402
+    INJURY_FATIGUE_VERSION,
+    injury_status_is_unavailable,
+    player_health_report_rows,
+    team_health_summary,
+)
 from simulation_league_state_v1 import (  # noqa: E402
     AvailabilityStatus,
     GameStatus,
@@ -181,7 +187,7 @@ POLICY_LABELS: dict[
         "Stop only for coaching or medical decisions"
     ),
     FranchiseSimulationPolicy.AUTO_SAVED_ROTATIONS: (
-        "Auto-sim controlled teams with saved rotations"
+        "Auto-manage coaching & medical decisions (recommended)"
     ),
     FranchiseSimulationPolicy.FREE_SIMULATION: (
         "Simulate freely through the requested range"
@@ -589,8 +595,9 @@ def validate_rotation_plan(
         player_id
         for player_id, injury
         in state.injuries.items()
-        if injury.status
-        == AvailabilityStatus.OUT
+        if injury_status_is_unavailable(
+            injury.status
+        )
     }
     checks = {
         "plan_version_is_current": (
@@ -704,93 +711,65 @@ def rotation_management_rows(
     team: str,
 ) -> list[dict[str, Any]]:
     resolved_team = str(team).strip().upper()
-    team_state = state.teams[
-        resolved_team
-    ]
+    team_state = state.teams[resolved_team]
     rotation = team_state.rotation
     rotation_index = {
         player_id: index
         for index, player_id
-        in enumerate(
-            rotation.rotation_player_ids
+        in enumerate(rotation.rotation_player_ids)
+    }
+    starter_set = set(rotation.starter_ids)
+    health_by_player = {
+        row["player_id"]: row
+        for row in player_health_report_rows(
+            state,
+            resolved_team,
         )
     }
-    starter_set = set(
-        rotation.starter_ids
+    ordered_player_ids = sorted(
+        team_state.roster_player_ids,
+        key=lambda player_id: (
+            rotation_index.get(player_id, 999),
+            -state.players[player_id].overall_rating,
+            state.players[player_id].player_name,
+        ),
     )
-
-    return [
-        {
-            "player_id": player_id,
-            "player": (
-                state.players[
-                    player_id
-                ].player_name
-            ),
-            "position": (
-                state.players[
-                    player_id
-                ].position
-            ),
-            "age": (
-                state.players[
-                    player_id
-                ].age
-            ),
-            "overall": round(
-                state.players[
-                    player_id
-                ].overall_rating,
-                1,
-            ),
-            "starter": (
-                player_id
-                in starter_set
-            ),
-            "in_rotation": (
-                player_id
-                in rotation_index
-            ),
-            "minutes": round(
-                rotation.minutes_targets.get(
-                    player_id,
-                    0.0,
+    rows: list[dict[str, Any]] = []
+    for display_index, player_id in enumerate(
+        ordered_player_ids,
+        start=1,
+    ):
+        player = state.players[player_id]
+        health = health_by_player[player_id]
+        in_rotation = player_id in rotation_index
+        rows.append(
+            {
+                "player_id": player_id,
+                "player": player.player_name,
+                "position": player.position,
+                "age": player.age,
+                "overall": round(player.overall_rating, 1),
+                "starter": player_id in starter_set,
+                "in_rotation": in_rotation,
+                "minutes": round(
+                    rotation.minutes_targets.get(player_id, 0.0),
+                    1,
                 ),
-                1,
-            ),
-            "rotation_order": (
-                rotation_index.get(
-                    player_id,
-                    len(
-                        team_state
-                        .roster_player_ids
-                    ),
-                )
-                + 1
-            ),
-            "availability": (
-                state.injuries[
-                    player_id
-                ].status.value
-            ),
-        }
-        for player_id
-        in sorted(
-            team_state.roster_player_ids,
-            key=lambda pid: (
-                rotation_index.get(
-                    pid,
-                    999,
+                # Every roster row receives a unique display order.
+                # Inactive players follow the active rotation by rating.
+                "rotation_order": (
+                    rotation_index[player_id] + 1
+                    if in_rotation
+                    else display_index
                 ),
-                -state.players[
-                    pid
-                ].overall_rating,
-                state.players[
-                    pid
-                ].player_name,
-            ),
+                "availability": health["status"],
+                "fatigue": health["fatigue"],
+                "injury_risk": health["risk"],
+                "recent_minutes": health["recent_minutes"],
+                "medical_note": health["explanation"],
+            }
         )
-    ]
+    return rows
 
 
 def coaching_alerts_for_game(
@@ -895,6 +874,52 @@ def coaching_alerts_for_game(
                 detail=(
                     "The team has one full day "
                     "between games."
+                ),
+            )
+        )
+
+    health = team_health_summary(
+        state,
+        team,
+        day_index=game_day,
+    )
+    if health["out"]:
+        alerts.append(
+            CoachingAlert(
+                severity="critical",
+                category="medical",
+                title=(
+                    f"{health['out']} player(s) unavailable"
+                ),
+                detail=(
+                    "The medical model has removed unavailable "
+                    "players from automatic game rotations."
+                ),
+            )
+        )
+    if health["high_risk"]:
+        alerts.append(
+            CoachingAlert(
+                severity="warning",
+                category="workload",
+                title=(
+                    f"{health['high_risk']} elevated workload risk"
+                ),
+                detail=(
+                    "Fatigue, recent minutes, schedule density, "
+                    "age, and durability are raising modeled risk."
+                ),
+            )
+        )
+    if health["average_fatigue"] >= 55.0:
+        alerts.append(
+            CoachingAlert(
+                severity="warning",
+                category="fatigue",
+                title="Team fatigue is elevated",
+                detail=(
+                    f"Projected average fatigue is "
+                    f"{health['average_fatigue']:.1f}/100."
                 ),
             )
         )

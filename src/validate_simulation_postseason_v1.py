@@ -24,7 +24,7 @@ REPORT_PATH = (
 )
 
 VALIDATOR_VERSION = (
-    "simulation-postseason-validator-v1.1.1-2026-08-08"
+    "simulation-postseason-validator-v1.1.3-2026-08-09"
 )
 
 
@@ -114,6 +114,15 @@ def run_validation() -> dict[str, Any]:
         "controlled_game_lookup": (
             "def controlled_postseason_games("
         ),
+        "batch_transaction_helper": (
+            "_commit_postseason_game_in_place"
+        ),
+        "batch_execution_version": (
+            "postseason-batch-performance-v1-2026-08-09"
+        ),
+        "private_working_state": (
+            "_private_working_state=True"
+        ),
         "completed_game_history": (
             "def completed_postseason_games("
         ),
@@ -162,11 +171,14 @@ def run_validation() -> dict[str, Any]:
         "postseason_leaders": (
             '"Postseason Leaders"'
         ),
-        "preview_next_game": (
-            "Preview next game"
+        "what_if_preview": (
+            "What-if preview"
         ),
-        "quick_commit": (
-            "Quick sim & commit"
+        "committed_simulation": (
+            "Simulate & commit"
+        ),
+        "what_if_is_sandbox_only": (
+            "Sandbox result only."
         ),
         "simulate_stage": (
             "Sim current stage"
@@ -175,7 +187,7 @@ def run_validation() -> dict[str, Any]:
             "Sim to champion"
         ),
         "champion_display": (
-            "are NBA Champions"
+            "won the NBA championship."
         ),
         "postseason_version_visible": (
             "POSTSEASON_VERSION"
@@ -299,9 +311,15 @@ def run_validation() -> dict[str, Any]:
         in page_text
     )
     checks[
-        "game_day_uses_postseason_preview_and_commit"
+        "game_day_supports_sandbox_what_if_and_commit"
     ] = (
         "render_postseason_game_day("
+        in page_text
+        and "What-if preview"
+        in page_text
+        and "Sandbox result only."
+        in page_text
+        and "Simulate & commit"
         in page_text
         and "simulate_postseason_game("
         in page_text

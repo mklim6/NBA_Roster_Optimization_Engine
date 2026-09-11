@@ -69,6 +69,7 @@ DEPENDENT_MODULE_RESET_ORDER = (
     "simulation_postseason_v1",
     "simulation_league_alignment_v1",
     "simulation_player_minutes_v1",
+    "simulation_injury_fatigue_v1",
     "regular_season_simulation_controller_v1",
     "regular_season_schedule_v1",
     "simulation_season_transition_controller_v1",
@@ -398,6 +399,11 @@ def run_self_test() -> dict[str, Any]:
             "simulation_season_transition_controller_v1"
         )
     )
+    injury_fatigue_module = (
+        importlib.import_module(
+            "simulation_injury_fatigue_v1"
+        )
+    )
     season_controller = (
         importlib.import_module(
             "regular_season_simulation_controller_v1"
@@ -476,6 +482,18 @@ def run_self_test() -> dict[str, Any]:
             hasattr(
                 transition_controller,
                 "build_season_transition_preview",
+            )
+        ),
+        "injury_fatigue_chain_imports": (
+            getattr(
+                injury_fatigue_module,
+                "INJURY_FATIGUE_VERSION",
+                "",
+            )
+            == "simulation-injury-fatigue-v1-2026-08-09"
+            and hasattr(
+                injury_fatigue_module,
+                "process_completed_game_health",
             )
         ),
         "regular_season_chain_imports": (

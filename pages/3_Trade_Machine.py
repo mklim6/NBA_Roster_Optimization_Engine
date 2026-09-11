@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gzip
+import cloudpickle
 import copy
 import html
 import json
@@ -68,6 +70,13 @@ st.set_page_config(
 )
 
 
+TRADE_MACHINE_SANDBOX_VERSION = "trade-machine-sandbox-anchor-v1-2026-08-16"
+TRADE_MACHINE_SANDBOX_PATH = (
+    ROOT / "outputs" / "runtime"
+    / "trade_machine_sandbox_anchor_2026_27_v1.pkl.gz"
+)
+
+
 STATUS_LABELS = {
     Status.PASS: "PASS",
     Status.MANUAL_REVIEW: "MANUAL REVIEW",
@@ -125,19 +134,40 @@ def get_base_runtime() -> RuntimeData:
     return load_runtime_data()
 
 
+def load_trade_machine_sandbox_seed() -> LeagueState:
+    if not TRADE_MACHINE_SANDBOX_PATH.is_file():
+        raise StateMutationError(
+            "The immutable 2026-27 Trade Machine sandbox seed is missing."
+        )
+    with gzip.open(TRADE_MACHINE_SANDBOX_PATH, "rb") as handle:
+        state = cloudpickle.load(handle)
+    if not isinstance(state, LeagueState) or state.state_version != STATE_VERSION:
+        raise StateMutationError(
+            "The immutable Trade Machine sandbox seed is incompatible."
+        )
+    return state
+
+
 def get_league_state(
     base_runtime: RuntimeData,
 ) -> LeagueState:
+    # TRADE_MACHINE_STANDALONE_SANDBOX_V1:
+    # The standalone Trade Machine never reads or writes Franchise Mode state.
     key = "trade_machine_league_state"
     state = st.session_state.get(key)
-
     if (
-        not isinstance(state, LeagueState)
-        or state.state_version != STATE_VERSION
+        isinstance(state, LeagueState)
+        and state.state_version == STATE_VERSION
     ):
-        state = create_league_state(base_runtime)
-        st.session_state[key] = state
+        return state
 
+    try:
+        state = load_trade_machine_sandbox_seed()
+    except Exception:
+        # Fail closed to the static base runtime rather than hydrating from a
+        # live Franchise Mode checkpoint.
+        state = create_league_state(base_runtime)
+    st.session_state[key] = state
     return state
 
 
@@ -1398,12 +1428,12 @@ def render_hero(runtime: RuntimeData) -> None:
     st.markdown(
         f"""
 <div class="tm-hero">
-  <div class="tm-eyebrow">V3 legality engine · 2026-27 transaction lab</div>
+  <div class="tm-eyebrow">V3 legality engine · standalone 2026-27 sandbox</div>
   <div class="tm-title">NBA Trade Command Center</div>
   <div class="tm-subtitle">
-    Build a two-team player-and-pick package, then run it through verified
-    salary matching, roster and apron rules, player-CBA evidence, draft-right
-    ownership, frozen-pick screening, and package-level Stepien analysis.
+    Build a two-team player-and-pick package against the frozen 2026-27
+    sandbox. This workspace never modifies Franchise Mode. Live franchise
+    trades belong in Franchise Mode → Transactions → Trade Builder.
   </div>
   <div class="tm-stat-grid">{cards}</div>
 </div>
@@ -2235,24 +2265,27 @@ except (
     ValueError,
     KeyError,
 ) as exc:
+    # TRADE_MACHINE_CANONICAL_HYDRATION_REPAIR_V1:
+    # Never replace a durable franchise state with an unrelated revision-0
+    # league merely because a runtime view failed to rebuild.
     st.error(
-        "The mutable league runtime could not be rebuilt. "
-        f"Resetting the session state. Detail: {exc}"
+        "The standalone 2026-27 sandbox runtime could not be rebuilt. "
+        "No Franchise Mode state was read or modified. "
+        f"Detail: {exc}"
     )
-    league_state = create_league_state(base_runtime)
-    st.session_state[
-        "trade_machine_league_state"
-    ] = league_state
-    runtime = build_state_runtime(
-        base_runtime,
-        league_state,
-    )
+    st.stop()
 
 visual_assets = get_visual_assets()
 teams = sorted(runtime.team_salary_by_team)
 
 inject_trade_machine_styles()
 render_hero(runtime)
+
+st.info(
+    "Sandbox only: trades here stay inside this standalone 2026-27 session. "
+    "They never change Franchise Mode. Use Franchise Mode → Transactions → "
+    "Trade Builder for live franchise trades."
+)
 
 notice = st.session_state.pop(
     "trade_machine_state_notice",
@@ -2305,9 +2338,8 @@ with st.container(border=True):
 
     with control_columns[2]:
         st.caption(
-            "Applied moves live only in this Streamlit session. "
-            "Every later audit uses the updated rosters, salaries, "
-            "draft-right ownership, and conservative acquired-player rules."
+            "Applied moves live only in this standalone sandbox session. "
+            "They never write to the durable Franchise Mode checkpoint."
         )
 
     if undo_clicked:
@@ -2325,14 +2357,18 @@ with st.container(border=True):
         st.rerun()
 
     if reset_clicked:
-        reset_league_state(
-            league_state,
-            base_runtime,
-        )
+        try:
+            st.session_state[
+                "trade_machine_league_state"
+            ] = load_trade_machine_sandbox_seed()
+        except Exception:
+            st.session_state[
+                "trade_machine_league_state"
+            ] = create_league_state(base_runtime)
         clear_trade_state()
         st.session_state[
             "trade_machine_state_notice"
-        ] = "Restored the original 2026-27 league state."
+        ] = "Restored the standalone 2026-27 sandbox."
         st.rerun()
 
     st.caption(

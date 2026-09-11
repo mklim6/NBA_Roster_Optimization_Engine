@@ -114,6 +114,9 @@ class GameStatus(str, Enum):
 
 class AvailabilityStatus(str, Enum):
     HEALTHY = "healthy"
+    PROBABLE = "probable"
+    QUESTIONABLE = "questionable"
+    DOUBTFUL = "doubtful"
     DAY_TO_DAY = "day_to_day"
     OUT = "out"
 
@@ -687,6 +690,15 @@ def create_simulation_league_state(
         injuries=injuries,
         player_season_totals=player_totals,
     )
+
+    # Import lazily after the state classes are fully defined. This adds the
+    # persistent fatigue and workload graph without changing the established
+    # league-state dataclass contract or invalidating existing checkpoints.
+    from simulation_injury_fatigue_v1 import (
+        ensure_injury_fatigue_state,
+    )
+
+    ensure_injury_fatigue_state(state)
     validate_simulation_league_state(state)
     return state
 
@@ -844,10 +856,10 @@ def validate_completed_game(
                 f"Player {player_id} does not belong to {team}."
             )
 
-        if (
-            state.injuries[player_id].status
-            == AvailabilityStatus.OUT
-        ):
+        if state.injuries[player_id].status in {
+            AvailabilityStatus.OUT,
+            AvailabilityStatus.DOUBTFUL,
+        }:
             raise SimulationLeagueStateError(
                 f"Player {player_id} is unavailable."
             )
@@ -954,9 +966,17 @@ def validate_simulation_league_state(
                 player_ids
             )
         ),
+        # COMPLETED_SEASON_OFFSEASON_UNDERFILL_V1:
+        # Offseason ownership may temporarily fall below five after legitimate
+        # contract expirations. The 21-player ceiling remains enforced, while
+        # every game-playing phase still requires the established game-ready floor.
         "all_team_rosters_playable": all(
-            len(team.roster_player_ids)
-            >= state.settings.minimum_game_players
+            (
+                len(team.roster_player_ids) <= 21
+                if state.phase == LeaguePhase.OFFSEASON
+                else len(team.roster_player_ids)
+                >= state.settings.minimum_game_players
+            )
             for team in state.teams.values()
         ),
         "rotations_are_roster_subsets": all(
@@ -969,17 +989,33 @@ def validate_simulation_league_state(
             for team in state.teams.values()
         ),
         "all_teams_have_five_starters": all(
-            len(team.rotation.starter_ids)
-            == 5
+            (
+                len(team.rotation.starter_ids)
+                == min(5, len(team.roster_player_ids))
+                if (
+                    state.phase == LeaguePhase.OFFSEASON
+                    and len(team.roster_player_ids) < 5
+                )
+                else len(team.rotation.starter_ids) == 5
+            )
             for team in state.teams.values()
         ),
         "rotation_minutes_reconcile": all(
-            math.isclose(
-                sum(
-                    team.rotation.minutes_targets.values()
-                ),
-                state.settings.regulation_minutes * 5,
-                abs_tol=0.1,
+            (
+                math.isclose(
+                    sum(team.rotation.minutes_targets.values()),
+                    0.0,
+                    abs_tol=0.1,
+                )
+                if (
+                    state.phase == LeaguePhase.OFFSEASON
+                    and len(team.roster_player_ids) < 5
+                )
+                else math.isclose(
+                    sum(team.rotation.minutes_targets.values()),
+                    state.settings.regulation_minutes * 5,
+                    abs_tol=0.1,
+                )
             )
             for team in state.teams.values()
         ),
@@ -1032,6 +1068,49 @@ def validate_simulation_league_state(
                 )
             )
             for player in state.players.values()
+        ),
+        "injury_status_values_are_current": all(
+            isinstance(
+                injury.status,
+                AvailabilityStatus,
+            )
+            for injury in state.injuries.values()
+        ),
+        "optional_health_profiles_cover_players": (
+            not hasattr(
+                state,
+                "injury_fatigue_profiles",
+            )
+            or set(
+                getattr(
+                    state,
+                    "injury_fatigue_profiles",
+                    {},
+                )
+            )
+            == player_ids
+        ),
+        "optional_health_fatigue_is_bounded": (
+            not hasattr(
+                state,
+                "injury_fatigue_profiles",
+            )
+            or all(
+                0.0
+                <= float(
+                    getattr(
+                        profile,
+                        "fatigue",
+                        0.0,
+                    )
+                )
+                <= 100.0
+                for profile in getattr(
+                    state,
+                    "injury_fatigue_profiles",
+                    {},
+                ).values()
+            )
         ),
         "season_history_matches_transition_count": (
             len(state.season_history)
@@ -1282,6 +1361,19 @@ def set_player_injury(
         ),
         notes=clean_text(notes),
     )
+
+    if hasattr(
+        state,
+        "injury_fatigue_profiles",
+    ):
+        from simulation_injury_fatigue_v1 import (
+            synchronize_injury_profile,
+        )
+
+        synchronize_injury_profile(
+            state,
+            player_id,
+        )
 
 
 def initial_state_summary(

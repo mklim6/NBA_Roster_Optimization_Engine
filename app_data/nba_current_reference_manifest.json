@@ -1,0 +1,10 @@
+{
+  "active_cutoff_date": "2026-09-07",
+  "active_overlay": "nba_current_reference_overlay_2026_09_07.json",
+  "active_overlay_player_count": 49,
+  "active_overlay_sha256": "b8ace36d2f9d52cd98c1f755f694b9a3027720ab3fe38d29882e48c549aa3611",
+  "reference_layer_only": true,
+  "schema_version": 1,
+  "simulation_branch_eligible": false,
+  "version": "nba-current-reference-manifest-v1"
+}

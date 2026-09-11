@@ -88,7 +88,7 @@ from simulation_league_state_v1 import (  # noqa: E402
 
 
 VALIDATOR_VERSION = (
-    "project-validation-runner-v1.21-2026-08-08"
+    "project-validation-runner-v1.26-2026-09-09"
 )
 QUICK_REPORT = (
     OUTPUTS / "project_validation_quick_v1.json"
@@ -272,6 +272,14 @@ def validate_required_files(
         / "diagnose_player_stat_profile_sources_v1.py",
         SRC / "simulation_player_stat_profiles_v1.py",
         SRC / "simulation_player_minutes_v1.py",
+        SRC / "simulation_injury_fatigue_v1.py",
+        SRC / "simulation_medical_injury_v2.py",
+        SRC / "validate_medical_injury_v2.py",
+        SRC / "validate_injury_fatigue_v1.py",
+        SRC / "validate_franchise_health_game_day_repair_v1.py",
+        SRC / "league_health_audit_v1.py",
+        SRC / "franchise_league_events_v1.py",
+        SRC / "validate_league_health_event_inbox_v1.py",
         SRC / "player_development_engine_v1.py",
         SRC / "validate_player_development_curves_v1.py",
         SRC / "simulation_season_transition_v1.py",
@@ -304,8 +312,26 @@ def validate_required_files(
         SRC / "simulation_trade_sync_v1.py",
         SRC / "simulation_postseason_v1.py",
         SRC / "validate_simulation_postseason_v1.py",
+        SRC / "validate_postseason_fatigue_performance_v1.py",
         SRC / "simulation_franchise_checkpoint_v1.py",
         SRC / "validate_franchise_checkpoint_v1.py",
+        SRC / "nba_current_reference_overlay_v1.py",
+        SRC / "nba_current_reference_snapshot_v2.py",
+        SRC / "validate_nba_current_reference_v2.py",
+        APP_DATA / "nba_current_reference_manifest.json",
+        APP_DATA / "nba_current_reference_overlay_2026_09_07.json",
+        APP_DATA / "nba_live_franchise_start_2026_09_07.json",
+        SRC / "franchise_live_start_v1.py",
+        SRC / "franchise_live_start_ui_v1.py",
+        SRC / "validate_franchise_live_start_v1.py",
+        SRC / "franchise_staff_system_v1.py",
+        SRC / "franchise_staff_ui_v1.py",
+        SRC / "validate_franchise_staff_foundation_v1.py",
+        APP_DATA / "nba_sep7_release_freeze_v1.json",
+        SRC / "validate_franchise_sep7_release_data_freeze_v1.py",
+        SRC / "franchise_draft_forfeitures_v1.py",
+        SRC / "validate_franchise_draft_forfeitures_v1.py",
+        SRC / "validate_franchise_live_asset_ledger_v1.py",
         SRC
         / "validate_franchise_simulation_realism_v1.py",
         PAGES / "5_Franchise_Mode.py",
@@ -318,6 +344,9 @@ def validate_required_files(
         SRC / "simulation_roster_validator_v1.py",
         SRC / "simulation_league_state_v1.py",
         SRC / "single_game_simulator_v1.py",
+        SRC / "simulation_player_stat_fingerprints_v2.py",
+        SRC / "validate_player_statistical_fingerprint_v2.py",
+        SRC / "validate_shooting_efficiency_calibration_v1.py",
         SRC
         / "validate_mutable_league_state_integration_v1.py",
     ]
@@ -1144,7 +1173,7 @@ def quick_runtime_validation(
         name="deterministic_pass_trade_found",
         condition=result.status == Status.PASS,
         details=(
-            f"{request.side_a.team_abbreviation} ↔ "
+            f"{request.side_a.team_abbreviation} <-> "
             f"{request.side_b.team_abbreviation}; "
             f"status={result.status.value}"
         ),
@@ -1186,7 +1215,7 @@ def quick_runtime_validation(
             in manual_policy.manual_review_codes
         ),
         details=(
-            f"{manual_request.side_a.team_abbreviation} ↔ "
+            f"{manual_request.side_a.team_abbreviation} <-> "
             f"{manual_request.side_b.team_abbreviation}"
         ),
     )
@@ -1249,7 +1278,7 @@ def quick_runtime_validation(
             and not force_policy.structural_codes
         ),
         details=(
-            f"{force_request.side_a.team_abbreviation} ↔ "
+            f"{force_request.side_a.team_abbreviation} <-> "
             f"{force_request.side_b.team_abbreviation}"
         ),
     )
@@ -1460,11 +1489,11 @@ def quick_runtime_validation(
                 verified_policy.verification_label
             ),
             "manual_warning_matchup": (
-                f"{manual_request.side_a.team_abbreviation} ↔ "
+                f"{manual_request.side_a.team_abbreviation} <-> "
                 f"{manual_request.side_b.team_abbreviation}"
             ),
             "force_matchup": (
-                f"{force_request.side_a.team_abbreviation} ↔ "
+                f"{force_request.side_a.team_abbreviation} <-> "
                 f"{force_request.side_b.team_abbreviation}"
             ),
         },
@@ -1597,6 +1626,55 @@ def run_full() -> dict[str, Any]:
     started = time.perf_counter()
     quick_report = run_quick()
     checks = list(quick_report["checks"])
+
+    run_subprocess_suite(
+        checks,
+        name="current_reference_overlay_validation",
+        command=[
+            sys.executable,
+            str(SRC / "validate_nba_current_reference_v2.py"),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="sep7_release_data_freeze_validation",
+        command=[
+            sys.executable,
+            str(SRC / "validate_franchise_sep7_release_data_freeze_v1.py"),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="franchise_live_start_validation",
+        command=[
+            sys.executable,
+            str(SRC / "validate_franchise_live_start_v1.py"),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="franchise_draft_forfeiture_validation",
+        command=[
+            sys.executable,
+            str(SRC / "validate_franchise_draft_forfeitures_v1.py"),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="franchise_live_asset_ledger_validation",
+        command=[
+            sys.executable,
+            str(SRC / "validate_franchise_live_asset_ledger_v1.py"),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="franchise_staff_foundation_validation",
+        command=[
+            sys.executable,
+            str(SRC / "validate_franchise_staff_foundation_v1.py"),
+        ],
+    )
 
     run_subprocess_suite(
         checks,
@@ -1981,12 +2059,36 @@ def run_full() -> dict[str, Any]:
     )
     run_subprocess_suite(
         checks,
+        name="postseason_fatigue_performance_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_postseason_fatigue_performance_v1.py"
+            ),
+            "--max-seconds",
+            "15",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
         name="simulation_postseason_validation",
         command=[
             sys.executable,
             str(
                 SRC
                 / "validate_simulation_postseason_v1.py"
+            ),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="playoff_stats_ui_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_playoff_stats_ui_v1.py"
             ),
         ],
     )
@@ -2027,6 +2129,91 @@ def run_full() -> dict[str, Any]:
     )
     run_subprocess_suite(
         checks,
+        name="simulation_injury_fatigue_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC / "simulation_injury_fatigue_v1.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="medical_injury_v2_self_test",
+        command=[
+            sys.executable,
+            str(
+                SRC / "simulation_medical_injury_v2.py"
+            ),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="medical_injury_v2_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC / "validate_medical_injury_v2.py"
+            ),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="injury_fatigue_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC / "validate_injury_fatigue_v1.py"
+            ),
+            "--seed",
+            "20260808",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="franchise_health_game_day_repair_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_franchise_health_game_day_repair_v1.py"
+            ),
+            "--seed",
+            "20260809",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="league_health_audit_self_test",
+        command=[
+            sys.executable,
+            str(SRC / "league_health_audit_v1.py"),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="franchise_league_events_self_test",
+        command=[
+            sys.executable,
+            str(SRC / "franchise_league_events_v1.py"),
+            "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="league_health_event_inbox_validation",
+        command=[
+            sys.executable,
+            str(SRC / "validate_league_health_event_inbox_v1.py"),
+            "--seed",
+            "20260809",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
         name="single_game_simulator_self_test",
         command=[
             sys.executable,
@@ -2034,6 +2221,39 @@ def run_full() -> dict[str, Any]:
                 SRC / "single_game_simulator_v1.py"
             ),
             "--self-test",
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="shooting_efficiency_calibration_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_shooting_efficiency_calibration_v1.py"
+            ),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="player_statistical_fingerprint_v2_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_player_statistical_fingerprint_v2.py"
+            ),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="player_statistical_fingerprint_v3_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_player_statistical_fingerprint_v3.py"
+            ),
         ],
     )
     run_subprocess_suite(

@@ -101,61 +101,57 @@ def run_validation() -> dict[str, Any]:
         )
     )
     checks[
-        "both_pages_use_stable_source_matching"
+        "pages_follow_declared_state_authority"
     ] = (
-        "simulation_matches_trade_state("
+        "FRANCHISE_TRADE_AUTHORITY_V1"
         in franchise_text
-        and "simulation_matches_trade_state("
+        and "Standalone sandbox: this Game Simulator uses its own independent"
+        in simulator_text
+        and "source_league_state_revision"
         in simulator_text
     )
     checks[
-        "both_pages_use_structural_simulation_state_contract"
+        "both_pages_validate_simulation_state_contract"
     ] = (
         "simulation_state_is_compatible("
         in franchise_text
-        and "simulation_state_is_compatible("
+        and "state.state_version"
         in simulator_text
-        and "isinstance(\n            state,\n            SimulationLeagueState"
-        not in franchise_text
+        and "SIMULATION_STATE_VERSION"
+        in simulator_text
     )
     checks[
-        "trade_revision_change_preserves_franchise_state"
+        "franchise_checkpoint_state_is_preserved_on_rerun"
     ] = (
-        "statistics, injuries, and history remain intact."
+        "checkpoint-owned"
         in franchise_text
-        and (
-            "return state, False"
-            in franchise_text
-        )
+        and "return state, False"
+        in franchise_text
     )
     checks[
-        "trade_revision_change_preserves_simulator_state"
+        "standalone_simulator_preserves_state_when_revision_changes"
     ] = (
         "were preserved rather than reset."
         in simulator_text
-        and (
-            "return state, rebuilt"
-            in simulator_text
-        )
+        and "return state, False"
+        in simulator_text
     )
     checks[
-        "franchise_simulation_blocks_unsynced_trade_revision"
+        "franchise_ignores_standalone_trade_revision"
     ] = (
-        "trade_sync_required"
+        "No cross-page roster sync is"
         in franchise_text
-        and (
-            "or trade_sync_required"
-            in franchise_text
-        )
+        and 'trade_sync_required = False'
+        in franchise_text
     )
     checks[
-        "franchise_exposes_transactional_trade_sync"
+        "franchise_uses_transactional_live_trade_center"
     ] = (
-        "Apply trade to active season"
+        "render_live_asset_ledger("
         in franchise_text
-        and "synchronize_simulation_with_trade_state("
+        and "Build and commit live franchise trades"
         in franchise_text
-        and "preserving "
+        and "FRANCHISE_TRADE_AUTHORITY_V1"
         in franchise_text
     )
     checks[

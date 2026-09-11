@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import statistics
+from dataclasses import replace
 import sys
 from pathlib import Path
 from typing import Any
@@ -156,6 +157,12 @@ def run_validation(
 ) -> dict[str, Any]:
     state = build_installed_state(
         seed=seed
+    )
+    # This validator isolates scoring and minute-allocation calibration.
+    # Injury behavior is validated separately by validate_injury_fatigue_v1.
+    state.settings = replace(
+        state.settings,
+        injuries_enabled=False,
     )
     apply_nba_team_alignment(
         state

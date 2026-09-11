@@ -32,6 +32,10 @@ from simulation_league_state_v1 import (  # noqa: E402
     create_simulation_league_state,
     validate_simulation_league_state,
 )
+from franchise_offseason_market_season_v1 import (  # noqa: E402
+    COMPLETED_SEASON_CLOSEOUT_ATTR,
+    next_season_label as next_offseason_market_season_label,
+)
 from simulation_season_transition_v1 import (  # noqa: E402
     TRANSITION_VERSION,
     advance_simulation_season,
@@ -49,7 +53,7 @@ from state_runtime_adapter_v1 import (  # noqa: E402
 
 
 SCRIPT_VERSION = (
-    "simulation-season-transition-validator-v1.3-2026-08-09"
+    "simulation-season-transition-validator-v1.4.2-observable-preclosed-fixture-2026-08-18"
 )
 REPORT_PATH = (
     OUTPUTS
@@ -73,6 +77,28 @@ def find_player_id(
         if name == target:
             return player_id
     return ""
+
+
+def mark_transition_fixture_preclosed(state: Any) -> None:
+    """Mark validator fixtures as already closed before Open Next Season.
+
+    Contract expiry/TradeState reconciliation is validated by the dedicated
+    completed-season/legacy-contract continuity validators. This validator owns
+    development, archive, reset, and next-season behavior, so its fixture must
+    enter the modern transition path after completed-season closeout rather than
+    invoke the legacy late-clock fallback.
+    """
+    source_season = str(state.settings.season_label).strip()
+    setattr(
+        state,
+        COMPLETED_SEASON_CLOSEOUT_ATTR,
+        {
+            "status": "applied",
+            "source_season": source_season,
+            "target_market_season": next_offseason_market_season_label(source_season),
+            "validator_fixture_only": True,
+        },
+    )
 
 
 def main() -> int:
@@ -157,6 +183,20 @@ def main() -> int:
         for player_id in sample_ids.values()
     }
 
+    preclosed_contract_years = {
+        player_id: getattr(
+            getattr(player, "contract", None),
+            "years_remaining",
+            None,
+        )
+        for player_id, player in state.players.items()
+    }
+    preclosed_rosters = {
+        team_code: tuple(team_state.roster_player_ids)
+        for team_code, team_state in state.teams.items()
+    }
+    preclosed_free_agents = tuple(sorted(state.free_agent_player_ids))
+
     from types import SimpleNamespace
 
     state.phase = LeaguePhase.OFFSEASON
@@ -179,6 +219,7 @@ def main() -> int:
             }
         },
     )
+    mark_transition_fixture_preclosed(state)
     transition = advance_simulation_season(
         state,
         performance_signals={
@@ -218,6 +259,40 @@ def main() -> int:
         }
         for player_id in sample_ids.values()
     }
+
+    # Verify that age remains cumulative across multiple committed league
+    # years rather than being reloaded from the original 2026-27 profile.
+    age_state = create_simulation_league_state(
+        runtime,
+        trade_state,
+    )
+    age_lebron_id = find_player_id(
+        age_state,
+        "LeBron James",
+    )
+    if not age_lebron_id:
+        raise AssertionError(
+            "LeBron James was not found for the multi-year age check."
+        )
+    source_lebron_age = float(
+        age_state.players[age_lebron_id].age
+    )
+    for season_step in range(2):
+        age_state.phase = LeaguePhase.OFFSEASON
+        mark_transition_fixture_preclosed(age_state)
+        advance_simulation_season(
+            age_state,
+            performance_signals={
+                age_lebron_id: 0.0,
+            },
+            development_config=DevelopmentConfig(
+                random_seed=args.seed + season_step + 100,
+                random_variance_scale=0.0,
+            ),
+        )
+    two_year_lebron_age = float(
+        age_state.players[age_lebron_id].age
+    )
 
     sas = state.players[
         wemby_id
@@ -276,6 +351,25 @@ def main() -> int:
             TRANSITION_VERSION
             == "simulation-season-transition-v1.1-2026-08-09"
         ),
+        "validator_fixture_uses_modern_preclosed_transition_path": (
+            all(
+                getattr(
+                    getattr(state.players[player_id], "contract", None),
+                    "years_remaining",
+                    None,
+                )
+                == years_before
+                for player_id, years_before in preclosed_contract_years.items()
+                if player_id in state.players
+            )
+            and {
+                team_code: tuple(team_state.roster_player_ids)
+                for team_code, team_state in state.teams.items()
+            }
+            == preclosed_rosters
+            and tuple(sorted(state.free_agent_player_ids))
+            == preclosed_free_agents
+        ),
         "game_engine_reads_permanent_state": (
             GAME_ENGINE_VERSION
             == "single-game-simulator-v1.6-2026-08-08"
@@ -332,6 +426,21 @@ def main() -> int:
                 abs_tol=1e-9,
             )
             for player_id in sample_ids.values()
+        ),
+        "player_age_is_cumulative_across_two_transitions": (
+            age_state.settings.season_label == "2028-29"
+            and age_state.transition_count == 2
+            and math.isclose(
+                two_year_lebron_age,
+                source_lebron_age + 2.0,
+                abs_tol=1e-9,
+            )
+            and len(
+                age_state.players[
+                    age_lebron_id
+                ].development_history
+            )
+            == 2
         ),
         "wembanyama_improves": (
             post[wemby_id]["overall_rating"]

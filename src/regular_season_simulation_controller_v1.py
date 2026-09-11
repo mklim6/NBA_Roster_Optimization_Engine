@@ -37,6 +37,10 @@ from simulation_league_state_v1 import (  # noqa: E402
     create_simulation_league_state,
     validate_simulation_league_state,
 )
+from simulation_injury_fatigue_v1 import (  # noqa: E402
+    INJURY_FATIGUE_VERSION,
+    injury_fatigue_state_payload,
+)
 from single_game_simulator_v1 import (  # noqa: E402
     SingleGameSimulationError,
     simulate_scheduled_game,
@@ -309,6 +313,11 @@ def regular_season_state_payload(
             for player_id, injury
             in sorted(state.injuries.items())
         },
+        "injury_fatigue": (
+            injury_fatigue_state_payload(
+                state
+            )
+        ),
         "schedule": {
             game_id: {
                 "day_index": int(

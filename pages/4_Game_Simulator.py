@@ -228,7 +228,7 @@ def get_base_runtime() -> RuntimeData:
 def get_trade_league_state(
     base_runtime: RuntimeData,
 ) -> LeagueState:
-    key = "trade_machine_league_state"
+    key = "game_simulator_standalone_trade_league_state"
     state = st.session_state.get(key)
 
     if not trade_state_is_compatible(
@@ -515,70 +515,36 @@ def get_simulation_state(
     runtime: RuntimeData,
     trade_state: LeagueState,
 ) -> tuple[SimulationLeagueState, bool]:
+    """Return the live franchise state without destructively rebuilding it."""
     key = "game_simulator_league_state"
     state = st.session_state.get(key)
-    rebuilt = False
 
-    structurally_compatible = (
-        simulation_state_is_compatible(
-            state,
-            expected_state_version=(
-                SIMULATION_STATE_VERSION
-            ),
-        )
-    )
-    positions_current = bool(
-        structurally_compatible
-        and all(
-            player.synthetic
-            or player.position != "UNK"
-            for player in state.players.values()
-        )
-    )
     structurally_current = (
-        structurally_compatible
-        and st.session_state.get(
-            "game_simulator_position_signature"
-        )
-        == current_position_signature()
-        and positions_current
+        isinstance(state, SimulationLeagueState)
+        and state.state_version
+        == SIMULATION_STATE_VERSION
     )
 
-    if not structurally_current:
-        state = create_fresh_simulation_state(
-            runtime,
-            trade_state,
+    if structurally_current:
+        source_matches = (
+            state.source_league_state_revision
+            == trade_state.state_revision
+            and state.source_transaction_count
+            == len(trade_state.transaction_history)
         )
         st.session_state[
             "game_simulator_trade_sync_required"
-        ] = False
-        rebuilt = True
-        return state, rebuilt
+        ] = not source_matches
+        return state, False
 
-    apply_nba_team_alignment(
-        state
-    )
-    source_matches = (
-        simulation_matches_trade_state(
-            state,
-            trade_state,
-        )
+    state = create_fresh_simulation_state(
+        runtime,
+        trade_state,
     )
     st.session_state[
         "game_simulator_trade_sync_required"
-    ] = not source_matches
-    st.session_state[
-        "game_simulator_trade_source_status"
-    ] = simulation_source_status(
-        state,
-        trade_state,
-    )
-
-    # Never erase an active schedule because another page reconstructed an
-    # equivalent LeagueState object. If a real trade revision changed, keep
-    # the season intact and require an explicit roster sync instead.
-    return state, rebuilt
-
+    ] = False
+    return state, True
 
 def escaped(value: Any) -> str:
     return html.escape(str(value))
@@ -1476,6 +1442,13 @@ render_hero(
     simulation_state,
 )
 
+st.info(
+    "Standalone sandbox: this Game Simulator uses its own independent "
+    "2026-27 league state. It does not read standalone Trade Machine "
+    "transactions and does not modify Franchise Mode. Use Franchise Mode "
+    "Game Day for the live evolving franchise universe."
+)
+
 if rebuilt:
     if (
         trade_state.state_revision > 0
@@ -2307,7 +2280,7 @@ with action_columns[1]:
         key="game_simulator_reset_button",
         help=(
             "Clears simulated games and rebuilds the season "
-            "from the current Trade Machine universe."
+            "from the standalone Game Simulator universe."
         ),
     )
 
@@ -2319,8 +2292,8 @@ if reset_clicked:
     st.session_state[
         "game_simulator_notice"
     ] = (
-        "The simulation season was reset from the current "
-        "trade universe."
+        "The standalone simulation season was reset from its "
+        "independent 2026-27 universe."
     )
     st.rerun()
 

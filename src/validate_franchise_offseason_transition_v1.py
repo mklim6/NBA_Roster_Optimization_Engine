@@ -43,6 +43,10 @@ from simulation_season_transition_controller_v1 import (  # noqa: E402
 from state_runtime_adapter_v1 import (  # noqa: E402
     build_state_runtime,
 )
+from franchise_offseason_market_season_v1 import (  # noqa: E402
+    COMPLETED_SEASON_CLOSEOUT_ATTR,
+    next_season_label,
+)
 
 
 SCRIPT_VERSION = (
@@ -66,15 +70,15 @@ PAGE_MARKERS = {
     ),
     "freshness_guard": "preview_matches_state",
     "confirmation_acknowledgement": (
-        "I understand this archives the completed season"
+        "_season_boundary_durable.confirmation_token("
     ),
     "checkpoint_reason": (
-        'checkpoint_reason=(\n                        "franchise-season-transition"'
+        "commit_atomic_season_boundary_live("
     ),
     "archived_history": "Archived Season History",
-    "champion_preservation": "committed.archived_champion",
+    "champion_preservation": "archive_champion(",
     "automatic_target_season": (
-        'f"Advance to {target_season}"'
+        "expected_target_season=str("
     ),
     "dynamic_season_schedule": (
         'f"Generate {state.settings.season_label} schedule"'
@@ -131,6 +135,16 @@ def build_test_state() -> Any:
                 winner="CHI",
                 loser="HOU",
             )
+        },
+    )
+    setattr(
+        state,
+        COMPLETED_SEASON_CLOSEOUT_ATTR,
+        {
+            "status": "applied",
+            "source_season": state.settings.season_label,
+            "target_market_season": next_season_label(state.settings.season_label),
+            "fixture_scope": "franchise_offseason_transition_validator",
         },
     )
     validate_simulation_league_state(
