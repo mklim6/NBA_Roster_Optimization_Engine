@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "src" / "run_franchise_protected_multi_season_soak_v1.py"
-VERSION = "franchise-protected-multi-season-soak-validator-v1.1-2026-09-10"
+VERSION = "franchise-protected-multi-season-soak-validator-v1.2-staff-invariant-2026-09-17"
 
 
 def main() -> int:
@@ -51,7 +51,8 @@ def main() -> int:
             "boundary_trade_registry_covers_non_synthetic_players" in text
             and "_trade_registry_covers_non_synthetic_players(" in text
         ),
-        "runner_checks_staff_signature_each_boundary": "staff_signature_stable" in text,
+        "runner_checks_staff_personnel_each_boundary": "staff_personnel_signature_stable" in text,
+        "runner_allows_staff_metadata_progression": "staff_season_label_current" in text and "staff_scouting_history_well_formed" in text,
         "runner_checks_completed_games_reset": "new_season_has_zero_completed_games" in text,
         "runner_checks_standings_reset": "new_season_standings_reset" in text,
         "runner_saves_boundary_snapshots": 'season_snapshot = run_root / "cp"' in text,

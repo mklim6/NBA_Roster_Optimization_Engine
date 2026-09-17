@@ -471,7 +471,7 @@ def render_current_reference(st: Any, records: list[dict[str, Any]]) -> None:
     c3.metric("Reference cutoff", "Sep. 7, 2026")
     st.dataframe(
         pd.DataFrame(visible),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Description": st.column_config.TextColumn(width="large"),
@@ -1628,6 +1628,10 @@ def render_page() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    # FRANCHISE_PRIMARY_NAV_V1
+    from src.franchise_primary_navigation_v1 import render_franchise_primary_navigation_v1
+    render_franchise_primary_navigation_v1()
+
     render_global_css(st)
 
     try:

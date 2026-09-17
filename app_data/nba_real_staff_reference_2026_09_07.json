@@ -1,0 +1,267 @@
+{
+  "version": "nba-real-staff-reference-v1-2026-09-11",
+  "as_of_date": "2026-09-07",
+  "scope": "All 30 NBA head coaches. Supporting staff remain deterministic simulator-generated personnel in V1 unless separately verified later.",
+  "simulation_policy": {
+    "real_world_fields": [
+      "head_coach_name",
+      "head_coach_birth_date",
+      "head_coach_age"
+    ],
+    "simulated_fields": [
+      "ratings",
+      "traits",
+      "contract_years_remaining",
+      "annual_salary_millions",
+      "years_experience"
+    ],
+    "migration": "Existing franchise saves receive the verified real-world head-coach identity while preserving all simulation ratings/effects and contract economics."
+  },
+  "verification": {
+    "2026_changes": "NBA.com 2026 Coaching Tracker / Closer look at new coaches for 2026-27",
+    "incumbents": "Basketball-Reference 2025-26 NBA Coaches, carried forward because NBA.com identified six 2026 offseason changes",
+    "birth_dates": "NBA Coaches Association / Basketball-Reference / team and coach biographies"
+  },
+  "teams": {
+    "ATL": {
+      "team_name": "Atlanta Hawks",
+      "head_coach": {
+        "name": "Quin Snyder",
+        "birth_date": "1966-10-30"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "BOS": {
+      "team_name": "Boston Celtics",
+      "head_coach": {
+        "name": "Joe Mazzulla",
+        "birth_date": "1988-06-30"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "BKN": {
+      "team_name": "Brooklyn Nets",
+      "head_coach": {
+        "name": "Jordi Fernandez",
+        "birth_date": "1982-12-27"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "CHA": {
+      "team_name": "Charlotte Hornets",
+      "head_coach": {
+        "name": "Charles Lee",
+        "birth_date": "1984-11-11"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "CHI": {
+      "team_name": "Chicago Bulls",
+      "head_coach": {
+        "name": "Tiago Splitter",
+        "birth_date": "1985-01-01"
+      },
+      "verification_basis": "nba_2026_coaching_change"
+    },
+    "CLE": {
+      "team_name": "Cleveland Cavaliers",
+      "head_coach": {
+        "name": "Kenny Atkinson",
+        "birth_date": "1967-06-02"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "DAL": {
+      "team_name": "Dallas Mavericks",
+      "head_coach": {
+        "name": "Dusty May",
+        "birth_date": "1976-12-30"
+      },
+      "verification_basis": "nba_2026_coaching_change"
+    },
+    "DEN": {
+      "team_name": "Denver Nuggets",
+      "head_coach": {
+        "name": "David Adelman",
+        "birth_date": "1981-05-15"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "DET": {
+      "team_name": "Detroit Pistons",
+      "head_coach": {
+        "name": "J. B. Bickerstaff",
+        "birth_date": "1979-03-10"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "GSW": {
+      "team_name": "Golden State Warriors",
+      "head_coach": {
+        "name": "Steve Kerr",
+        "birth_date": "1965-09-27"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "HOU": {
+      "team_name": "Houston Rockets",
+      "head_coach": {
+        "name": "Ime Udoka",
+        "birth_date": "1977-08-09"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "IND": {
+      "team_name": "Indiana Pacers",
+      "head_coach": {
+        "name": "Rick Carlisle",
+        "birth_date": "1959-10-27"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "LAC": {
+      "team_name": "Los Angeles Clippers",
+      "head_coach": {
+        "name": "Tyronn Lue",
+        "birth_date": "1977-05-03"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "LAL": {
+      "team_name": "Los Angeles Lakers",
+      "head_coach": {
+        "name": "JJ Redick",
+        "birth_date": "1984-06-24"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "MEM": {
+      "team_name": "Memphis Grizzlies",
+      "head_coach": {
+        "name": "Tuomas Iisalo",
+        "birth_date": "1982-07-29"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "MIA": {
+      "team_name": "Miami Heat",
+      "head_coach": {
+        "name": "Erik Spoelstra",
+        "birth_date": "1970-11-01"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "MIL": {
+      "team_name": "Milwaukee Bucks",
+      "head_coach": {
+        "name": "Taylor Jenkins",
+        "birth_date": "1984-09-12"
+      },
+      "verification_basis": "nba_2026_coaching_change"
+    },
+    "MIN": {
+      "team_name": "Minnesota Timberwolves",
+      "head_coach": {
+        "name": "Chris Finch",
+        "birth_date": "1969-11-06"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "NOP": {
+      "team_name": "New Orleans Pelicans",
+      "head_coach": {
+        "name": "Jamahl Mosley",
+        "birth_date": "1978-10-06"
+      },
+      "verification_basis": "nba_2026_coaching_change"
+    },
+    "NYK": {
+      "team_name": "New York Knicks",
+      "head_coach": {
+        "name": "Mike Brown",
+        "birth_date": "1970-03-05"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "OKC": {
+      "team_name": "Oklahoma City Thunder",
+      "head_coach": {
+        "name": "Mark Daigneault",
+        "birth_date": "1985-02-23"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "ORL": {
+      "team_name": "Orlando Magic",
+      "head_coach": {
+        "name": "Sean Sweeney",
+        "birth_date": "1984-06-03"
+      },
+      "verification_basis": "nba_2026_coaching_change"
+    },
+    "PHI": {
+      "team_name": "Philadelphia 76ers",
+      "head_coach": {
+        "name": "Nick Nurse",
+        "birth_date": "1967-07-24"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "PHX": {
+      "team_name": "Phoenix Suns",
+      "head_coach": {
+        "name": "Jordan Ott",
+        "birth_date": "1985-03-01"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "POR": {
+      "team_name": "Portland Trail Blazers",
+      "head_coach": {
+        "name": "Micah Nori",
+        "birth_date": "1974-04-08"
+      },
+      "verification_basis": "nba_2026_coaching_change"
+    },
+    "SAC": {
+      "team_name": "Sacramento Kings",
+      "head_coach": {
+        "name": "Doug Christie",
+        "birth_date": "1970-05-09"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "SAS": {
+      "team_name": "San Antonio Spurs",
+      "head_coach": {
+        "name": "Mitch Johnson",
+        "birth_date": "1986-11-29"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "TOR": {
+      "team_name": "Toronto Raptors",
+      "head_coach": {
+        "name": "Darko Rajakovic",
+        "birth_date": "1979-02-22"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "UTA": {
+      "team_name": "Utah Jazz",
+      "head_coach": {
+        "name": "Will Hardy",
+        "birth_date": "1988-01-21"
+      },
+      "verification_basis": "incumbent_2025_26"
+    },
+    "WAS": {
+      "team_name": "Washington Wizards",
+      "head_coach": {
+        "name": "Brian Keefe",
+        "birth_date": "1976-04-07"
+      },
+      "verification_basis": "incumbent_2025_26"
+    }
+  }
+}

@@ -13,21 +13,20 @@ from run_franchise_protected_launch_smoke_v1 import (
     _isolated_checkpoint_contract,
 )
 
-PROBE_VERSION = "franchise-deep-season-free-agency-performance-probe-v2-2026-09-11"
+PROBE_VERSION = "franchise-deep-season-free-agency-performance-probe-v3-floor-first-2026-09-17"
 EXPECTED_INITIAL_PLAYERS = 850
 EXPECTED_INITIAL_FREE_AGENTS = 533
 EXPECTED_INITIAL_LAC_ROSTER = 3
 EXPECTED_INITIAL_HISTORY = 557
 EXPECTED_SIGNINGS = (
-    ("Cameron Williams", "LAC", 12_700_000.00, 1),
-    ("Kai Green", "POR", 9_100_000.00, 1),
-    ("Luka Walker", "LAC", 22_200_000.00, 1),
-    ("Emil Wright", "LAC", 33_250_000.00, 1),
+    ("Noah Wilson", "LAC", 2_513_124.56, 1),
     ("Amari Parker", "LAC", 2_513_124.56, 1),
     ("Isaiah Ellis", "LAC", 2_513_124.56, 1),
+    ("Owen Robinson", "LAC", 2_513_124.56, 1),
+    ("Derrick Johnson", "LAC", 2_513_124.56, 1),
 )
-TARGET_SECONDS = 120.0
-HARD_CEILING_SECONDS = 180.0
+TARGET_SECONDS = 45.0
+HARD_CEILING_SECONDS = 90.0
 
 
 def _sha256(path: Path) -> str:
@@ -131,12 +130,12 @@ def main() -> int:
             checks.update({
                 "round_completed": result.status == "completed",
                 "round_stops_at_roster_floor": result.stop_reason == "all_cpu_teams_meet_roster_floor",
-                "round_commits_six_signings": result.committed_signing_count == 6,
+                "round_commits_only_required_floor_signings": result.committed_signing_count == len(EXPECTED_SIGNINGS),
                 "signing_sequence_matches_preserved_deep_state": observed_signings == expected_signings,
                 "lac_reaches_game_ready_floor": counts.get("LAC") == 8,
                 "league_minimum_roster_is_game_ready": min(counts.values()) >= int(after.simulation_state.settings.minimum_game_players),
-                "free_agent_pool_decrements_by_six": len(after.simulation_state.free_agent_player_ids) == EXPECTED_INITIAL_FREE_AGENTS - 6,
-                "history_advances_by_six": len(getattr(after.simulation_state, "free_agency_transaction_history", []) or []) == EXPECTED_INITIAL_HISTORY + 6,
+                "free_agent_pool_decrements_by_required_signings": len(after.simulation_state.free_agent_player_ids) == EXPECTED_INITIAL_FREE_AGENTS - len(EXPECTED_SIGNINGS),
+                "history_advances_by_required_signings": len(getattr(after.simulation_state, "free_agency_transaction_history", []) or []) == EXPECTED_INITIAL_HISTORY + len(EXPECTED_SIGNINGS),
                 "round_under_hard_performance_ceiling": round_seconds <= HARD_CEILING_SECONDS,
             })
             details.update({
@@ -179,7 +178,7 @@ def main() -> int:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
-    print("FRANCHISE DEEP-SEASON FREE AGENCY PERFORMANCE PROBE V2")
+    print("FRANCHISE DEEP-SEASON FREE AGENCY PERFORMANCE PROBE V3")
     print(f"Round: {details.get('round_seconds', '?')}s")
     print(f"Immediate reload: {details.get('immediate_reload_seconds', '?')}s")
     print(f"Signings: {len(details.get('signings', []))}")
@@ -188,9 +187,9 @@ def main() -> int:
     print(f"Report: {report_path}")
     if failed:
         print("FAILED CHECKS:", ", ".join(failed))
-        print("FRANCHISE DEEP-SEASON FREE AGENCY PERFORMANCE PROBE V2 FAILED")
+        print("FRANCHISE DEEP-SEASON FREE AGENCY PERFORMANCE PROBE V3 FAILED")
         return 1
-    print("FRANCHISE DEEP-SEASON FREE AGENCY PERFORMANCE PROBE V2 PASSED")
+    print("FRANCHISE DEEP-SEASON FREE AGENCY PERFORMANCE PROBE V3 PASSED")
     if not details.get("performance_target_met"):
         print(f"NOTE: correctness passed, but runtime exceeded the {TARGET_SECONDS:.0f}s target.")
     return 0

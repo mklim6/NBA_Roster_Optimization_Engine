@@ -1160,6 +1160,29 @@ def commit_controlled_rfa_action_live(
 def rfa_market_metadata(
     state: Any,
 ) -> dict[str, dict[str, Any]]:
+    """Return the verified anchor-market RFA overlay when applicable.
+
+    The 64-row rights/QO board is a certified 2026-27 historical surface.
+    Modeled future offseason markets must not reuse that stale board.
+    """
+    raw_rows = list(getattr(state, RFA_LEDGER_ATTR, ()) or ())
+    if not raw_rows:
+        # Regular-season checkpoints intentionally clear the offseason rights
+        # boards when the new season opens.  The standalone Free Agency page is
+        # still available as a market/roster reference during that phase, so an
+        # absent board means "no active RFA overlay" rather than corrupt state.
+        # Keep the strict 64-row assertion for the anchor offseason, where the
+        # certified historical board is required for rights/QO actions.
+        if _phase(state).lower() != "offseason":
+            return {}
+
+        from franchise_offseason_market_season_v1 import (
+            modeled_future_market_enabled,
+        )
+
+        if modeled_future_market_enabled(state):
+            return {}
+
     result = {}
     for row in _ledger(state):
         pid = _pid(row.get("player_id"))

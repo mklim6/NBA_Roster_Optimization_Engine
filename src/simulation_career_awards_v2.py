@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 import unicodedata
 
 from franchise_generated_player_portraits_v1 import player_image_url
 from dataclasses import asdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -291,35 +294,275 @@ def load_draft_history() -> pd.DataFrame:
     return frame
 
 
+CAREER_METADATA_LOOKUP_CACHE_VERSION = (
+    "career-metadata-lookup-cache-v1-2026-09-12"
+)
+CAREER_METADATA_LOOKUP_CACHE_PATH = (
+    ROOT / "data" / "processed" / "career_metadata_lookup_cache_v1.json"
+)
+
+
+def _source_file_signature(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {
+            "path": str(path),
+            "exists": False,
+            "size": 0,
+            "mtime_ns": 0,
+        }
+    stat = path.stat()
+    return {
+        "path": str(path),
+        "exists": True,
+        "size": int(stat.st_size),
+        "mtime_ns": int(stat.st_mtime_ns),
+    }
+
+
+def _career_metadata_source_signature() -> dict[str, Any]:
+    history_path = (
+        UNIFIED_PLAYER_SEASONS
+        if UNIFIED_PLAYER_SEASONS.exists()
+        else UNIFIED_PLAYER_SEASONS_CSV
+    )
+    draft_path = (
+        DRAFT_HISTORY_PARQUET
+        if DRAFT_HISTORY_PARQUET.exists()
+        else DRAFT_HISTORY_CSV
+    )
+    return {
+        "history": _source_file_signature(history_path),
+        "draft": _source_file_signature(draft_path),
+    }
+
+
+def _build_compact_career_lookup_payload() -> dict[str, Any]:
+    history_frame = load_unified_player_history()
+    history_by_id: dict[str, int] = {}
+    history_by_name: dict[str, int] = {}
+
+    if not history_frame.empty:
+        usable = history_frame.dropna(subset=["season_start"]).copy()
+        if not usable.empty:
+            by_id = (
+                usable.groupby("player_id_key", dropna=False)["season_start"]
+                .min()
+                .dropna()
+            )
+            history_by_id = {
+                str(key): int(value)
+                for key, value in by_id.items()
+                if str(key).strip()
+            }
+            by_name = (
+                usable.groupby("player_name_key", dropna=False)["season_start"]
+                .min()
+                .dropna()
+            )
+            history_by_name = {
+                str(key): int(value)
+                for key, value in by_name.items()
+                if str(key).strip()
+            }
+
+    draft_frame = load_draft_history()
+    draft_by_id: dict[str, dict[str, Any]] = {}
+    if not draft_frame.empty:
+        for record in draft_frame.to_dict(orient="records"):
+            key = str(record.get("player_id_key", "") or "").strip()
+            if not key:
+                continue
+            draft_by_id[key] = {
+                "draft_year": record.get("draft_year"),
+                "round_number": record.get("round_number"),
+                "round": record.get("round"),
+                "overall_pick": record.get("overall_pick"),
+                "overall_pick_number": record.get("overall_pick_number"),
+                "overall_pick_no": record.get("overall_pick_no"),
+                "team_abbreviation": record.get("team_abbreviation"),
+                "team": record.get("team"),
+            }
+
+    return {
+        "version": CAREER_METADATA_LOOKUP_CACHE_VERSION,
+        "source_signature": _career_metadata_source_signature(),
+        "history_by_id": history_by_id,
+        "history_by_name": history_by_name,
+        "draft_by_id": draft_by_id,
+    }
+
+
+def _compact_cache_payload_is_current(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("version") != CAREER_METADATA_LOOKUP_CACHE_VERSION:
+        return False
+    return payload.get("source_signature") == _career_metadata_source_signature()
+
+
+def _write_compact_career_lookup_payload(payload: dict[str, Any]) -> None:
+    CAREER_METADATA_LOOKUP_CACHE_PATH.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    temp_path = CAREER_METADATA_LOOKUP_CACHE_PATH.with_suffix(".json.tmp")
+    temp_path.write_text(
+        json.dumps(payload, separators=(",", ":"), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    temp_path.replace(CAREER_METADATA_LOOKUP_CACHE_PATH)
+
+
+@lru_cache(maxsize=1)
+def _compact_career_lookup_payload() -> dict[str, Any]:
+    if CAREER_METADATA_LOOKUP_CACHE_PATH.exists():
+        try:
+            payload = json.loads(
+                CAREER_METADATA_LOOKUP_CACHE_PATH.read_text(
+                    encoding="utf-8"
+                )
+            )
+            if _compact_cache_payload_is_current(payload):
+                return payload
+        except Exception:
+            pass
+
+    payload = _build_compact_career_lookup_payload()
+    try:
+        _write_compact_career_lookup_payload(payload)
+    except Exception:
+        # The metadata build must still work in read-only environments.
+        pass
+    return payload
+
+
+def warm_career_metadata_lookup_cache_v1(
+    *,
+    force: bool = False,
+) -> dict[str, int]:
+    if force:
+        _compact_career_lookup_payload.cache_clear()
+        try:
+            CAREER_METADATA_LOOKUP_CACHE_PATH.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    payload = _compact_career_lookup_payload()
+    return {
+        "history_ids": len(payload.get("history_by_id", {}) or {}),
+        "history_names": len(payload.get("history_by_name", {}) or {}),
+        "draft_ids": len(payload.get("draft_by_id", {}) or {}),
+    }
+
+
 def _draft_row_lookup() -> dict[str, dict[str, Any]]:
-    frame = load_draft_history()
-    if frame.empty:
-        return {}
-    rows = {}
-    for record in frame.to_dict(orient="records"):
-        key = str(record.get("player_id_key", "")).strip()
-        if key:
-            rows[key] = record
-    return rows
+    payload = _compact_career_lookup_payload()
+    rows = payload.get("draft_by_id", {}) or {}
+    return {
+        str(key): dict(value)
+        for key, value in rows.items()
+        if isinstance(value, dict)
+    }
 
 
 def _history_lookup() -> tuple[
-    dict[str, pd.DataFrame],
-    dict[str, pd.DataFrame],
+    dict[str, int],
+    dict[str, int],
 ]:
-    frame = load_unified_player_history()
-    if frame.empty:
-        return {}, {}
-
+    payload = _compact_career_lookup_payload()
     by_id = {
-        str(key): group.copy()
-        for key, group in frame.groupby("player_id_key")
+        str(key): int(value)
+        for key, value in (payload.get("history_by_id", {}) or {}).items()
     }
     by_name = {
-        str(key): group.copy()
-        for key, group in frame.groupby("player_name_key")
+        str(key): int(value)
+        for key, value in (payload.get("history_by_name", {}) or {}).items()
     }
     return by_id, by_name
+
+
+CAREER_METADATA_RUNTIME_CACHE_VERSION = (
+    "career-metadata-runtime-cache-v1-2026-09-11"
+)
+
+
+def _career_metadata_runtime_signature(
+    state: SimulationLeagueState,
+) -> str:
+    """Cheap identity signature used to skip repeated history-table reloads.
+
+    The full metadata build remains authoritative whenever the season or live
+    player registry changes. This only accelerates repeated Streamlit reruns
+    against the exact same in-memory league state.
+    """
+
+    digest = hashlib.sha1()
+    for player_id in sorted(str(value) for value in state.players):
+        digest.update(player_id.encode("utf-8", errors="ignore"))
+        digest.update(b"\0")
+    return (
+        f"{CAREER_METADATA_RUNTIME_CACHE_VERSION}|"
+        f"{state.settings.season_label}|{len(state.players)}|{digest.hexdigest()}"
+    )
+
+
+def _career_metadata_cache_is_usable(
+    state: SimulationLeagueState,
+    signature: str,
+) -> bool:
+    if str(getattr(state, "career_metadata_version", "")) != CAREER_AWARDS_VERSION:
+        return False
+    if str(getattr(state, "career_metadata_season", "")) != str(state.settings.season_label):
+        return False
+    if str(getattr(state, "career_metadata_runtime_signature_v1", "")) != signature:
+        return False
+    cached = getattr(state, "career_metadata_runtime_counts_v1", None)
+    if not isinstance(cached, dict):
+        return False
+    # A checkpoint from before this cache existed will miss these attributes.
+    # Generated players added mid-season also invalidate through the signature.
+    base_ready = all(
+        hasattr(player, "rookie_eligible")
+        and hasattr(player, "rookie_season_start")
+        and hasattr(player, "career_metadata_source")
+        for player in state.players.values()
+    )
+    if not base_ready:
+        return False
+
+    # Generated future picks must retain draft pedigree.
+    return all(
+        (
+            not bool(getattr(player, "generated_prospect", False))
+            or getattr(player, "draft_pick", None) is not None
+        )
+        for player in state.players.values()
+    )
+
+
+# CPU_ROOKIE_USAGE_REALISM_V1_CAREER_METADATA
+def _generated_draft_metadata_lookup_v1(state: SimulationLeagueState) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+    for draft in list(getattr(state, "franchise_draft_history_v1", ()) or ()):
+        if not isinstance(draft, dict):
+            continue
+        draft_year = draft.get("draft_year")
+        target_season = str(draft.get("target_season", "") or "").strip()
+        for pick in list(draft.get("draft_order", ()) or ()):
+            if not isinstance(pick, dict):
+                continue
+            player_id = str(pick.get("prospect_id", "") or "").strip()
+            if not player_id:
+                continue
+            rows[player_id] = {
+                "draft_year": draft_year,
+                "draft_round": pick.get("round"),
+                "draft_pick": pick.get("overall_pick"),
+                "draft_round_pick": pick.get("round_pick"),
+                "drafted_by": str(pick.get("owner_team", "") or "").strip().upper(),
+                "target_season": target_season,
+            }
+    return rows
 
 
 def ensure_career_metadata(
@@ -333,6 +576,10 @@ def ensure_career_metadata(
     attributes when the draft engine is added.
     """
 
+    runtime_signature = _career_metadata_runtime_signature(state)
+    if _career_metadata_cache_is_usable(state, runtime_signature):
+        return dict(getattr(state, "career_metadata_runtime_counts_v1"))
+
     current_start = season_start_from_label(
         state.settings.season_label
     )
@@ -344,6 +591,7 @@ def ensure_career_metadata(
 
     history_by_id, history_by_name = _history_lookup()
     draft_by_id = _draft_row_lookup()
+    generated_draft_by_id = _generated_draft_metadata_lookup_v1(state)
     counts = {
         "players": 0,
         "historical_matches": 0,
@@ -379,21 +627,61 @@ def ensure_career_metadata(
             or ""
         )
 
-        if rookie_start is None and history is not None and not history.empty:
-            valid_starts = pd.to_numeric(
-                history["season_start"],
-                errors="coerce",
-            ).dropna()
-            if not valid_starts.empty:
-                rookie_start = int(valid_starts.min())
+        if rookie_start is None and history is not None:
+            if isinstance(history, (int, float)):
+                try:
+                    rookie_start = int(history)
+                except (TypeError, ValueError):
+                    rookie_start = None
+            elif hasattr(history, "empty") and not history.empty:
+                valid_starts = pd.to_numeric(
+                    history["season_start"],
+                    errors="coerce",
+                ).dropna()
+                if not valid_starts.empty:
+                    rookie_start = int(valid_starts.min())
+
+            if rookie_start is not None:
                 metadata_source = "unified_player_history"
                 counts["historical_matches"] += 1
 
         draft_row = draft_by_id.get(player_id)
-        draft_year: int | None = None
-        draft_round: str = ""
-        draft_pick: int | None = None
-        drafted_by: str = ""
+        generated_draft_row = generated_draft_by_id.get(player_id, {})
+
+        try:
+            draft_year: int | None = int(getattr(player, "draft_year", None))
+        except (TypeError, ValueError):
+            try:
+                draft_year = int(generated_draft_row.get("draft_year"))
+            except (TypeError, ValueError):
+                draft_year = None
+        draft_round = str(
+            getattr(player, "draft_round", "")
+            or generated_draft_row.get("draft_round", "")
+            or ""
+        ).strip()
+        try:
+            draft_pick: int | None = int(getattr(player, "draft_pick", None))
+        except (TypeError, ValueError):
+            try:
+                draft_pick = int(generated_draft_row.get("draft_pick"))
+            except (TypeError, ValueError):
+                draft_pick = None
+        drafted_by = str(
+            getattr(player, "drafted_by", "")
+            or generated_draft_row.get("drafted_by", "")
+            or ""
+        ).strip().upper()
+
+        generated_target = str(
+            generated_draft_row.get("target_season", "") or ""
+        ).strip()
+        if rookie_start is None and generated_target:
+            try:
+                rookie_start = int(generated_target.split("-", 1)[0])
+                metadata_source = "generated_draft_v1"
+            except (TypeError, ValueError):
+                pass
 
         if draft_row:
             try:
@@ -484,6 +772,16 @@ def ensure_career_metadata(
         state,
         "career_metadata_season",
         state.settings.season_label,
+    )
+    setattr(
+        state,
+        "career_metadata_runtime_signature_v1",
+        runtime_signature,
+    )
+    setattr(
+        state,
+        "career_metadata_runtime_counts_v1",
+        dict(counts),
     )
     return counts
 

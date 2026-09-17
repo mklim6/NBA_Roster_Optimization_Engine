@@ -179,26 +179,30 @@ def render_cpu_front_office_v1(
     )
     team_plan = league_plan.teams[selected_team]
 
-    identity = st.columns(7)
-    identity[0].metric("Direction", team_plan.timeline_label)
-    identity[1].metric("League rank", f"#{team_plan.league_rank}")
-    identity[2].metric(
-        "Primary upgrade need",
-        team_plan.primary_upgrade_need,
-    )
-    identity[3].metric(
-        "Secondary upgrade",
-        team_plan.secondary_upgrade_need,
-    )
-    identity[4].metric(
-        "Depth surplus",
-        team_plan.depth_surplus_family,
-    )
-    identity[5].metric(
+    # Two wider rows prevent long front-office labels/values from being
+    # ellipsized by Streamlit's native metric card at desktop widths.
+    identity_top = st.columns(4)
+    identity_top[0].metric("Direction", team_plan.timeline_label)
+    identity_top[1].metric("League rank", f"#{team_plan.league_rank}")
+    identity_top[2].metric(
         "Roster balance",
         f"{team_plan.roster_balance_score:.0f}/100",
     )
-    identity[6].metric("Roster", team_plan.roster_count)
+    identity_top[3].metric("Roster", team_plan.roster_count)
+
+    identity_needs = st.columns(3)
+    identity_needs[0].metric(
+        "Primary upgrade need",
+        team_plan.primary_upgrade_need,
+    )
+    identity_needs[1].metric(
+        "Secondary upgrade",
+        team_plan.secondary_upgrade_need,
+    )
+    identity_needs[2].metric(
+        "Depth surplus",
+        team_plan.depth_surplus_family,
+    )
 
     st.markdown(
         f"**Control:** {'CPU managed' if team_plan.cpu_managed else 'User controlled'}  \n"

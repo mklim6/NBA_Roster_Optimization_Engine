@@ -11,6 +11,10 @@ import pandas as pd
 import streamlit as st
 
 from franchise_development_center_v1 import render_team_development_center_v1
+from franchise_scouting_discovery_v1 import (
+    render_scouting_discovery_v1,
+    scouting_board_rows_v1,
+)
 
 from franchise_command_center_v1 import team_logo_url, team_name
 from franchise_draft_engine_v1 import (
@@ -25,6 +29,8 @@ from franchise_draft_engine_v1 import (
     draft_is_complete,
     draft_state,
     initialize_draft_state,
+    initialize_regular_season_scouting_state,
+    promote_regular_season_scouting_to_lottery,
     is_user_pick,
     lottery_rows,
     make_selection,
@@ -280,14 +286,77 @@ def render_draft_room_v1(
 ) -> None:
     inject_draft_styles()
 
-    if not getattr(state, "postseason_state", None) or str(getattr(state.postseason_state.stage, "value", state.postseason_state.stage)).lower() != "complete":
+    # FRANCHISE_SEASON_LONG_SCOUTING_UI_V1_2
+    postseason_complete = bool(
+        getattr(state, "postseason_state", None)
+        and str(
+            getattr(
+                state.postseason_state.stage,
+                "value",
+                state.postseason_state.stage,
+            )
+        ).lower()
+        == "complete"
+    )
+    current = draft_state(state)
+
+    if not postseason_complete:
+        has_prior_season = bool(getattr(state, "season_history", None))
+        if current is None and has_prior_season:
+            current = initialize_regular_season_scouting_state(
+                state,
+                controlled_teams=controlled_teams,
+                class_strength=default_class_strength,
+            )
+            _commit(commit_state, state, "draft-season-long-scouting-initialize-v1-2")
+
+        if current is not None and current.get("phase") == "season_scouting":
+            _stage_header(
+                f"{current['draft_year']} Draft Class",
+                "Scout the next class all season. Reports, confidence and focus assignments persist through the postseason, lottery and Draft Night. The lottery order remains unresolved until the season is complete.",
+                kicker="SEASON-LONG SCOUTING",
+            )
+            render_scouting_discovery_v1(
+                state=state,
+                team=active_team,
+                commit_state=commit_state,
+            )
+            st.info(
+                "The Draft Lottery will unlock after the NBA Finals. Your current scouting work will carry forward unchanged."
+            )
+            return
+
         _stage_header(
             "Draft Room",
-            "The Draft Room unlocks after the NBA Finals. Finish the postseason before entering the lottery, scouting board, and Draft Night.",
+            "The next draft class becomes available after your first completed franchise season. Lottery and Draft Night remain postseason events.",
         )
         return
 
-    current = draft_state(state)
+    if current is not None and current.get("phase") == "season_scouting":
+        _stage_header(
+            f"{current['draft_year']} Draft Class",
+            "Season-long scouting is complete and preserved. Enter the Draft Lottery when you are ready; prospect reports and confidence will not reset.",
+            kicker="SCOUTING COMPLETE · LOTTERY READY",
+        )
+        render_scouting_discovery_v1(
+            state=state,
+            team=active_team,
+            commit_state=commit_state,
+        )
+        if st.button(
+            "Enter NBA Draft Lottery",
+            type="primary",
+            width="stretch",
+            key="draft_promote_season_scouting_v1_2",
+        ):
+            promote_regular_season_scouting_to_lottery(
+                state,
+                controlled_teams=controlled_teams,
+            )
+            _commit(commit_state, state, "draft-season-scouting-to-lottery-v1-2")
+            st.rerun()
+        return
+
     if current is None:
         _stage_header(
             f"{state.settings.season_label} season complete",
@@ -342,21 +411,29 @@ def render_draft_room_v1(
         ):
             st.dataframe(pd.DataFrame(draft_board_rows(state)), hide_index=True, width="stretch")
         _export_bar(state, stage_key="lottery_complete")
-        if st.button("Reveal Draft Class", type="primary", width="stretch", key="draft_reveal_class_v1"):
+        _class_button_label_v1_2 = (
+            "Continue to Draft Board"
+            if current.get("prospects")
+            else "Reveal Draft Class"
+        )
+        if st.button(_class_button_label_v1_2, type="primary", width="stretch", key="draft_reveal_class_v1"):
             reveal_draft_class(state)
             _commit(commit_state, state, "draft-class-reveal")
             st.rerun()
         return
 
     if phase == "scouting":
+        # FRANCHISE_SCOUTING_DISCOVERY_UI_V1
         _stage_header(
             f"{current['draft_year']} Draft Class",
-            "Scout an 80-player generated class before Draft Night. Displayed OVR and potential are scouting estimates, not the prospect's hidden exact ratings.",
-            kicker="SCOUTING & BIG BOARD",
+            "Build team-specific confidence through scouting assignments. Staff quality controls uncertainty, and CPU front offices now draft from imperfect team-specific evaluations rather than exact hidden ratings.",
+            kicker="SCOUTING & PROSPECT DISCOVERY",
         )
-        board = pd.DataFrame(big_board_rows(state))
-        st.dataframe(board, hide_index=True, width="stretch", height=620)
-        _prospect_cards(current.get("prospects", [])[:8])
+        render_scouting_discovery_v1(
+            state=state,
+            team=active_team,
+            commit_state=commit_state,
+        )
         _export_bar(state, stage_key="scouting")
         if st.button("Start Draft Night", type="primary", width="stretch", key="draft_start_night_v1"):
             start_draft_night(state, now_ts=time.time())

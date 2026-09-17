@@ -393,7 +393,9 @@ def main() -> int:
         ),
         "normal_game_flow_commits_before_reveal": (
             "Simulate game" in page_text
-            and "Latest committed result" in page_text
+            and "commit_game_transactionally(" in page_text
+            and "then reveals the result" in page_text
+            and "render_game_day_final_v1(" in page_text
         ),
         "what_if_lab_is_separate": (
             "Advanced What-If Lab" in page_text

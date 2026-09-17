@@ -84,6 +84,10 @@ st.set_page_config(
 
 
 )
+# FRANCHISE_PRIMARY_NAV_V1
+from src.franchise_primary_navigation_v1 import render_franchise_primary_navigation_v1
+render_franchise_primary_navigation_v1()
+
 
 
 
@@ -152,6 +156,24 @@ while str(SRC) in sys.path:
 
 
 sys.path.insert(0, str(SRC))
+
+
+from franchise_game_day_league_calendar_sync_v1 import (  # noqa: E402
+    LeagueCalendarSyncError,
+    catch_up_cpu_schedule_v1,
+    league_calendar_sync_status_v1,
+)
+from franchise_cpu_autonomous_trade_market_v1 import (  # noqa: E402
+    CPUAutonomousTradeMarketError,
+    render_cpu_autonomous_trade_market_v1,
+    run_cpu_autonomous_trade_market_v1,
+)
+from franchise_cpu_incoming_trade_offers_v1 import (  # noqa: E402
+    CPUIncomingTradeOfferError,
+    render_cpu_incoming_trade_offer_actions_v1,
+    render_cpu_incoming_trade_offer_market_status_v1,
+    run_cpu_incoming_trade_offer_tick_v1,
+)
 
 
 
@@ -801,6 +823,91 @@ from franchise_command_center_v1 import (  # noqa: E402
 
 
 
+from franchise_ui_polish_v1 import inject_franchise_ui_polish_v1  # noqa: E402
+from franchise_onboarding_progression_v1 import (  # noqa: E402
+    inject_franchise_onboarding_visuals_v1,
+    render_first_time_tutorial_v1,
+    render_franchise_progress_coach_v1,
+    render_help_sidebar_v1,
+    render_section_masthead_v1,
+)
+from franchise_retention_experience_v1 import (  # noqa: E402
+    inject_franchise_retention_visuals_v1,
+    render_franchise_retention_hub_v1,
+)
+from franchise_returning_gm_v1 import (  # noqa: E402
+    inject_returning_gm_visuals_v1,
+    render_returning_gm_v1,
+)
+from franchise_game_day_broadcast_v1 import (  # noqa: E402
+    inject_game_day_broadcast_visuals_v1,
+    render_game_day_broadcast_v1,
+    render_game_day_final_v1,
+)
+from franchise_visual_overhaul_v3 import (  # noqa: E402
+    inject_franchise_visual_overhaul_v3,
+    render_franchise_showcase_v3,
+)
+from franchise_visual_overhaul_v4 import (  # noqa: E402
+    inject_franchise_visual_overhaul_v4,
+    render_command_center_metrics_v4,
+    render_schedule_ribbon_v4,
+)
+
+
+from franchise_game_navigation_native_v2_2 import (  # noqa: E402
+    FRANCHISE_GAME_ARCHIVE_SESSION_KEY,
+    calendar_with_clickable_games_html_v1,
+    clear_requested_game_id_v1,
+    inject_franchise_game_navigation_visuals_v1,
+    render_interactive_schedule_ribbon_v1 as render_schedule_ribbon_v4,
+    render_clickable_month_calendar_v2,
+    requested_game_id_v1,
+)
+from franchise_timeline_trophy_room_v1 import (  # noqa: E402
+    inject_franchise_legacy_visuals_v1,
+    render_franchise_legacy_preview_v1,
+    render_franchise_timeline_trophy_room_v1,
+)
+# FRANCHISE_LEAGUE_HISTORY_SEASON_RECAP_V1_IMPORT
+from franchise_league_history_season_recap_v1 import (
+    render_league_history_season_recap_v1,
+)
+
+
+
+from franchise_premium_roster_v1 import (  # noqa: E402
+    inject_franchise_premium_roster_visuals_v1,
+    render_franchise_premium_roster_v1,
+)
+from franchise_league_story_center_v1 import (  # noqa: E402
+    inject_franchise_league_story_visuals_v1,
+    render_league_story_center_v1,
+    render_league_story_preview_v1,
+)
+from franchise_season_journey_map_v1 import (  # noqa: E402
+    inject_franchise_season_journey_visuals_v1,
+    render_franchise_season_journey_map_v1,
+    render_franchise_season_journey_preview_v1,
+)
+from franchise_offseason_headquarters_v1 import (  # noqa: E402
+    inject_franchise_offseason_headquarters_visuals_v1,
+    render_franchise_offseason_headquarters_v1,
+    render_franchise_offseason_headquarters_preview_v1,
+)
+
+
+from franchise_game_flow_runtime_bridge_v1 import (  # noqa: E402
+    inject_franchise_game_flow_visuals_runtime_bridge_v1 as inject_franchise_game_flow_visuals_v1,
+    render_franchise_game_flow_runtime_bridge_v1 as render_franchise_game_flow_v1,
+)
+from franchise_opening_night_ux_v1 import (  # noqa: E402
+    inject_opening_night_visuals_v1,
+    is_opening_offseason,
+    render_opening_night_launchpad_v1,
+)
+
+
 from franchise_player_stats_v1 import (  # noqa: E402
 
 
@@ -923,6 +1030,9 @@ from franchise_live_start_ui_v1 import (  # noqa: E402
 
 from franchise_live_asset_ledger_ui_v1 import (  # noqa: E402
     render_live_asset_ledger,
+)
+from franchise_trade_war_room_v1 import (  # noqa: E402
+    render_franchise_trade_war_room_v1,
 )
 from franchise_cpu_front_office_ui_v1 import (  # noqa: E402
     CPU_FRONT_OFFICE_UI_VERSION,
@@ -1902,6 +2012,18 @@ FRANCHISE_CHECKPOINT_PREFERENCE_KEYS = (
 
 
     "franchise_pref_draft_class_strength",
+
+
+
+    "franchise_tutorial_completed_v1",
+
+
+
+    "franchise_gm_path_v1",
+
+
+
+    "franchise_retention_snapshot_v1",
 
 
 
@@ -3921,6 +4043,14 @@ FRANCHISE_SECTIONS = (
 
 
 
+    "League Stories",
+
+
+
+    "Franchise Legacy",
+
+
+
     "Trade Center",
 
 
@@ -4094,6 +4224,46 @@ FRANCHISE_SECTION_GUIDE = {
 
 
         "#7f56d9",
+
+
+
+    ),
+
+
+
+    "League Stories": (
+
+
+
+        "League Story Center",
+
+
+
+        "Follow the living NBA universe through real saved results, streaks, standout performances, injuries, transactions, playoff races, and franchise headlines.",
+
+
+
+        "#38bdf8",
+
+
+
+    ),
+
+
+
+    "Franchise Legacy": (
+
+
+
+        "Timeline & trophy room",
+
+
+
+        "Relive every archived season, championship, draft, signing, trade, franchise record, and player milestone recorded by this save.",
+
+
+
+        "#d4a72c",
 
 
 
@@ -4310,234 +4480,99 @@ def remember_committed_game_result(game_id: str) -> None:
 
 
 def render_latest_committed_game(
-
-
-
     state: SimulationLeagueState,
-
-
-
+    *,
+    active_team: str = "",
 ) -> None:
 
-
-
-    game_id = str(
-
-
-
+    archive_game_id = str(
         st.session_state.get(
-
-
-
-            "franchise_last_committed_game_id",
-
-
-
+            FRANCHISE_GAME_ARCHIVE_SESSION_KEY,
             "",
-
-
-
         )
-
-
-
         or ""
-
-
-
     )
-
-
-
+    game_id = archive_game_id or str(
+        st.session_state.get(
+            "franchise_last_committed_game_id",
+            "",
+        )
+        or ""
+    )
     completed = state.completed_games.get(game_id)
-
-
-
     if completed is None:
-
-
-
+        if archive_game_id:
+            st.session_state.pop(FRANCHISE_GAME_ARCHIVE_SESSION_KEY, None)
         return
 
-
-
-
-
-
-
-    st.markdown("### Latest committed result")
-
-
-
-    st.success(
-
-
-
-        "This result is already part of the permanent season. "
-
-
-
-        "The controls below are for the next matchup."
-
-
-
-    )
-
-
-
-    score_columns = st.columns([1, 1, 1])
-
-
-
-    score_columns[0].metric(
-
-
-
-        completed.away_team,
-
-
-
-        completed.away_score,
-
-
-
-    )
-
-
-
-    score_columns[1].metric(
-
-
-
-        "OT",
-
-
-
-        completed.overtime_periods,
-
-
-
-    )
-
-
-
-    score_columns[2].metric(
-
-
-
-        completed.home_team,
-
-
-
-        completed.home_score,
-
-
-
-    )
-
-
-
-    with st.expander(
-
-
-
-        "Review final box score",
-
-
-
-        expanded=True,
-
-
-
-    ):
-
-
-
-        st.dataframe(
-
-
-
-            box_score_dataframe(
-
-
-
-                state,
-
-
-
-                completed,
-
-
-
-            ),
-
-
-
-            hide_index=True,
-
-
-
-            width="stretch",
-
-
-
+    if archive_game_id:
+        st.markdown("### Game archive")
+        st.caption(
+            "You opened a completed game from the franchise calendar. "
+            "The saved result and box score below come from the durable season state."
         )
 
+    _game_day_final_kwargs_v2 = {
+        "state": state,
+        "completed": completed,
+        "team_name_resolver": team_name,
+        "team_logo_resolver": team_logo_url,
+        "team_colors_resolver": team_colors,
+        "active_team": active_team,
+        "game_date_resolver": lambda day_index: date_for_day_index(
+            state.settings.season_label,
+            day_index,
+        ).strftime("%A · %B %d"),
+    }
+    import inspect as _game_day_final_inspect_v2
+    _game_day_final_signature_v2 = _game_day_final_inspect_v2.signature(render_game_day_final_v1)
+    _game_day_final_has_kwargs_v2 = any(
+        parameter.kind == _game_day_final_inspect_v2.Parameter.VAR_KEYWORD
+        for parameter in _game_day_final_signature_v2.parameters.values()
+    )
+    if _game_day_final_has_kwargs_v2:
+        _game_day_final_supported_v2 = _game_day_final_kwargs_v2
+    else:
+        _game_day_final_supported_v2 = {
+            key: value
+            for key, value in _game_day_final_kwargs_v2.items()
+            if key in _game_day_final_signature_v2.parameters
+        }
+    render_game_day_final_v1(**_game_day_final_supported_v2)
 
-
+    with st.expander(
+        "Full box score & medical report",
+        expanded=bool(archive_game_id),
+    ):
+        st.dataframe(
+            box_score_dataframe(
+                state,
+                completed,
+            ),
+            hide_index=True,
+            width="stretch",
+        )
         medical_rows = [
-
-
-
             event
-
-
-
             for event in health_events(state)
-
-
-
             if str(event.get("game_id", "")) == game_id
-
-
-
         ]
-
-
-
         if medical_rows:
-
-
-
             st.warning("Medical events from this game")
-
-
-
             st.dataframe(
-
-
-
                 pd.DataFrame(medical_rows),
-
-
-
                 hide_index=True,
-
-
-
                 width="stretch",
-
-
-
             )
 
-
-
-
-
-
-
-
+    if archive_game_id:
+        if st.button(
+            "Return to upcoming matchup",
+            width="stretch",
+            key=f"franchise_return_from_archive_{game_id}",
+        ):
+            st.session_state.pop(FRANCHISE_GAME_ARCHIVE_SESSION_KEY, None)
+            st.rerun()
 
 
 
@@ -5831,11 +5866,7 @@ def render_opening_regular_season_control_v1(
         or ""
     ).strip().lower()
 
-    if phase_name != "offseason":
-        return
-    if int(getattr(state, "transition_count", 0) or 0) != 0:
-        return
-    if len(getattr(state, "season_history", ()) or ()) != 0:
+    if not is_opening_offseason(state):
         return
 
     from franchise_opening_regular_season_transition_v1 import (
@@ -6114,12 +6145,10 @@ def render_franchise_season_transition(
     if phase_name != "offseason":
         return
 
-    # The opening 2026-27 offseason has no completed prior season. Its only
-    # authoritative transition is handled above by the regular-season opener.
-    if (
-        int(getattr(state, "transition_count", 0) or 0) == 0
-        and not list(getattr(state, "season_history", ()) or ())
-    ):
+    # Only the untouched pre-Game-1 opening offseason belongs to the opening
+    # regular-season launcher. A completed first season can still have
+    # transition_count == 0 and no archived season_history until closeout.
+    if is_opening_offseason(state):
         return
 
     postseason = get_postseason_state(state, required=False)
@@ -6494,164 +6523,41 @@ def game_label(
 
 
 def box_score_dataframe(
-
-
-
     state: SimulationLeagueState,
-
-
-
     completed: Any,
-
-
-
 ) -> pd.DataFrame:
-
-
-
+    # FRANCHISE_BOX_SCORE_SHOOTING_PERCENTAGES_V1_2
     rows = []
 
-
-
-
-
-
-
-    for line in (
-
-
-
-        completed.player_box_scores
-
-
-
-    ):
-
-
-
-        player = state.players[
-
-
-
-            line.player_id
-
-
-
-        ]
-
-
+    for line in completed.player_box_scores:
+        player = state.players[line.player_id]
+        field_goals_made = int(getattr(line, "field_goals_made", 0) or 0)
+        field_goals_attempted = int(getattr(line, "field_goals_attempted", 0) or 0)
+        three_pointers_made = int(getattr(line, "three_pointers_made", 0) or 0)
+        three_pointers_attempted = int(getattr(line, "three_pointers_attempted", 0) or 0)
+        fg_pct = round(100.0 * field_goals_made / field_goals_attempted, 1) if field_goals_attempted else 0.0
+        three_pct = round(100.0 * three_pointers_made / three_pointers_attempted, 1) if three_pointers_attempted else 0.0
 
         rows.append(
-
-
-
             {
-
-
-
-                "Team": (
-
-
-
-                    line.team_abbreviation
-
-
-
-                ),
-
-
-
-                "Player": (
-
-
-
-                    player.player_name
-
-
-
-                ),
-
-
-
+                "Team": line.team_abbreviation,
+                "Player": player.player_name,
                 "Pos": player.position,
-
-
-
-                "Starter": (
-
-
-
-                    "Yes"
-
-
-
-                    if line.started
-
-
-
-                    else ""
-
-
-
-                ),
-
-
-
-                "MIN": round(
-
-
-
-                    line.minutes,
-
-
-
-                    1,
-
-
-
-                ),
-
-
-
+                "Starter": "Yes" if line.started else "",
+                "MIN": round(line.minutes, 1),
                 "PTS": line.points,
-
-
-
+                "FG": f"{field_goals_made}-{field_goals_attempted}",
+                "FG%": fg_pct,
+                "3PT": f"{three_pointers_made}-{three_pointers_attempted}",
+                "3PT%": three_pct,
                 "REB": line.rebounds,
-
-
-
                 "AST": line.assists,
-
-
-
                 "STL": line.steals,
-
-
-
                 "BLK": line.blocks,
-
-
-
                 "TO": line.turnovers,
-
-
-
                 "PF": line.fouls,
-
-
-
             }
-
-
-
         )
-
-
-
-
-
-
 
     return pd.DataFrame(rows)
 
@@ -6766,6 +6672,18 @@ def commit_game_transactionally(
 
 
         ),
+
+
+
+        # FRANCHISE_GAME_DAY_PERFORMANCE_V7:
+
+
+
+        # this private transaction validates once after health updates.
+
+
+
+        _defer_global_state_validation=True,
 
 
 
@@ -8443,6 +8361,54 @@ def render_postseason_next_game_controls(
                                 "next season."
                             )
 
+                        # FRANCHISE_PRESEASON_ROSTER_FLOOR_LIVE_UI_WIRING_V1
+                        # Resolve actual CPU roster deficits before the phase
+                        # changes. User-controlled underfills remain explicit
+                        # blockers; CPU teams use the canonical legal and
+                        # player-accepted Free Agency transaction stack.
+                        import franchise_preseason_roster_floor_live_v1 as _preseason_roster_floor
+
+                        _preseason_source_fingerprint = (
+                            _season_boundary_durable.checkpoint_boundary_fingerprint(
+                                _season_boundary_source
+                            )
+                        )
+                        try:
+                            _preseason_result = (
+                                _preseason_roster_floor.complete_preseason_roster_floors_durably(
+                                    expected_source_fingerprint=(
+                                        _preseason_source_fingerprint
+                                    ),
+                                )
+                            )
+                        except _preseason_roster_floor.PreseasonRosterFloorError as _preseason_exc:
+                            raise SimulationSeasonTransitionControllerError(
+                                "Opening-night rosters must be playable before "
+                                "the next season can open. "
+                                f"Detail: {_preseason_exc}"
+                            ) from _preseason_exc
+
+                        _season_boundary_source = (
+                            _season_boundary_checkpoint.load_franchise_checkpoint(
+                                allow_backup=False,
+                            )
+                        )
+                        if _season_boundary_source is None:
+                            raise SimulationSeasonTransitionControllerError(
+                                "The durable Franchise checkpoint could not be reloaded "
+                                "after opening-night roster completion."
+                            )
+                        if (
+                            _season_boundary_durable.checkpoint_boundary_fingerprint(
+                                _season_boundary_source
+                            )
+                            != _preseason_result.target_fingerprint
+                        ):
+                            raise SimulationSeasonTransitionControllerError(
+                                "The reloaded opening-night roster checkpoint does not "
+                                "match the verified Free Agency completion result."
+                            )
+
                         # FRANCHISE_CPU_POST_DRAFT_ROSTER_TRIM_LIVE_UI_WIRING_V1
                         import franchise_cpu_post_draft_roster_trim_live_v1 as _cpu_post_draft_trim_live
 
@@ -8490,6 +8456,63 @@ def render_postseason_next_game_controls(
                             raise SimulationSeasonTransitionControllerError(
                                 "The reloaded post-Draft roster-trim checkpoint does not "
                                 "match the verified atomic trim result."
+                            )
+
+                        # FRANCHISE_NEXT_SEASON_ROSTER_FLOOR_BRIDGE_UI_V1
+                        # Draft completion can leave a CPU roster below the regular-season
+                        # game-ready floor even though the offseason state is legal. Resolve
+                        # only those CPU deficits through the existing certified minimum-
+                        # contract/player-decision/financial-gate path before the transition
+                        # flips the league back to a game-playing phase.
+                        from franchise_free_agency_cpu_execution_v1 import (
+                            execute_cpu_roster_floor_bridge_durably as _season_boundary_roster_floor_bridge,
+                        )
+
+                        try:
+                            _season_boundary_roster_floor_result = (
+                                _season_boundary_roster_floor_bridge(
+                                    max_signings=60,
+                                )
+                            )
+                        except Exception as _season_boundary_roster_floor_exc:
+                            raise SimulationSeasonTransitionControllerError(
+                                "CPU rosters could not be made game-ready before opening the next season. "
+                                f"Detail: {_season_boundary_roster_floor_exc}"
+                            ) from _season_boundary_roster_floor_exc
+
+                        _season_boundary_source = (
+                            _season_boundary_checkpoint.load_franchise_checkpoint(
+                                allow_backup=False,
+                            )
+                        )
+                        if _season_boundary_source is None:
+                            raise SimulationSeasonTransitionControllerError(
+                                "The durable Franchise checkpoint could not be reloaded "
+                                "after the CPU roster-floor bridge."
+                            )
+
+                        _season_boundary_floor = int(
+                            getattr(
+                                _season_boundary_source.simulation_state.settings,
+                                "minimum_game_players",
+                                8,
+                            )
+                            or 8
+                        )
+                        _season_boundary_remaining_deficits = {
+                            str(team): len(tuple(getattr(team_state, "roster_player_ids", ()) or ()))
+                            for team, team_state in (
+                                getattr(_season_boundary_source.simulation_state, "teams", {}) or {}
+                            ).items()
+                            if len(tuple(getattr(team_state, "roster_player_ids", ()) or ()))
+                            < _season_boundary_floor
+                        }
+                        if _season_boundary_remaining_deficits:
+                            raise SimulationSeasonTransitionControllerError(
+                                "A roster still does not meet the next-season game-ready floor "
+                                f"of {_season_boundary_floor}: {_season_boundary_remaining_deficits}. "
+                                "User-controlled teams must be completed manually; CPU teams are "
+                                "repaired automatically only through legal player-accepted signings."
                             )
 
                         # Continue the existing season-boundary transaction from the
@@ -11348,6 +11371,14 @@ FRANCHISE_SECTION_DISPLAY = {
 
 
     "Stats & Standings": "Stats",
+
+
+
+    "League Stories": "Stories",
+
+
+
+    "Franchise Legacy": "Legacy",
 
 
 
@@ -17010,6 +17041,58 @@ def advance_to_next_season_with_schedule(
 
 
 
+# FRANCHISE_POST_RETIREMENT_ROSTER_FLOOR_UI_V2
+    # Career retirements are applied inside the lifecycle adapter after the base
+    # transition. Repair any CPU team pushed below the game-ready floor here,
+    # after rookie activation but before schedule installation/full validation.
+    from simulation_franchise_checkpoint_v1 import (
+        load_franchise_checkpoint as _post_retirement_load_checkpoint_v2,
+    )
+    from franchise_free_agency_live_signing_v1 import (
+        controlled_teams_from_durable_checkpoint as _controlled_teams_v2,
+    )
+    from franchise_free_agency_cpu_execution_v1 import (
+        execute_cpu_roster_floor_bridge_in_memory_v2 as _post_retirement_floor_bridge_v2,
+    )
+    from franchise_career_lifecycle_v1 import (
+        initialize_career_intents_for_season as _refresh_career_intents_v2,
+    )
+
+    _post_retirement_source_checkpoint_v2 = (
+        _post_retirement_load_checkpoint_v2(allow_backup=False)
+    )
+    if _post_retirement_source_checkpoint_v2 is None:
+        raise SimulationSeasonTransitionControllerError(
+            "The durable Franchise checkpoint is unavailable while reconciling "
+            "post-retirement roster floors."
+        )
+
+    try:
+        transitioned, _post_retirement_floor_result_v2 = (
+            _post_retirement_floor_bridge_v2(
+                transitioned,
+                controlled_teams=_controlled_teams_v2(
+                    _post_retirement_source_checkpoint_v2
+                ),
+                max_signings=60,
+            )
+        )
+    except Exception as _post_retirement_floor_exc_v2:
+        raise SimulationSeasonTransitionControllerError(
+            "Post-retirement roster reconciliation failed before the next "
+            f"season schedule could open. Detail: {_post_retirement_floor_exc_v2}"
+        ) from _post_retirement_floor_exc_v2
+
+    # Rescue signings can change a veteran free agent from FA to a CPU team.
+    # Refresh the preseason intent labels after that deterministic ownership move.
+    _refresh_career_intents_v2(transitioned)
+
+
+
+
+
+
+
     if not transitioned.schedule:
 
 
@@ -20185,6 +20268,20 @@ controlled_teams = (
 
 
 
+# FRANCHISE_CPU_MORALE_REACTIONS_V1
+from franchise_cpu_morale_response_v1 import run_cpu_morale_reactions_v1
+_cpu_morale_reaction_result_v1 = run_cpu_morale_reactions_v1(
+    state,
+    controlled_teams=controlled_teams,
+)
+if _cpu_morale_reaction_result_v1.get("changed"):
+    save_current_franchise_checkpoint(
+        state,
+        trade_state=trade_state,
+        reason="cpu-morale-response-v1",
+        copy_payload=False,
+    )
+
 _perf_stage_v1_7 = time.perf_counter()
 event_sync = synchronize_franchise_events(
 
@@ -21127,6 +21224,66 @@ st.markdown(
 
 
 
+inject_franchise_ui_polish_v1(
+    primary=primary,
+    secondary=secondary,
+)
+inject_franchise_onboarding_visuals_v1(
+    primary=primary,
+    secondary=secondary,
+)
+inject_franchise_retention_visuals_v1(
+    primary=primary,
+    secondary=secondary,
+)
+inject_returning_gm_visuals_v1(
+    primary=primary,
+    secondary=secondary,
+)
+inject_game_day_broadcast_visuals_v1()
+inject_franchise_visual_overhaul_v3(
+    primary=primary,
+    secondary=secondary,
+)
+inject_franchise_visual_overhaul_v4(
+    primary=primary,
+    secondary=secondary,
+)
+inject_franchise_game_navigation_visuals_v1()
+inject_franchise_legacy_visuals_v1(
+    primary=primary,
+    secondary=secondary,
+)
+
+
+inject_franchise_premium_roster_visuals_v1(
+    primary=primary,
+    secondary=secondary,
+)
+inject_franchise_league_story_visuals_v1(
+    primary=primary,
+    secondary=secondary,
+)
+inject_franchise_season_journey_visuals_v1(
+    primary=primary,
+    secondary=secondary,
+)
+inject_franchise_offseason_headquarters_visuals_v1(
+    primary=primary,
+    secondary=secondary,
+)
+
+
+inject_franchise_game_flow_visuals_v1(
+    primary=primary,
+    secondary=secondary,
+)
+inject_opening_night_visuals_v1(
+    primary=primary,
+    secondary=secondary,
+)
+
+
 _perf_stage_v1_7 = time.perf_counter()
 render_team_hero(
 
@@ -21436,6 +21593,8 @@ if _franchise_phase_name == "offseason":
         "Draft Room",
         "League & Offseason",
         "Stats & Standings",
+        "League Stories",
+        "Franchise Legacy",
         "Inbox & League Health",
         "Calendar",
     )
@@ -21498,6 +21657,43 @@ if (
 
 
 
+# FRANCHISE_GAME_NAVIGATION_V1
+# Schedule cards are true navigation targets. Completed games open their archived
+# broadcast/box score; scheduled games load directly into Game Day.
+_franchise_requested_game_v1 = requested_game_id_v1()
+if _franchise_requested_game_v1:
+    _franchise_route_game_v1 = state.schedule.get(_franchise_requested_game_v1)
+    if (
+        _franchise_route_game_v1 is not None
+        and active_team
+        in (
+            str(getattr(_franchise_route_game_v1, "home_team", "") or "").upper(),
+            str(getattr(_franchise_route_game_v1, "away_team", "") or "").upper(),
+        )
+    ):
+        _franchise_route_status_v1 = str(
+            getattr(
+                getattr(_franchise_route_game_v1, "status", None),
+                "value",
+                getattr(_franchise_route_game_v1, "status", ""),
+            )
+            or ""
+        ).lower()
+        if (
+            _franchise_route_status_v1 == "completed"
+            and _franchise_requested_game_v1 in (getattr(state, "completed_games", {}) or {})
+        ):
+            st.session_state[FRANCHISE_GAME_ARCHIVE_SESSION_KEY] = _franchise_requested_game_v1
+            st.session_state["franchise_last_committed_game_id"] = _franchise_requested_game_v1
+            set_franchise_section("Game Day")
+        else:
+            st.session_state.pop(FRANCHISE_GAME_ARCHIVE_SESSION_KEY, None)
+            set_selected_game(_franchise_requested_game_v1)
+            set_franchise_section("Game Day")
+    clear_requested_game_id_v1()
+    st.rerun()
+
+
 active_section = st.radio(
 
 
@@ -21550,12 +21746,123 @@ active_section = st.radio(
 
 
 
-render_franchise_section_guide(active_section)
+_franchise_guidance_v1 = render_help_sidebar_v1(
+    set_section=set_franchise_section,
+)
+_franchise_postseason_v1 = get_postseason_state(state, required=False)
+_franchise_postseason_complete_v1 = bool(
+    _franchise_postseason_v1 is not None
+    and _franchise_postseason_v1.stage == PostseasonStage.COMPLETE
+)
+render_franchise_progress_coach_v1(
+    phase_name=_franchise_phase_name,
+    has_history=bool(list(getattr(state, "season_history", ()) or ())),
+    regular_season_complete=regular_season_is_complete(state),
+    postseason_complete=_franchise_postseason_complete_v1,
+    draft_complete=draft_is_complete(state),
+    blocking_count=len(blocking_events(state)),
+    next_game_id=(snapshot.next_game_id or None),
+    set_section=set_franchise_section,
+    guidance=_franchise_guidance_v1,
+    season_label=str(getattr(state.settings, "season_label", "") or ""),
+    active_team=active_team,
+    team_name=snapshot.team_name,
+    team_logo_url=snapshot.logo_url,
+    completed_games=len(getattr(state, "completed_games", {}) or {}),
+    scheduled_games=len(getattr(state, "schedule", {}) or {}),
+)
+render_section_masthead_v1(
+    section=active_section,
+    guide_tuple=FRANCHISE_SECTION_GUIDE[active_section],
+    team_logo_url=snapshot.logo_url,
+)
+_franchise_game_flow_action_v1 = None
+
+if active_section == "Command Center":
+    render_first_time_tutorial_v1(
+        active_team=active_team,
+        team_name=snapshot.team_name,
+        team_logo_url=snapshot.logo_url,
+        set_section=set_franchise_section,
+        persist_preferences=_save_franchise_ui_preferences_v1_6,
+    )
+    render_franchise_showcase_v3(
+        state=state,
+        snapshot=snapshot,
+        active_team=active_team,
+        featured_rows=featured_team_rows(state, active_team, limit=3),
+        team_name_resolver=team_name,
+        team_logo_resolver=team_logo_url,
+        player_headshot_resolver=player_headshot_url,
+        blocking_count=len(blocking_events(state)),
+        set_section=set_franchise_section,
+    )
+    _franchise_opening_setup_v2 = is_opening_offseason(state)
+    render_schedule_ribbon_v4(
+        state=state,
+        team=active_team,
+        team_logo_resolver=team_logo_url,
+        selected_game_id=(None if _franchise_opening_setup_v2 else (snapshot.next_game_id or None)),
+        title=(
+            "Opening week preview · season clock not started"
+            if _franchise_opening_setup_v2
+            else "Your live season calendar"
+        ),
+    )
+    _franchise_opening_setup_v2 = render_opening_night_launchpad_v1(
+        state=state,
+        trade_state=trade_state,
+        active_team=active_team,
+        team_name_resolver=team_name,
+        team_logo_resolver=team_logo_url,
+    )
+    if not _franchise_opening_setup_v2:
+        _franchise_game_flow_action_v1 = render_franchise_game_flow_v1(
+            state=state,
+            snapshot=snapshot,
+            active_team=active_team,
+            team_name_resolver=team_name,
+            team_logo_resolver=team_logo_url,
+            player_headshot_resolver=player_headshot_url,
+            policy_label=POLICY_LABELS[FranchiseSimulationPolicy(policy)],
+            blocking_count=len(blocking_events(state)),
+            trade_sync_required=trade_sync_required,
+            full_schedule_active=full_schedule_active,
+        )
+        if _franchise_game_flow_action_v1 == "open_game":
+            if snapshot.next_game_id:
+                set_selected_game(snapshot.next_game_id)
+                set_franchise_section("Game Day")
+                st.rerun()
+        elif _franchise_game_flow_action_v1 == "schedule":
+            set_franchise_section("Calendar")
+            st.rerun()
+        elif _franchise_game_flow_action_v1 == "inbox":
+            set_franchise_section("Inbox & League Health")
+            st.rerun()
+
+    render_franchise_retention_hub_v1(
+        state=state,
+        trade_state=trade_state,
+        snapshot=snapshot,
+        active_team=active_team,
+        checkpoint_saved_at=checkpoint_saved_at,
+        set_section=set_franchise_section,
+        team_name_resolver=team_name,
+        persist_gm_path=_save_franchise_ui_preferences_v1_6,
+    )
+    render_returning_gm_v1(
+        state=state,
+        trade_state=trade_state,
+        snapshot=snapshot,
+        active_team=active_team,
+        persist_ui_preferences=_save_franchise_ui_preferences_v1_6,
+    )
 
 _franchise_perf_v1_6["page_to_workspace"] = (
     time.perf_counter() - _franchise_page_started_at_v1_6
 )
-with st.expander("Performance diagnostics", expanded=False):
+with st.expander("Developer performance diagnostics", expanded=False):
     st.caption(
         "V1.7 deep startup profile. A first cold Franchise open is the most useful sample."
     )
@@ -21619,118 +21926,44 @@ with st.expander("Performance diagnostics", expanded=False):
 
 if active_section == "Command Center":
 
-
-
-    metrics = st.columns(6)
-
-
-
-    metrics[0].metric(
-
-
-
-        "Record",
-
-
-
-        f"{snapshot.wins}-{snapshot.losses}",
-
-
-
-    )
-
-
-
-    metrics[1].metric(
-
-
-
-        "Conference",
-
-
-
-        conference_metric_value,
-
-
-
-    )
-
-
-
-    metrics[2].metric(
-
-
-
-        "League",
-
-
-
-        league_metric_value,
-
-
-
-    )
-
-
-
-    metrics[3].metric(
-
-
-
-        "Point diff",
-
-
-
-        f"{snapshot.point_differential:+d}",
-
-
-
-    )
-
-
-
-    metrics[4].metric(
-
-
-
-        "Recent form",
-
-
-
-        snapshot.recent_form,
-
-
-
-    )
-
-
-
-    metrics[5].metric(
-
-
-
-        "Season",
-
-
-
-        (
-
-
-
-            f"{snapshot.season_completion_percentage:.1f}%"
-
-
-
+    render_command_center_metrics_v4(snapshot)
+    render_franchise_season_journey_preview_v1(
+        state=state,
+        active_team=active_team,
+        postseason_state=get_postseason_state(state, required=False),
+        draft_state_payload=draft_state(state),
+        team_name_resolver=team_name,
+        date_resolver=lambda day_index: date_for_day_index(
+            state.settings.season_label,
+            day_index,
         ),
-
-
-
+        set_section=set_franchise_section,
     )
-
-
-
-
-
+    render_franchise_offseason_headquarters_preview_v1(
+        state=state,
+        active_team=active_team,
+        postseason_state=get_postseason_state(state, required=False),
+        draft_state_payload=draft_state(state),
+        team_name_resolver=team_name,
+        set_section=set_franchise_section,
+        blocking_count=len(blocking_events(state)),
+    )
+    render_league_story_preview_v1(
+        state=state,
+        active_team=active_team,
+        team_name_resolver=team_name,
+        team_logo_resolver=team_logo_url,
+        team_colors_resolver=team_colors,
+        player_headshot_resolver=player_headshot_url,
+        set_section=set_franchise_section,
+    )
+    render_franchise_legacy_preview_v1(
+        state=state,
+        trade_state=trade_state,
+        active_team=active_team,
+        team_name_resolver=team_name,
+        set_section=set_franchise_section,
+    )
 
 
     health_summary = team_health_summary(
@@ -22221,219 +22454,222 @@ if active_section == "Command Center":
 
 
 
-        st.markdown(
+        with st.expander("Advanced simulation controls", expanded=False):
+            st.caption(
+                "The Game Flow console above is the recommended way to advance. "
+                "These legacy controls remain available for precision testing."
+            )
+            advance_columns = st.columns(
 
 
 
-            '<div class="fm-section">Advance the league</div>',
+                [1, 1, 1.2, 2.4]
 
 
 
-            unsafe_allow_html=True,
+            )
 
 
 
-        )
+            next_day_clicked = advance_columns[
 
 
 
-        advance_columns = st.columns(
+                0
 
 
 
-            [1, 1, 1.2, 2.4]
+            ].button(
 
 
 
-        )
+                "Next day",
 
 
 
-        next_day_clicked = advance_columns[
+                width="stretch",
 
 
 
-            0
+                disabled=(
 
 
 
-        ].button(
+                    not full_schedule_active or _franchise_opening_setup_v2
 
 
 
-            "Next day",
+                    or trade_sync_required
 
 
 
-            width="stretch",
+                    or bool(blocking_events(state))
 
 
 
-            disabled=(
+                ),
 
 
 
-                not full_schedule_active
+                key="franchise_next_day",
 
 
 
-                or trade_sync_required
+            )
 
 
 
-                or bool(blocking_events(state))
+            next_week_clicked = advance_columns[
 
 
 
-            ),
+                1
 
 
 
-            key="franchise_next_day",
+            ].button(
 
 
 
-        )
+                "Next week",
 
 
 
-        next_week_clicked = advance_columns[
+                width="stretch",
 
 
 
-            1
+                disabled=(
 
 
 
-        ].button(
+                    not full_schedule_active or _franchise_opening_setup_v2
 
 
 
-            "Next week",
+                    or trade_sync_required
 
 
 
-            width="stretch",
+                    or bool(blocking_events(state))
 
 
 
-            disabled=(
+                ),
 
 
 
-                not full_schedule_active
+                key="franchise_next_week",
 
 
 
-                or trade_sync_required
+            )
 
 
 
-                or bool(blocking_events(state))
+            season_end_clicked = advance_columns[
 
 
 
-            ),
+                2
 
 
 
-            key="franchise_next_week",
+            ].button(
 
 
 
-        )
+                "Sim regular season",
 
 
 
-        season_end_clicked = advance_columns[
+                type="primary",
 
 
 
-            2
+                width="stretch",
 
 
 
-        ].button(
+                disabled=(
 
 
 
-            "Sim regular season",
+                    not full_schedule_active or _franchise_opening_setup_v2
 
 
 
-            type="primary",
+                    or trade_sync_required
 
 
 
-            width="stretch",
+                    or bool(blocking_events(state))
 
 
 
-            disabled=(
+                ),
 
 
 
-                not full_schedule_active
+                key="franchise_season_end",
 
 
 
-                or trade_sync_required
+            )
 
 
 
-                or bool(blocking_events(state))
+            advance_columns[3].caption(
 
 
 
-            ),
+                POLICY_LABELS[
 
 
 
-            key="franchise_season_end",
+                    FranchiseSimulationPolicy(
 
 
 
-        )
+                        policy
 
 
 
-        advance_columns[3].caption(
+                    )
 
 
 
-            POLICY_LABELS[
+                ]
 
 
 
-                FranchiseSimulationPolicy(
+            )
 
 
 
-                    policy
 
 
 
-                )
 
-
-
-            ]
-
-
-
-        )
-
-
-
-
-
-
+        _franchise_quick_scope_v1 = {
+            "next_day": SimulationScope.NEXT_DAY,
+            "next_week": SimulationScope.NEXT_WEEK,
+            "remainder": SimulationScope.REMAINDER,
+        }.get(_franchise_game_flow_action_v1)
 
         requested_scope = (
 
 
 
-            SimulationScope.NEXT_DAY
+            _franchise_quick_scope_v1
+
+
+
+            if _franchise_quick_scope_v1 is not None
+
+
+
+            else SimulationScope.NEXT_DAY
 
 
 
@@ -22677,7 +22913,7 @@ if active_section == "Command Center":
 
 
 
-        if snapshot.next_game_id:
+        if snapshot.next_game_id and not _franchise_opening_setup_v2:
 
 
 
@@ -22722,6 +22958,11 @@ if active_section == "Command Center":
 
 
                 )
+
+
+
+                # FRANCHISE_HOME_OPEN_NEXT_GAME_ROUTE_V1
+                set_franchise_section("Game Day")
 
 
 
@@ -23060,6 +23301,19 @@ if active_section == "Inbox & League Health":
             )
 
 
+
+            # FRANCHISE_CPU_INCOMING_TRADE_OFFER_INBOX_V6B
+            _cpu_offer_rendered_v6b = render_cpu_incoming_trade_offer_actions_v1(
+                runtime,
+                state,
+                trade_state,
+                event,
+                controlled_teams=controlled_teams,
+                commit_state_callback=set_franchise_state,
+                set_section_callback=set_franchise_section,
+            )
+            if _cpu_offer_rendered_v6b:
+                continue
 
             action_columns = st.columns([1, 1, 1, 3])
 
@@ -24125,26 +24379,10 @@ if active_section == "Calendar":
 
 
 
-        st.markdown(
-
-
-
-            calendar_with_logos_html(
-
-
-
-                month_model
-
-
-
-            ),
-
-
-
-            unsafe_allow_html=True,
-
-
-
+        render_clickable_month_calendar_v2(
+            month_calendar=month_model,
+            state=state,
+            team=active_team,
         )
 
 
@@ -24409,22 +24647,40 @@ if active_section == "Team Management":
 
 
 
-    render_franchise_core(
 
-
-
+    # FRANCHISE_ROSTER_ROTATION_HQ_UI_V1
+    from franchise_roster_rotation_headquarters_v1 import (
+        render_roster_rotation_headquarters_v1,
+    )
+    _roster_hq_rotation_rows_v1 = rotation_management_rows(
         state,
-
-
-
         active_team,
+    )
+    render_roster_rotation_headquarters_v1(
+        state=state,
+        team=active_team,
+        rotation_rows=_roster_hq_rotation_rows_v1,
+        team_name_resolver=team_name,
+        team_logo_resolver=team_logo_url,
+        team_colors_resolver=team_colors,
+        player_headshot_resolver=player_headshot_url,
+        commit_state=set_franchise_state,
+        disabled=trade_sync_required,
+    )
+    st.divider()
 
-
-
-        title="Franchise core",
-
-
-
+    _premium_rotation_rows_v1 = rotation_management_rows(
+        state,
+        active_team,
+    )
+    render_franchise_premium_roster_v1(
+        state=state,
+        team=active_team,
+        rotation_rows=_premium_rotation_rows_v1,
+        team_name_resolver=team_name,
+        team_logo_resolver=team_logo_url,
+        team_colors_resolver=team_colors,
+        player_headshot_resolver=player_headshot_url,
     )
 
 
@@ -25561,27 +25817,7 @@ model.
 
 
 
-    rotation_rows = (
-
-
-
-        rotation_management_rows(
-
-
-
-            state,
-
-
-
-            active_team,
-
-
-
-        )
-
-
-
-    )
+    rotation_rows = _premium_rotation_rows_v1
 
 
 
@@ -26318,6 +26554,7 @@ if active_section == "Staff":
         state,
         active_team=active_team,
         controlled_teams=controlled_teams,
+        commit_state=set_franchise_state,
     )
 
 
@@ -26660,6 +26897,43 @@ if active_section == "Game Day":
 
             ]
 
+            render_schedule_ribbon_v4(
+                state=state,
+                team=active_team,
+                team_logo_resolver=team_logo_url,
+                selected_game_id=(
+                    st.session_state.get(FRANCHISE_GAME_ARCHIVE_SESSION_KEY)
+                    or current_game.game_id
+                ),
+                title="Game Day calendar",
+            )
+
+            _franchise_archive_game_v1 = str(
+                st.session_state.get(FRANCHISE_GAME_ARCHIVE_SESSION_KEY, "")
+                or ""
+            )
+            if _franchise_archive_game_v1:
+                render_latest_committed_game(state, active_team=active_team)
+                st.markdown("### Upcoming matchup")
+                st.caption(
+                    "Your next live matchup remains loaded below while you review the completed game."
+                )
+
+
+            game_date_for_broadcast = date_for_day_index(
+                state.settings.season_label,
+                current_game.day_index,
+            ).strftime("%A · %B %d")
+            render_game_day_broadcast_v1(
+                state=state,
+                game=current_game,
+                active_team=active_team,
+                game_date_label=game_date_for_broadcast,
+                team_name_resolver=team_name,
+                team_logo_resolver=team_logo_url,
+                team_colors_resolver=team_colors,
+            )
+
 
 
             st.markdown(
@@ -26670,7 +26944,7 @@ if active_section == "Game Day":
 
 
 
-                    '<div class="fm-matchup-card">'
+                    '<div class="fm-matchup-card fgb-legacy-matchup">'
 
 
 
@@ -26746,372 +27020,82 @@ if active_section == "Game Day":
 
 
 
-            st.markdown("### Pregame Health Brief")
-
-
-
-            st.caption(
-
-
-
-                "Risk is recalculated for this exact game day, "
-
-
-
-                "so a back-to-back can change the recommendation."
-
-
-
-            )
-
-
-
             matchup_health = []
-
-
-
             for matchup_team in (
-
-
-
                 current_game.away_team,
-
-
-
                 current_game.home_team,
-
-
-
             ):
-
-
-
                 matchup_health.extend(
-
-
-
                     player_health_report_rows(
-
-
-
                         state,
-
-
-
                         matchup_team,
-
-
-
-                        day_index=(
-
-
-
-                            current_game.day_index
-
-
-
-                        ),
-
-
-
+                        day_index=current_game.day_index,
                     )
-
-
-
                 )
-
-
 
             elevated_health = [
-
-
-
                 row
-
-
-
                 for row in matchup_health
-
-
-
                 if (
-
-
-
                     row["status"] != "Healthy"
-
-
-
-                    or row["risk"]
-
-
-
-                    in {
-
-
-
-                        "High",
-
-
-
-                        "Elevated",
-
-
-
-                    }
-
-
-
-                    or float(
-
-
-
-                        row["fatigue"]
-
-
-
-                    )
-
-
-
-                    >= 60.0
-
-
-
+                    or row["risk"] in {"High", "Elevated"}
+                    or float(row["fatigue"]) >= 60.0
                 )
-
-
-
             ]
-
-
-
-            if elevated_health:
-
-
-
-                st.dataframe(
-
-
-
-                    pd.DataFrame(
-
-
-
-                        elevated_health
-
-
-
-                    )[
-
-
-
-                        [
-
-
-
-                            "player",
-
-
-
-                            "status",
-
-
-
-                            "fatigue",
-
-
-
-                            "risk",
-
-
-
-                            "planned_minutes",
-
-
-
-                            "explanation",
-
-
-
-                        ]
-
-
-
-                    ],
-
-
-
-                    hide_index=True,
-
-
-
-                    width="stretch",
-
-
-
-                )
-
-
-
-            else:
-
-
-
-                st.success(
-
-
-
-                    "No elevated medical or workload flags "
-
-
-
-                    "for this matchup."
-
-
-
-                )
-
-
-
-
-
-
-
             recommended_sit = tuple(
-
-
-
                 dict.fromkeys(
-
-
-
                     (
-
-
-
                         *recommended_rest_player_ids(
-
-
-
                             state,
-
-
-
                             current_game.away_team,
-
-
-
-                            day_index=(
-
-
-
-                                current_game.day_index
-
-
-
-                            ),
-
-
-
+                            day_index=current_game.day_index,
                         ),
-
-
-
                         *recommended_rest_player_ids(
-
-
-
                             state,
-
-
-
                             current_game.home_team,
-
-
-
-                            day_index=(
-
-
-
-                                current_game.day_index
-
-
-
-                            ),
-
-
-
+                            day_index=current_game.day_index,
                         ),
-
-
-
                     )
-
-
-
                 )
-
-
-
             )
 
-
-
-            if recommended_sit:
-
-
-
-                st.warning(
-
-
-
-                    "Load-management suggestion: "
-
-
-
-                    + ", ".join(
-
-
-
-                        state.players[
-
-
-
-                            player_id
-
-
-
-                        ].player_name
-
-
-
-                        for player_id
-
-
-
-                        in recommended_sit
-
-
-
+            with st.expander(
+                "Medical & workload report",
+                expanded=bool(elevated_health or recommended_sit),
+            ):
+                st.caption(
+                    "Game-day availability is recalculated for this exact date, "
+                    "so back-to-backs, fatigue, and injuries can change the recommendation."
+                )
+                if elevated_health:
+                    st.dataframe(
+                        pd.DataFrame(elevated_health)[
+                            [
+                                "player",
+                                "status",
+                                "fatigue",
+                                "risk",
+                                "planned_minutes",
+                                "explanation",
+                            ]
+                        ],
+                        hide_index=True,
+                        width="stretch",
+                    )
+                else:
+                    st.success(
+                        "No elevated medical or workload flags for this matchup."
                     )
 
-
-
-                    + ". This is optional and based on "
-
-
-
-                    "modeled workload risk."
-
-
-
-                )
-
-
-
-
-
+                if recommended_sit:
+                    st.warning(
+                        "Load-management suggestion: "
+                        + ", ".join(
+                            state.players[player_id].player_name
+                            for player_id in recommended_sit
+                        )
+                        + ". This is optional and based on modeled workload risk."
+                    )
 
 
             game_roster_ids = [
@@ -27214,7 +27198,8 @@ if active_section == "Game Day":
 
 
 
-            render_latest_committed_game(state)
+            if not st.session_state.get(FRANCHISE_GAME_ARCHIVE_SESSION_KEY):
+                render_latest_committed_game(state, active_team=active_team)
 
 
 
@@ -27326,7 +27311,17 @@ if active_section == "Game Day":
 
 
 
+                _game_day_perf_started_v7 = time.perf_counter()
+
+
+
                 try:
+
+
+
+                    # FRANCHISE_GAME_DAY_STAGE_PROFILER_V7_0_3
+                    _game_day_stage_times_v7_0_3 = {}
+                    _game_day_stage_started_v7_0_3 = time.perf_counter()
 
 
 
@@ -27358,7 +27353,117 @@ if active_section == "Game Day":
 
 
 
-                    set_franchise_state(updated)
+                    _game_day_stage_times_v7_0_3["user_game"] = round(
+                        time.perf_counter() - _game_day_stage_started_v7_0_3, 3
+                    )
+                    _game_day_stage_started_v7_0_3 = time.perf_counter()
+
+
+
+                    try:
+                        updated, _league_sync_report_v1 = catch_up_cpu_schedule_v1(
+                            updated,
+                            controlled_teams=controlled_teams,
+                            # Reuse the private transaction created by
+                            # commit_game_transactionally().
+                            private_transactional_state=True,
+                        )
+                    except LeagueCalendarSyncError as exc:
+                        raise FranchiseCommandCenterError(
+                            str(exc)
+                        ) from exc
+                    st.session_state[
+                        "franchise_last_league_sync_v1"
+                    ] = _league_sync_report_v1
+                    _game_day_stage_times_v7_0_3["league_sync"] = round(
+                        time.perf_counter() - _game_day_stage_started_v7_0_3, 3
+                    )
+                    _game_day_stage_started_v7_0_3 = time.perf_counter()
+                    # FRANCHISE_POSTGAME_PERFORMANCE_HOTFIX_V6_0_1
+                    # Defer persistence until every postgame system finishes.
+                    # FRANCHISE_CPU_AUTONOMOUS_TRADE_MARKET_V6A
+                    try:
+                        _cpu_trade_tick_v6a = run_cpu_autonomous_trade_market_v1(
+                            runtime,
+                            updated,
+                            trade_state,
+                            controlled_teams=controlled_teams,
+                            # FRANCHISE_TRADE_MARKET_PERFORMANCE_V7_4
+                            # This postgame state is already the private copy
+                            # owned by commit_game_transactionally().
+                            private_transactional_state=True,
+                        )
+                    except CPUAutonomousTradeMarketError as exc:
+                        st.session_state[
+                            "franchise_cpu_trade_market_warning_v6a"
+                        ] = str(exc)
+                    else:
+                        st.session_state[
+                            "franchise_cpu_trade_market_last_result_v6a"
+                        ] = _cpu_trade_tick_v6a.to_payload()
+                        if _cpu_trade_tick_v6a.changed:
+                            updated = _cpu_trade_tick_v6a.state
+                    _game_day_stage_times_v7_0_3["cpu_trade_market"] = round(
+                        time.perf_counter() - _game_day_stage_started_v7_0_3, 3
+                    )
+                    _game_day_stage_started_v7_0_3 = time.perf_counter()
+                    # FRANCHISE_CPU_INCOMING_TRADE_OFFERS_V6B
+                    if not (
+                        '_cpu_trade_tick_v6a' in locals()
+                        and _cpu_trade_tick_v6a.committed
+                    ):
+                        try:
+                            _incoming_offer_tick_v6b = run_cpu_incoming_trade_offer_tick_v1(
+                                runtime,
+                                updated,
+                                trade_state,
+                                controlled_teams=controlled_teams,
+                                # FRANCHISE_TRADE_MARKET_PERFORMANCE_V7_3
+                                # commit_game_transactionally() already produced
+                                # an isolated franchise copy for this postgame
+                                # transaction, so V6B need not clone it again.
+                                private_transactional_state=True,
+                            )
+                        except CPUIncomingTradeOfferError as exc:
+                            st.session_state[
+                                'franchise_cpu_incoming_offer_warning_v6b'
+                            ] = str(exc)
+                        else:
+                            st.session_state[
+                                'franchise_cpu_incoming_offer_last_result_v6b'
+                            ] = _incoming_offer_tick_v6b.to_payload()
+                            if _incoming_offer_tick_v6b.changed:
+                                updated = _incoming_offer_tick_v6b.state
+
+                    _game_day_stage_times_v7_0_3["incoming_offers"] = round(
+                        time.perf_counter() - _game_day_stage_started_v7_0_3, 3
+                    )
+                    # FRANCHISE_TRADE_MARKET_PERFORMANCE_V7_2_1
+                    # Preserve the aggregate V6B timer while surfacing the
+                    # engine's internal diagnostic breakdown for due scans.
+                    _v6b_timing_detail_v7_2_1 = {}
+                    if '_incoming_offer_tick_v6b' in locals():
+                        _v6b_timing_detail_v7_2_1 = dict(
+                            getattr(
+                                _incoming_offer_tick_v6b,
+                                'timing_breakdown',
+                                {},
+                            )
+                            or {}
+                        )
+                    _game_day_stage_started_v7_0_3 = time.perf_counter()
+
+                    # One validation + one durable checkpoint for the
+                    # controlled game, league catch-up and market passes.
+                    set_franchise_state(
+                        updated,
+                        checkpoint_reason=(
+                            'franchise-postgame-batched-v6-0-1'
+                        ),
+                    )
+                    _game_day_stage_times_v7_0_3["checkpoint_save"] = round(
+                        time.perf_counter() - _game_day_stage_started_v7_0_3, 3
+                    )
 
 
 
@@ -27438,6 +27543,66 @@ if active_section == "Game Day":
 
 
 
+                    _game_day_perf_seconds_v7 = (
+
+
+
+                        time.perf_counter() - _game_day_perf_started_v7
+
+
+
+                    )
+
+
+
+                    st.session_state[
+
+
+
+                        "franchise_last_game_day_performance_v7"
+
+
+
+                    ] = {
+
+
+
+                        "total_seconds": round(_game_day_perf_seconds_v7, 3),
+
+
+
+                        "cpu_games_simulated": int(
+
+
+
+                            _league_sync_report_v1.get("games_simulated", 0)
+
+
+
+                        ),
+
+
+
+                        "cpu_sync_seconds": float(
+
+
+
+                            _league_sync_report_v1.get("elapsed_seconds", 0.0)
+
+
+
+                        ),
+
+
+
+                        "stage_times": dict(_game_day_stage_times_v7_0_3),
+
+
+
+                    }
+
+
+
                     st.session_state[
 
 
@@ -27450,15 +27615,91 @@ if active_section == "Game Day":
 
 
 
-                        "Game committed. The final result is "
+                        f"Game committed in {_game_day_perf_seconds_v7:.1f}s | "
 
 
 
-                        "ready in Game Day, and the next controlled "
+                        f"user game {_game_day_stage_times_v7_0_3.get('user_game', 0.0):.1f}s | "
 
 
 
-                        "matchup has been loaded."
+                        f"league sync {_game_day_stage_times_v7_0_3.get('league_sync', 0.0):.1f}s "
+
+
+
+                        f"({int(_league_sync_report_v1.get('games_simulated', 0))} CPU games) | "
+
+
+
+                        f"markets {(_game_day_stage_times_v7_0_3.get('cpu_trade_market', 0.0) + _game_day_stage_times_v7_0_3.get('incoming_offers', 0.0)):.1f}s "
+
+
+
+                        f"(V6A {_game_day_stage_times_v7_0_3.get('cpu_trade_market', 0.0):.1f}s | "
+
+
+
+                        f"V6B {_game_day_stage_times_v7_0_3.get('incoming_offers', 0.0):.1f}s) | "
+
+
+
+                        f"V6B detail copy {_v6b_timing_detail_v7_2_1.get('state_copy', 0.0):.2f}s | "
+
+
+
+                        f"ctx {_v6b_timing_detail_v7_2_1.get('context_build', 0.0):.2f}s | "
+
+
+
+                        f"order {_v6b_timing_detail_v7_2_1.get('team_order', 0.0):.2f}s | "
+
+
+
+                        f"F1 {_v6b_timing_detail_v7_2_1.get('finder_1', 0.0):.2f}s | "
+
+
+
+                        f"F2 {_v6b_timing_detail_v7_2_1.get('finder_2', 0.0):.2f}s | "
+
+
+
+                        f"ctx detail ledger {_v6b_timing_detail_v7_2_1.get('ctx_ledger', 0.0):.2f}s "
+
+
+
+                        f"fin {_v6b_timing_detail_v7_2_1.get('ctx_financial', 0.0):.2f}s "
+
+
+
+                        f"contracts {_v6b_timing_detail_v7_2_1.get('ctx_contracts', 0.0):.2f}s "
+
+
+
+                        f"profiles {_v6b_timing_detail_v7_2_1.get('ctx_profiles', 0.0):.2f}s "
+
+
+
+                        f"market {_v6b_timing_detail_v7_2_1.get('ctx_market_contexts', 0.0):.2f}s "
+
+
+
+                        f"players {_v6b_timing_detail_v7_2_1.get('ctx_player_pool', 0.0):.2f}s "
+
+
+
+                        f"picks {_v6b_timing_detail_v7_2_1.get('ctx_pick_pool', 0.0):.2f}s "
+
+
+
+                        f"maps {_v6b_timing_detail_v7_2_1.get('ctx_maps', 0.0):.2f}s "
+
+
+
+                        f"freeze {_v6b_timing_detail_v7_2_1.get('ctx_freeze', 0.0):.2f}s | "
+
+
+
+                        f"save {_game_day_stage_times_v7_0_3.get('checkpoint_save', 0.0):.1f}s."
 
 
 
@@ -27956,6 +28197,17 @@ if active_section == "Game Day":
 
 
 
+
+
+if active_section == "League Stories":
+    render_league_story_center_v1(
+        state=state,
+        active_team=active_team,
+        team_name_resolver=team_name,
+        team_logo_resolver=team_logo_url,
+        team_colors_resolver=team_colors,
+        player_headshot_resolver=player_headshot_url,
+    )
 
 
 if active_section == "Stats & Standings":
@@ -28522,6 +28774,27 @@ if active_section == "Stats & Standings":
 
 
 
+if active_section == "Franchise Legacy":
+    # FRANCHISE_LEAGUE_HISTORY_SEASON_RECAP_V1_RENDER
+    render_league_history_season_recap_v1(
+        state=state,
+        trade_state=trade_state,
+        active_team=active_team,
+        team_name_resolver=team_name,
+        team_logo_resolver=team_logo_url,
+        primary=primary,
+        secondary=secondary,
+    )
+    st.divider()
+    render_franchise_timeline_trophy_room_v1(
+        state=state,
+        trade_state=trade_state,
+        active_team=active_team,
+        team_name_resolver=team_name,
+        team_logo_resolver=team_logo_url,
+    )
+
+
 if active_section == "Free Agency":
     # FRANCHISE_EMBEDDED_FREE_AGENCY_V1
     from franchise_free_agency_workspace_v1 import (
@@ -28558,16 +28831,13 @@ if active_section == "Free Agency":
 
 if active_section == "Trade Center":
     # FRANCHISE_TRADE_AUTHORITY_V1
-    st.caption(
-        "This is the only workspace that commits trades to Franchise Mode. "
-        "It uses the live evolving franchise roster, contracts, draft capital, "
-        "financial state, and transaction history."
-    )
-    render_live_asset_ledger(
+    # FRANCHISE_TRADE_WAR_ROOM_V1
+    render_franchise_trade_war_room_v1(
         runtime,
         state,
         trade_state,
         active_team,
+        player_headshot_resolver=player_headshot_url,
     )
 
 
@@ -28620,7 +28890,7 @@ if active_section == "Draft Room":
 
 
 
-        / "franchise_draft_ui_v1.py"
+        / "franchise_draft_night_experience_v1.py"
 
 
 
@@ -28656,7 +28926,7 @@ if active_section == "Draft Room":
 
 
 
-    _draft_module_name = "_franchise_draft_ui_v1_live"
+    _draft_module_name = "_franchise_draft_night_experience_v1_live"
 
 
 
@@ -28756,7 +29026,7 @@ if active_section == "Draft Room":
 
 
 
-            "The on-disk Draft UI is not V1.1-compatible. "
+            "The on-disk Draft Night Experience is not V1-compatible. "
 
 
 
@@ -28837,116 +29107,29 @@ if active_section == "Draft Room":
 
 
 if active_section == "League & Offseason":
-    # FRANCHISE_FLAGSHIP_OFFSEASON_EXPERIENCE_V1
-    # Franchise Mode owns the offseason lifecycle. The dedicated specialist
-    # pages are launched from this command center rather than feeling like
-    # unrelated products.
-    _flagship_phase = str(
-        getattr(state.phase, "value", state.phase)
-    ).strip().lower()
+    render_franchise_season_journey_map_v1(
+        state=state,
+        active_team=active_team,
+        postseason_state=get_postseason_state(state, required=False),
+        draft_state_payload=draft_state(state),
+        team_name_resolver=team_name,
+        date_resolver=lambda day_index: date_for_day_index(
+            state.settings.season_label,
+            day_index,
+        ),
+        set_section=set_franchise_section,
+    )
 
-    if _flagship_phase == "offseason":
-        def _flagship_rows(value):
-            output = []
-            for row in list(value or ()):
-                if isinstance(row, dict):
-                    output.append(row)
-                elif hasattr(row, "__dict__"):
-                    output.append(vars(row))
-            return output
-
-        _flagship_market = _flagship_rows(
-            getattr(
-                state,
-                "offseason_free_agent_amount_candidates_v1",
-                (),
-            )
-        )
-        _flagship_rfa = _flagship_rows(
-            getattr(
-                state,
-                "offseason_rfa_rights_qo_decisions_v1",
-                (),
-            )
-        )
-        _flagship_non_rfa = _flagship_rows(
-            getattr(
-                state,
-                "offseason_non_rfa_rights_decisions_v1",
-                (),
-            )
-        )
-        _flagship_salary = _flagship_rows(
-            getattr(
-                state,
-                "offseason_official_team_salary_components_v1",
-                (),
-            )
-        )
-        _flagship_rights = _flagship_rfa + _flagship_non_rfa
-        _flagship_retained = sum(
-            1
-            for row in _flagship_rights
-            if float(row.get("effective_charge_2026_27") or 0.0) > 0.0
-        )
-        _flagship_qos = sum(
-            1
-            for row in _flagship_rfa
-            if str(row.get("qo_decision") or "").strip() == "issue_qo"
-        )
-        _flagship_active_salary = next(
-            (
-                float(row.get("official_modeled_team_salary") or 0.0)
-                for row in _flagship_salary
-                if str(row.get("team") or "").strip().upper()
-                == str(active_team).strip().upper()
-            ),
-            0.0,
-        )
-
-        st.markdown("## Offseason Command Center")
-        st.caption(
-            "Manage free agency, rights, qualifying offers, roster building, "
-            "trades, and the draft from the franchise lifecycle. Dedicated "
-            "workspaces open into this same durable franchise state."
-        )
-
-        _flagship_metrics = st.columns(4)
-        _flagship_metrics[0].metric("Free agents", len(_flagship_market))
-        _flagship_metrics[1].metric("Retained rights", _flagship_retained)
-        _flagship_metrics[2].metric("Qualifying offers", _flagship_qos)
-        _flagship_metrics[3].metric(
-            f"{active_team} Team Salary",
-            f"${_flagship_active_salary:,.0f}",
-        )
-
-        _flagship_actions = st.columns([1.2, 1.2, 2.1])
-        with _flagship_actions[0]:
-            if st.button(
-                "📝 Open Free Agency",
-                width="stretch",
-                key="franchise_open_embedded_free_agency",
-            ):
-                set_franchise_section("Free Agency")
-                st.rerun()
-        with _flagship_actions[1]:
-            if st.button(
-                "🔁 Open Trade Center",
-                width="stretch",
-                key="franchise_open_live_trade_center",
-            ):
-                set_franchise_section("Trade Center")
-                st.rerun()
-        with _flagship_actions[2]:
-            st.info(
-                "Free Agency and the Trade Center are live Franchise Mode "
-                "workspaces. The standalone Trade Machine is a separate "
-                "2026-27 sandbox and never changes this franchise."
-            )
-
-        st.divider()
-
-
+    # FRANCHISE_OFFSEASON_HEADQUARTERS_V1
+    render_franchise_offseason_headquarters_v1(
+        state=state,
+        active_team=active_team,
+        postseason_state=get_postseason_state(state, required=False),
+        draft_state_payload=draft_state(state),
+        team_name_resolver=team_name,
+        set_section=set_franchise_section,
+        blocking_count=len(blocking_events(state)),
+    )
 
 
     league_metrics = st.columns(5)
@@ -29171,11 +29354,79 @@ if active_section == "League & Offseason":
         controlled_teams=controlled_teams,
     )
 
+    _league_calendar_status_v1 = league_calendar_sync_status_v1(
+        state,
+        controlled_teams=controlled_teams,
+    )
+    if _league_calendar_status_v1["cpu_games_before_next_controlled"] > 0:
+        _backlog_v1 = int(
+            _league_calendar_status_v1["cpu_games_before_next_controlled"]
+        )
+        st.error(
+            f"League calendar backlog detected: {_backlog_v1} computer-managed "
+            "game(s) are still unplayed before the next controlled-team matchup. "
+            "This can leave standings, player statistics, awards, morale, and "
+            "league history out of sync."
+        )
+        if st.button(
+            "Repair league calendar now",
+            type="primary",
+            key="franchise_repair_league_calendar_v1",
+        ):
+            try:
+                _synced_state_v1, _sync_report_v1 = catch_up_cpu_schedule_v1(
+                    state,
+                    controlled_teams=controlled_teams,
+                )
+                set_franchise_state(
+                    _synced_state_v1,
+                    checkpoint_reason="league-calendar-repair-v1",
+                )
+            except LeagueCalendarSyncError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state["franchise_last_league_sync_v1"] = _sync_report_v1
+                st.session_state["franchise_notice"] = (
+                    f"League calendar repaired. Simulated "
+                    f"{_sync_report_v1['games_simulated']} computer-managed game(s) "
+                    "and stopped before the next controlled matchup."
+                )
+                st.rerun()
+    else:
+        st.caption(
+            "League calendar integrity: synchronized through the next "
+            "controlled-team decision."
+        )
+
+    from franchise_cpu_morale_response_v1 import render_cpu_morale_response_audit_v1
+    render_cpu_morale_response_audit_v1(
+        state,
+        controlled_teams=controlled_teams,
+    )
 
 
 
 
 
+
+
+
+    # FRANCHISE_MORALE_TRADE_MARKET_UI_V5A
+    from franchise_morale_trade_market_v1 import (
+        render_morale_trade_market_audit_v1,
+    )
+    render_morale_trade_market_audit_v1(
+        state,
+        controlled_teams=controlled_teams,
+    )
+    # FRANCHISE_CPU_AUTONOMOUS_TRADE_MARKET_UI_V6A
+    render_cpu_autonomous_trade_market_v1(
+        state,
+        controlled_teams=controlled_teams,
+    )
+    render_cpu_incoming_trade_offer_market_status_v1(
+        state,
+    )
 
     with st.expander(
 

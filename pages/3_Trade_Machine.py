@@ -68,6 +68,10 @@ st.set_page_config(
     page_icon="🔄",
     layout="wide",
 )
+# FRANCHISE_PRIMARY_NAV_V1
+from src.franchise_primary_navigation_v1 import render_franchise_primary_navigation_v1
+render_franchise_primary_navigation_v1()
+
 
 
 TRADE_MACHINE_SANDBOX_VERSION = "trade-machine-sandbox-anchor-v1-2026-08-16"

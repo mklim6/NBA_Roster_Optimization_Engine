@@ -2670,6 +2670,7 @@ def simulate_scheduled_game(
     sit_player_ids: Iterable[str] = (),
     config: GameSimulationConfig | None = None,
     _private_working_state: bool = False,
+    _defer_global_state_validation: bool = False,
 ) -> SimulatedGame:
     resolved_config = (
         resolve_game_environment_config(
@@ -2759,20 +2760,28 @@ def simulate_scheduled_game(
         config=resolved_config,
     )
 
-    home_plan = build_team_game_plan(
-        working_state,
-        working_scheduled.home_team,
-        sit_player_ids=sit_ids,
-        overtime_periods=overtime_periods,
-        config=resolved_config,
-    )
-    away_plan = build_team_game_plan(
-        working_state,
-        working_scheduled.away_team,
-        sit_player_ids=sit_ids,
-        overtime_periods=overtime_periods,
-        config=resolved_config,
-    )
+    # FRANCHISE_GAME_DAY_PERFORMANCE_V7:
+    # Regulation plans are already the exact plans needed by the box-score
+    # engine for non-overtime games. Rebuilding both teams a second time was
+    # duplicate rotation/minute work with identical output.
+    if overtime_periods:
+        home_plan = build_team_game_plan(
+            working_state,
+            working_scheduled.home_team,
+            sit_player_ids=sit_ids,
+            overtime_periods=overtime_periods,
+            config=resolved_config,
+        )
+        away_plan = build_team_game_plan(
+            working_state,
+            working_scheduled.away_team,
+            sit_player_ids=sit_ids,
+            overtime_periods=overtime_periods,
+            config=resolved_config,
+        )
+    else:
+        home_plan = home_regulation_plan
+        away_plan = away_regulation_plan
 
     home_lines = build_player_box_scores(
         rng,
@@ -2850,6 +2859,10 @@ def simulate_scheduled_game(
         record_completed_game(
             working_state,
             game,
+            _completed_game_already_validated=True,
+            _defer_global_state_validation=(
+                _defer_global_state_validation
+            ),
         )
 
     health_update = (

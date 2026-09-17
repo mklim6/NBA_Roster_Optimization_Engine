@@ -172,11 +172,20 @@ def main() -> int:
             setattr(api, name, value)
 
     src = (SRC / "franchise_free_agency_cpu_execution_v1.py").read_text(encoding="utf-8")
-    no_market = src.find("if not plan.opportunities:")
-    rescue_call = src.find("build_cpu_roster_floor_rescue_opportunity(", no_market)
+    next_step = src.find("def execute_next_cpu_free_agency_signing_durably(")
+    plan_build = src.find("plan = build_cpu_free_agency_execution_plan(", next_step)
+    rescue_call = src.find("rescue = build_cpu_roster_floor_rescue_opportunity(", next_step)
+    no_market = src.find("if not plan.opportunities:", rescue_call)
     normal_market = src.find("opportunity = plan.opportunities[0]", no_market)
-    checks["rescue_is_only_reached_after_standard_market_exhausts"] = (
-        no_market >= 0 and rescue_call > no_market and normal_market > rescue_call
+    checks["roster_floor_rescue_precedes_standard_market"] = (
+        next_step >= 0
+        and rescue_call > next_step
+        and plan_build > rescue_call
+        and no_market > rescue_call
+        and normal_market > no_market
+    )
+    checks["roster_floor_rescue_skips_unused_full_market_plan"] = (
+        rescue_call > next_step and plan_build > rescue_call
     )
     checks["rescue_does_not_bypass_financial_preview"] = (
         "build_rights_exception_free_agency_preview(state, base_offer)" in src
@@ -195,6 +204,7 @@ def main() -> int:
         and report.get("roster_floor_rescue_requires_underfilled_team") is True
         and report.get("roster_floor_rescue_preserves_locked_financial_gate") is True
         and report.get("roster_floor_rescue_requires_player_acceptance") is True
+        and report.get("roster_floor_rescue_prioritized_before_standard_market") is True
     )
 
     failed = [name for name, passed in checks.items() if not passed]

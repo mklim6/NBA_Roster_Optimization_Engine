@@ -1,4 +1,4 @@
-﻿# Python cache
+# Python cache
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -36,3 +36,20 @@ backups/
 
 # User-generated league scenarios
 app_data/league_scenarios/*.json
+
+# BEGIN NBA FRANCHISE RELEASE LOCAL ARTIFACTS V1
+# Generated package / installer folders retained locally, not release source.
+/franchise_*/
+
+# Generated scratch, probe, and extraction folders retained locally.
+/_*/
+/.*/
+
+# Preserve repository configuration if present.
+!/.github/
+!/.github/**
+
+# Generated source snapshots and locally downloaded install archives.
+/CURRENT_SOURCE_SNAPSHOT/
+/*.zip
+# END NBA FRANCHISE RELEASE LOCAL ARTIFACTS V1

@@ -157,11 +157,11 @@ def run_validation() -> dict[str, Any]:
         "what_if_invalidation": (
             "current_preview_request"
         ),
-        "latest_committed_result": (
-            "Latest committed result"
+        "game_day_final_broadcast": (
+            "render_game_day_final_v1("
         ),
         "automatic_next_game": (
-            "matchup has been loaded."
+            '"Open next game"'
         ),
         "standings_tables": (
             "standings_rows("
@@ -169,11 +169,11 @@ def run_validation() -> dict[str, Any]:
         "player_leaders": (
             '"Regular Season Leaders"'
         ),
-        "trade_needs": (
-            "render_live_asset_ledger("
+        "trade_war_room": (
+            "render_franchise_trade_war_room_v1("
         ),
-        "trade_machine_link": (
-            "Open Trade Center"
+        "trade_center_route": (
+            '"Trade Center"'
         ),
         "draft_strength_setting": (
             "Generated draft-class strength"

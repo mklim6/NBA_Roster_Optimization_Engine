@@ -17,7 +17,7 @@ from typing import Any, Iterable
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 OUTPUT = ROOT / "outputs" / "franchise_release_candidate_gate_v1.json"
-VERSION = "franchise-release-candidate-gate-v1.1-2026-09-11"
+VERSION = "franchise-release-candidate-gate-v1.2-2026-09-16"
 
 
 @dataclass(frozen=True)
@@ -375,6 +375,22 @@ def main() -> int:
         ),
         ("draft_forfeiture_validation", "validate_franchise_draft_forfeitures_v1.py"),
         ("live_asset_ledger_validation", "validate_franchise_live_asset_ledger_v1.py"),
+        ("morale_v3_0_2_validation", "validate_franchise_morale_v3_0_2_dnp_ui_hotfix.py"),
+        ("morale_v3_0_2_regression", "run_franchise_morale_v3_0_2_dnp_ui_hotfix_regression.py"),
+        ("cpu_morale_v4_validation", "validate_franchise_cpu_morale_reactions_v4.py"),
+        ("cpu_morale_v4_regression", "run_franchise_cpu_morale_reactions_v4_regression.py"),
+        ("morale_trade_market_v5a_validation", "validate_franchise_morale_trade_market_bridge_v5a.py"),
+        ("morale_trade_market_v5a_regression", "run_franchise_morale_trade_market_bridge_v5a_regression.py"),
+        ("morale_trade_finder_v5b_validation", "validate_franchise_morale_trade_finder_bridge_v5b.py"),
+        ("morale_trade_finder_v5b_regression", "run_franchise_morale_trade_finder_bridge_v5b_regression.py"),
+        ("cpu_autonomous_trade_v6a_validation", "validate_franchise_cpu_autonomous_trade_market_v6a.py"),
+        ("cpu_autonomous_trade_v6a_regression", "run_franchise_cpu_autonomous_trade_market_v6a_regression.py"),
+        ("cpu_incoming_offers_v6b_validation", "validate_franchise_cpu_incoming_trade_offers_v6b.py"),
+        ("cpu_incoming_offers_v6b_regression", "run_franchise_cpu_incoming_trade_offers_v6b_regression.py"),
+        ("game_day_calendar_sync_validation", "validate_franchise_game_day_league_calendar_sync_v1.py"),
+        ("game_day_calendar_sync_regression", "run_franchise_game_day_league_calendar_sync_v1_regression.py"),
+        ("postgame_hotfix_v6_0_1_validation", "validate_franchise_postgame_performance_offer_hotfix_v6_0_1.py"),
+        ("postgame_hotfix_v6_0_1_regression", "run_franchise_postgame_performance_offer_hotfix_v6_0_1_regression.py"),
     ]
     for name, filename in dedicated:
         stages.append(_run_stage(name, [sys.executable, str(SRC / filename)]))

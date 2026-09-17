@@ -1,6 +1,6 @@
 # Franchise Mode V1 Release Checklist
 
-Updated: September 11, 2026
+Updated: September 17, 2026
 
 ## Release status
 
@@ -9,6 +9,12 @@ The Sep. 7, 2026 live-start universe is the V1 release candidate. The protected
 forfeiture drafts resolve to 59 picks in 2029-2033, the 2034 draft returns to
 60 picks, and deep-season CPU Free Agency now has a dedicated V2 performance
 validator/probe.
+
+The clean local package and isolated post-package smoke are complete. All six
+Streamlit pages render from the extracted package, and the protected lifecycle
+smoke passes live start, opening night, one simulated game, save/reload, and
+recovery. The remaining required administrative step is owner review followed
+by the release commit/tag.
 
 ## Required before launch
 
@@ -21,6 +27,15 @@ validator/probe.
    `python src/run_franchise_release_candidate_gate_v1.py`.
 4. Confirm the gate reports the active checkpoint family unchanged.
 5. Review the final Git diff/status and create the V1 release commit/tag.
+
+## Local package
+
+Build the clean local package with
+`python src/build_franchise_local_release_v1.py`. The explicit allowlist keeps
+runtime data, visual assets, staff data, pages, and source code while excluding
+the active franchise checkpoint, recovery files, local scenarios, generated
+probes, development datasets, and historical staging artifacts. Verify the ZIP
+against its adjacent `.sha256` sidecar before distribution.
 
 ## Optional confidence extension
 

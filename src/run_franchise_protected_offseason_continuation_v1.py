@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 OUTPUT = ROOT / "outputs" / "franchise_protected_offseason_continuation_v1.json"
 RUNS = ROOT / "outputs" / "_soak_resume"
-VERSION = "franchise-protected-offseason-continuation-v1.1-2026-09-11"
+VERSION = "franchise-protected-offseason-continuation-v1.2-staff-invariant-2026-09-17"
 MAX_CONTINUED_SEASONS = 6
 
 if str(SRC) not in sys.path:
@@ -37,6 +37,7 @@ from run_franchise_protected_lifecycle_boundary_regression_v1 import (
 from run_franchise_protected_multi_season_soak_v1 import (
     EXPECTED_FORFEIT_DRAFT_SIZES,
     _population_metrics,
+    _staff_personnel_signature,
     _trade_registry_covers_non_synthetic_players,
     _validate_boundary_state,
 )
@@ -195,7 +196,10 @@ def run_continuation(
                 )
 
             staff_signature = _staff_signature(source_state)
-            checks["source_staff_signature_present"] = bool(staff_signature)
+            staff_personnel_signature = _staff_personnel_signature(source_state)
+            checks["source_staff_signature_present"] = bool(
+                staff_signature and staff_personnel_signature
+            )
             history_count_before = len(getattr(source_state, "season_history", []) or [])
             report["details"]["source_season"] = source_season
             report["details"]["source_season_history_count"] = history_count_before
@@ -527,7 +531,7 @@ def run_continuation(
                         for key, value in _validate_boundary_state(
                             next_cp.simulation_state,
                             target_season=target_season,
-                            staff_signature=staff_signature,
+                            staff_personnel_signature=staff_personnel_signature,
                             staff_version=STAFF_SYSTEM_VERSION,
                         ).items()
                     }
@@ -578,8 +582,9 @@ def run_continuation(
                 len(season_reports) == seasons
                 and all(bool(item.get("passed")) for item in season_reports)
             )
-            checks["staff_signature_survived"] = (
-                _staff_signature(current_cp.simulation_state) == staff_signature
+            checks["staff_personnel_signature_survived"] = (
+                _staff_personnel_signature(current_cp.simulation_state)
+                == staff_personnel_signature
             )
             checks["season_history_advanced_by_continuation_depth"] = (
                 len(getattr(current_cp.simulation_state, "season_history", []) or [])

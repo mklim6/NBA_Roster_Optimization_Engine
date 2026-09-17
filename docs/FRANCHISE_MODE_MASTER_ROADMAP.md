@@ -4,6 +4,32 @@ This roadmap preserves the long-term direction for the NBA Roster Optimization
 Engine. New systems should use durable league state, transactional mutations,
 explainable AI, configurable realism, and a shared decision inbox.
 
+## Implementation status snapshot — September 17, 2026
+
+This is a long-term product roadmap, not a list of current release blockers.
+
+- **Initial-release complete or substantially complete:** persistent multi-season
+  state, checkpoint recovery, regular season/postseason/offseason lifecycle,
+  generated Draft classes and Draft Night, contracts and Free Agency, live trades
+  and Trade War Room, health/fatigue, player development, staff foundation,
+  onboarding, guided navigation, league stories, milestones, trophy history,
+  Morale V3, CPU morale reactions, morale-aware trade discovery, autonomous
+  CPU-to-CPU trades, and incoming user trade offers.
+- **Partially implemented:** deeper staff workflows, scouting uncertainty and
+  resource allocation, multi-round AI negotiation memory, coach/owner pressure,
+  and broader relationship/chemistry effects beyond the current morale and role
+  system.
+- **Future expansion:** relationship-driven player world, coaching carousel
+  depth, owner operations, summer league/training camp, and
+  possession-by-possession Interactive Coach Mode.
+- **Current release work:** the 120-check canonical regression suite, protected
+  eight-season lifecycle soak, deep-season Free Agency optimization, and
+  non-destructive release gate are complete. Remaining work is packaging, one
+  post-package Streamlit smoke, and optional roster-ecology/progress polish.
+
+Detailed current evidence and remaining-hour estimates are maintained in
+`FRANCHISE_MODE_CURRENT_STATUS.md`.
+
 ## Foundation and usability
 
 - Persistent multi-season franchises and durable checkpoints

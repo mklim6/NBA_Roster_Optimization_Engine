@@ -4,6 +4,7 @@ import base64
 import csv
 import hashlib
 import mimetypes
+import re
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote
@@ -11,7 +12,7 @@ from typing import Any
 
 
 GENERATED_PORTRAIT_VERSION = (
-    "franchise-stock-player-portraits-v2-2026-08-11"
+    "franchise-pexels-goofy-player-portraits-v3-2026-09-12"
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,12 +97,27 @@ def stock_portrait_available() -> bool:
     return bool(_stock_rows())
 
 
+def _stock_portrait_index(player_id: Any, row_count: int) -> int:
+    if row_count <= 0:
+        return 0
+
+    text = str(player_id or "").strip()
+    match = re.match(r"^(.*?)(\d+)$", text)
+    if match:
+        prefix = match.group(1)
+        ordinal = int(match.group(2))
+        offset = int.from_bytes(_digest(prefix)[:8], "big") % row_count
+        return (offset + max(0, ordinal - 1)) % row_count
+
+    seed = _digest(text)
+    return int.from_bytes(seed[:8], "big") % row_count
+
+
 def stock_portrait_metadata(player_id: Any) -> dict[str, str] | None:
     rows = _stock_rows()
     if not rows:
         return None
-    seed = _digest(player_id)
-    index = int.from_bytes(seed[:8], "big") % len(rows)
+    index = _stock_portrait_index(player_id, len(rows))
     return dict(rows[index])
 
 
@@ -151,8 +167,7 @@ def generated_player_portrait_url(
 ) -> str:
     rows = _stock_rows()
     if rows:
-        seed = _digest(player_id)
-        index = int.from_bytes(seed[:8], "big") % len(rows)
+        index = _stock_portrait_index(player_id, len(rows))
         path = STOCK_DIR / rows[index]["file"]
         return _file_data_url(str(path.resolve()))
 

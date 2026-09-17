@@ -88,7 +88,7 @@ from simulation_league_state_v1 import (  # noqa: E402
 
 
 VALIDATOR_VERSION = (
-    "project-validation-runner-v1.26-2026-09-09"
+    "project-validation-runner-v1.27-2026-09-16"
 )
 QUICK_REPORT = (
     OUTPUTS / "project_validation_quick_v1.json"
@@ -1856,6 +1856,28 @@ def run_full() -> dict[str, Any]:
     )
     run_subprocess_suite(
         checks,
+        name="franchise_cpu_roster_floor_rescue_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_franchise_cpu_free_agency_roster_floor_rescue_hotfix_v1.py"
+            ),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
+        name="franchise_preseason_roster_floor_validation",
+        command=[
+            sys.executable,
+            str(
+                SRC
+                / "validate_franchise_preseason_roster_floor_live_v1.py"
+            ),
+        ],
+    )
+    run_subprocess_suite(
+        checks,
         name="season_management_ui_validation",
         command=[
             sys.executable,
@@ -2017,6 +2039,41 @@ def run_full() -> dict[str, Any]:
             ),
         ],
     )
+    # Keep the current morale/trade/calendar stack inside the canonical full
+    # gate. These features share the postgame transaction pipeline, so both
+    # static wiring validators and behavioral regressions are required.
+    current_franchise_feature_suites = (
+        ("franchise_morale_chemistry_v2_validation", "validate_franchise_morale_chemistry_sprint_v2.py"),
+        ("franchise_morale_chemistry_v2_regression", "run_franchise_morale_chemistry_sprint_v2_regression.py"),
+        ("franchise_morale_v2_1_repair_validation", "validate_franchise_morale_chemistry_v2_1_repair.py"),
+        ("franchise_morale_v2_1_repair_regression", "run_franchise_morale_chemistry_v2_1_repair_regression.py"),
+        ("franchise_morale_front_office_v3_validation", "validate_franchise_morale_front_office_consequences_v3.py"),
+        ("franchise_morale_front_office_v3_regression", "run_franchise_morale_front_office_consequences_v3_regression.py"),
+        ("franchise_morale_v3_0_1_validation", "validate_franchise_morale_v3_0_1_arrow_hotfix.py"),
+        ("franchise_morale_v3_0_1_regression", "run_franchise_morale_v3_0_1_arrow_hotfix_regression.py"),
+        ("franchise_morale_v3_0_2_validation", "validate_franchise_morale_v3_0_2_dnp_ui_hotfix.py"),
+        ("franchise_morale_v3_0_2_regression", "run_franchise_morale_v3_0_2_dnp_ui_hotfix_regression.py"),
+        ("franchise_cpu_morale_v4_validation", "validate_franchise_cpu_morale_reactions_v4.py"),
+        ("franchise_cpu_morale_v4_regression", "run_franchise_cpu_morale_reactions_v4_regression.py"),
+        ("franchise_morale_trade_market_v5a_validation", "validate_franchise_morale_trade_market_bridge_v5a.py"),
+        ("franchise_morale_trade_market_v5a_regression", "run_franchise_morale_trade_market_bridge_v5a_regression.py"),
+        ("franchise_morale_trade_finder_v5b_validation", "validate_franchise_morale_trade_finder_bridge_v5b.py"),
+        ("franchise_morale_trade_finder_v5b_regression", "run_franchise_morale_trade_finder_bridge_v5b_regression.py"),
+        ("franchise_cpu_autonomous_market_v6a_validation", "validate_franchise_cpu_autonomous_trade_market_v6a.py"),
+        ("franchise_cpu_autonomous_market_v6a_regression", "run_franchise_cpu_autonomous_trade_market_v6a_regression.py"),
+        ("franchise_cpu_incoming_offers_v6b_validation", "validate_franchise_cpu_incoming_trade_offers_v6b.py"),
+        ("franchise_cpu_incoming_offers_v6b_regression", "run_franchise_cpu_incoming_trade_offers_v6b_regression.py"),
+        ("franchise_game_day_calendar_sync_validation", "validate_franchise_game_day_league_calendar_sync_v1.py"),
+        ("franchise_game_day_calendar_sync_regression", "run_franchise_game_day_league_calendar_sync_v1_regression.py"),
+        ("franchise_postgame_hotfix_v6_0_1_validation", "validate_franchise_postgame_performance_offer_hotfix_v6_0_1.py"),
+        ("franchise_postgame_hotfix_v6_0_1_regression", "run_franchise_postgame_performance_offer_hotfix_v6_0_1_regression.py"),
+    )
+    for name, filename in current_franchise_feature_suites:
+        run_subprocess_suite(
+            checks,
+            name=name,
+            command=[sys.executable, str(SRC / filename)],
+        )
     run_subprocess_suite(
         checks,
         name="simulation_league_alignment_self_test",

@@ -21,6 +21,9 @@ SIMULATOR_PAGE = (
 HELPER_PATH = (
     SRC / "simulation_cross_page_state_v1.py"
 )
+TRADE_WAR_ROOM_PATH = (
+    SRC / "franchise_trade_war_room_v1.py"
+)
 REPORT_PATH = (
     OUTPUTS
     / "cross_page_franchise_state_validation_v1.json"
@@ -53,6 +56,7 @@ def run_validation() -> dict[str, Any]:
         FRANCHISE_PAGE,
         SIMULATOR_PAGE,
         HELPER_PATH,
+        TRADE_WAR_ROOM_PATH,
     )
     checks["required_cross_page_files_exist"] = (
         all(path.exists() for path in paths)
@@ -70,6 +74,11 @@ def run_validation() -> dict[str, Any]:
             encoding="utf-8"
         )
         if SIMULATOR_PAGE.exists()
+        else ""
+    )
+    trade_war_room_text = (
+        TRADE_WAR_ROOM_PATH.read_text(encoding="utf-8")
+        if TRADE_WAR_ROOM_PATH.exists()
         else ""
     )
     helper_text = (
@@ -147,8 +156,10 @@ def run_validation() -> dict[str, Any]:
     checks[
         "franchise_uses_transactional_live_trade_center"
     ] = (
-        "render_live_asset_ledger("
+        "render_franchise_trade_war_room_v1("
         in franchise_text
+        and "render_live_asset_ledger("
+        in trade_war_room_text
         and "Build and commit live franchise trades"
         in franchise_text
         and "FRANCHISE_TRADE_AUTHORITY_V1"

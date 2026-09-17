@@ -11,6 +11,10 @@ from franchise_free_agency_live_signing_v1 import (
     FreeAgencyLiveSigningError,
     commit_contract_legal_free_agency_preview_live,
 )
+from franchise_free_agency_market_value_v2 import (
+    FREE_AGENCY_MARKET_VALUE_CALIBRATION_VERSION,
+    calibrated_market_value_v2,
+)
 
 FREE_AGENCY_PLAYER_DECISION_VERSION = (
     "franchise-free-agency-player-decision-v1-2026-08-14"
@@ -313,23 +317,43 @@ def _rating_market_salary_reference(player: Any, salary_cap: float) -> float:
     return salary_cap * pct
 
 
-def market_salary_reference(player: Any, preview: Any) -> tuple[float, float | None, float | None]:
+def market_salary_reference(
+    player: Any,
+    preview: Any,
+    state: Any | None = None,
+) -> tuple[float, float | None, float | None]:
     payload = _financial_payload(preview)
     contract = _contract_legality_payload(preview)
     cap = _finite(payload.get("salary_cap")) or _finite(contract.get("anchor_salary_cap")) or 164_961_000.0
     minimum = _finite(contract.get("minimum_salary_floor"))
     maximum = _finite(contract.get("maximum_initial_salary"))
     prior = _finite(contract.get("prior_salary"))
-    rating_reference = _rating_market_salary_reference(player, cap)
-    if prior is not None and prior > 0:
-        reference = 0.68 * rating_reference + 0.32 * prior
-    else:
-        reference = rating_reference
-    if minimum is not None:
-        reference = max(reference, minimum)
-    if maximum is not None:
-        reference = min(reference, maximum)
-    return round(max(reference, 1.0), 2), minimum, maximum
+    if state is None:
+        # Compatibility fallback for any external V1 callers that have not yet
+        # been upgraded to pass the league state. The main decision engine always
+        # passes state and therefore receives the full V2 calibration.
+        rating_reference = _rating_market_salary_reference(player, cap)
+        bounded_prior = prior
+        if bounded_prior is not None and bounded_prior > 0:
+            bounded_prior = max(0.70 * rating_reference, min(1.30 * rating_reference, bounded_prior))
+            reference = 0.88 * rating_reference + 0.12 * bounded_prior
+        else:
+            reference = rating_reference
+        if minimum is not None:
+            reference = max(reference, minimum)
+        if maximum is not None:
+            reference = min(reference, maximum)
+        return round(max(reference, 1.0), 2), minimum, maximum
+
+    breakdown = calibrated_market_value_v2(
+        state,
+        player,
+        salary_cap=cap,
+        prior_salary=prior,
+        minimum_salary_floor=minimum,
+        maximum_legal_salary=maximum,
+    )
+    return breakdown.final_reference, minimum, maximum
 
 
 def salary_value_score(annual_salary: float, market_reference: float, guaranteed: bool) -> float:
@@ -533,7 +557,7 @@ def evaluate_free_agent_offer_decision(state: Any, preview: Any) -> FreeAgencyPl
     source_fingerprint = _clean(getattr(preview, "source_fingerprint", ""))
 
     profile = preference_profile(state, player)
-    reference, minimum, maximum = market_salary_reference(player, preview)
+    reference, minimum, maximum = market_salary_reference(player, preview, state)
     role = role_opportunity_score(state, player, team)
     winning = winning_environment_score(state, team)
     security = security_score(player, preview)
@@ -597,6 +621,7 @@ def evaluate_free_agent_offer_decision(state: Any, preview: Any) -> FreeAgencyPl
 
     fingerprint_payload = {
         "version": FREE_AGENCY_PLAYER_DECISION_VERSION,
+        "market_value_version": FREE_AGENCY_MARKET_VALUE_CALIBRATION_VERSION,
         "preview_source_fingerprint": source_fingerprint,
         "offer": {
             "player_id": player_id,

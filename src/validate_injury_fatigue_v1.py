@@ -73,7 +73,7 @@ PAGE_MARKERS = {
     "fatigue_explanation": (
         "How fatigue, rehab, and injury risk work"
     ),
-    "pregame_health": "Pregame Health Brief",
+    "pregame_health": "Medical & workload report",
     "load_management": (
         "Load-management suggestion"
     ),

@@ -13,7 +13,7 @@ from franchise_career_lifecycle_v1 import (
     initialize_career_intents_for_season,
     lifecycle_source_payload,
 )
-from simulation_league_state_v1 import validate_simulation_league_state
+from simulation_league_state_v1 import LeaguePhase, validate_simulation_league_state
 
 
 CONTROLLER_VERSION = "career-lifecycle-transition-adapter-v1.0.1-2026-08-11"
@@ -46,6 +46,24 @@ def lifecycle_source_fingerprint(state: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+# FRANCHISE_POST_RETIREMENT_ROSTER_FLOOR_DEFERRED_VALIDATION_V2
+def _validate_post_retirement_transition_state_v2(state: Any) -> None:
+    """Validate every invariant except the temporary preseason roster floor.
+
+    Retirement is applied inside the career adapter before drafted-rookie
+    activation and before the season-boundary CPU roster repair. At this exact
+    intermediate point a valid team may temporarily fall below the regular-
+    season floor. Re-use the established OFFSEASON validation semantics for
+    this intermediate copy, then restore its true PRESEASON phase.
+    """
+    original_phase = getattr(state, "phase", None)
+    try:
+        state.phase = LeaguePhase.OFFSEASON
+        validate_simulation_league_state(state)
+    finally:
+        state.phase = original_phase
+
+
 def _lifecycle_preview_for_state(state: Any, base_preview: Mapping[str, Any]) -> dict[str, Any]:
     plan = build_retirement_plan(
         state,
@@ -57,7 +75,7 @@ def _lifecycle_preview_for_state(state: Any, base_preview: Mapping[str, Any]) ->
     )
     apply_retirement_plan(trial_state, plan)
     target_intents = initialize_career_intents_for_season(trial_state)
-    validate_simulation_league_state(trial_state)
+    _validate_post_retirement_transition_state_v2(trial_state)
     return {
         "adapter_version": CONTROLLER_VERSION,
         "career_lifecycle_version": CAREER_LIFECYCLE_VERSION,
@@ -138,7 +156,7 @@ def commit_season_transition_preview(
     )
     apply_retirement_plan(transitioned_state, plan)
     target_intents = initialize_career_intents_for_season(transitioned_state)
-    validate_simulation_league_state(transitioned_state)
+    _validate_post_retirement_transition_state_v2(transitioned_state)
 
     if target_intents != expected_lifecycle.get("target_season_intents"):
         raise SimulationSeasonTransitionControllerError(

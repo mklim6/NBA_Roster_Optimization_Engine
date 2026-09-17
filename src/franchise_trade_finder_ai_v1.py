@@ -39,6 +39,11 @@ from franchise_player_contract_bridge_v1 import (
     build_franchise_player_contract_snapshot,
     evaluate_franchise_player_contract_trade,
 )
+from franchise_morale_trade_finder_terms_v1 import (
+    build_morale_trade_finder_terms_v1,
+    morale_trade_finder_search_bonus_v1,
+    morale_trade_finder_target_available_v1,
+)
 
 
 TRADE_FINDER_AI_VERSION = "franchise-trade-finder-cpu-ai-v1.5.3-anchor-preview-resolution-2026-08-13"
@@ -540,6 +545,24 @@ def _untouchable(
     if role == "franchise" and overall >= 94.0 and age <= 27.0:
         return True
     return False
+
+
+# FRANCHISE_MORALE_TRADE_FINDER_V5B
+def _morale_trade_finder_target_available_v1(
+    state: Any,
+    team: str,
+    row: dict[str, Any],
+    cpu_profile: TeamTradeAIProfile,
+) -> bool:
+    return morale_trade_finder_target_available_v1(
+        state,
+        team,
+        row,
+        base_untouchable=_untouchable(
+            row,
+            cpu_profile,
+        ),
+    )
 
 
 def _salary(row: dict[str, Any]) -> float:
@@ -1340,6 +1363,18 @@ def _make_proposal(
             f"value gap. It is shown as a negotiation lead, not an executable CPU-approved deal."
         )
         response_label = "CPU DECLINES"
+    proposal_payload = copy.deepcopy(preview_payload)
+    morale_terms_v5b = dict(
+        (target or {}).get(
+            "_morale_trade_finder_terms_v1",
+            {},
+        )
+        or {}
+    )
+    if morale_terms_v5b:
+        proposal_payload[
+            "morale_trade_finder_terms_v1"
+        ] = copy.deepcopy(morale_terms_v5b)
     return FranchiseTradeFinderProposal(
         proposal_id=_proposal_id(active_team, partner_team, spec, response),
         active_team=active_team,
@@ -1362,7 +1397,7 @@ def _make_proposal(
         target_player_id=target_id,
         target_player_name=target_name,
         rationale=rationale,
-        preview_payload=copy.deepcopy(preview_payload),
+        preview_payload=proposal_payload,
         deal_type=_deal_type(spec, target, active_profile),
         counter_sweetener=counter_sweetener,
     )
@@ -1495,6 +1530,13 @@ def _new_package_audit_row(
     a_players, b_players, a_picks, b_picks = spec
     user_sent, user_received, user_delta, cpu_sent, cpu_received, cpu_delta = values
     target_row = target or {}
+    morale_terms_v5b = dict(
+        target_row.get(
+            "_morale_trade_finder_terms_v1",
+            {},
+        )
+        or {}
+    )
     output: dict[str, Any] = {
         "audit_id": audit_id,
         "trade_finder_version": TRADE_FINDER_AI_VERSION,
@@ -1550,6 +1592,13 @@ def _new_package_audit_row(
         "cpu_value_received": cpu_received,
         "cpu_value_delta": cpu_delta,
         "cpu_accept_floor": accept_floor,
+        "cpu_accept_floor_base": morale_terms_v5b.get("base_accept_floor", accept_floor),
+        "morale_market_floor_adjustment": morale_terms_v5b.get("floor_adjustment", 0.0),
+        "morale_market_posture": morale_terms_v5b.get("market_posture", ""),
+        "morale_trade_risk": morale_terms_v5b.get("trade_risk", 0.0),
+        "morale_trade_request": morale_terms_v5b.get("request_status", ""),
+        "seller_ask_multiplier": morale_terms_v5b.get("seller_ask_multiplier", 1.0),
+        "morale_market_search_bonus": morale_terms_v5b.get("search_priority_bonus", 0.0),
         "roster_fit": _fit_score(target, active_profile, goal),
         "guaranteed_exploration": bool(guaranteed_exploration),
         "value_screen_pass": False,
@@ -1877,6 +1926,137 @@ def _fallback_second_round_swaps(
     return proposals, evaluated, legal_count
 
 
+# FRANCHISE_TRADE_MARKET_PERFORMANCE_V7_1
+@dataclass(frozen=True)
+class FranchiseTradeFinderSearchContext:
+    """Reusable, read-only setup shared across repeated searches on one live state.
+
+    Full package legality is still evaluated independently for every candidate.
+    This cache only avoids reconstructing identical ledgers/snapshots/profiles and
+    market pools when V6A/V6B query the same postgame state repeatedly.
+    """
+
+    ledger: FranchiseAssetLedger
+    financial_snapshot: Any
+    contract_snapshot: Any
+    profiles: dict[str, TeamTradeAIProfile]
+    shared_contexts: dict[str, AssetMarketContext]
+    tradable_players: dict[str, tuple[dict[str, Any], ...]]
+    tradable_picks: dict[str, tuple[dict[str, Any], ...]]
+    player_map: dict[str, dict[str, Any]]
+    pick_map: dict[str, dict[str, Any]]
+    build_timing: dict[str, float] = field(default_factory=dict)
+
+
+def build_trade_finder_search_context(
+    runtime: Any,
+    state: Any,
+    trade_state: Any,
+    *,
+    ledger: FranchiseAssetLedger | None = None,
+    trusted_read_only_state: bool = False,
+) -> FranchiseTradeFinderSearchContext:
+    # FRANCHISE_TRADE_MARKET_PERFORMANCE_V7_3
+    # Diagnostic-only substage timings expose which immutable context component
+    # dominates V6B setup. They do not change search inputs or legality.
+    build_timing: dict[str, float] = {}
+
+    _stage_started = time.perf_counter()
+    live_ledger = ledger or build_live_asset_ledger(runtime, state, trade_state)
+    build_timing["ledger"] = round(time.perf_counter() - _stage_started, 4)
+
+    _stage_started = time.perf_counter()
+    financial_snapshot = build_franchise_financial_snapshot(runtime, state)
+    build_timing["financial"] = round(time.perf_counter() - _stage_started, 4)
+
+    _stage_started = time.perf_counter()
+    contract_snapshot = build_franchise_player_contract_snapshot(
+        runtime,
+        state,
+        # FRANCHISE_TRADE_MARKET_PERFORMANCE_V7_4
+        # The snapshot builder is read-only. Skip only its expensive defensive
+        # clone/equality audit when the caller explicitly certifies that this
+        # state is already an isolated transaction.
+        verify_immutability=not trusted_read_only_state,
+    )
+    build_timing["contracts"] = round(time.perf_counter() - _stage_started, 4)
+
+    _stage_started = time.perf_counter()
+    profiles = build_team_trade_ai_profiles(state, live_ledger)
+    build_timing["profiles"] = round(time.perf_counter() - _stage_started, 4)
+
+    _stage_started = time.perf_counter()
+    shared_contexts_raw = build_league_asset_market_contexts(
+        state,
+        team_timelines={team: profile.timeline for team, profile in profiles.items()},
+    )
+    build_timing["market_contexts"] = round(time.perf_counter() - _stage_started, 4)
+    shared_contexts = {
+        normalize_player_id(player_id): context
+        for player_id, context in shared_contexts_raw.items()
+        if normalize_player_id(player_id)
+    }
+
+    _stage_started = time.perf_counter()
+    tradable_players_working = _tradable_players_by_team(
+        runtime, state, live_ledger, contract_snapshot=contract_snapshot
+    )
+    for rows in tradable_players_working.values():
+        _annotate_rows_with_shared_context(rows, shared_contexts)
+    build_timing["player_pool"] = round(time.perf_counter() - _stage_started, 4)
+
+    _stage_started = time.perf_counter()
+    tradable_picks_working = _tradable_picks_by_team(live_ledger)
+    for rows in tradable_picks_working.values():
+        for row in rows:
+            origin = normalize_team(row.get("origin_team"))
+            origin_profile = profiles.get(origin)
+            if origin_profile is not None:
+                row["_origin_win_pct"] = origin_profile.win_pct
+                row["_origin_timeline"] = origin_profile.timeline
+    build_timing["pick_pool"] = round(time.perf_counter() - _stage_started, 4)
+
+    _stage_started = time.perf_counter()
+    player_map = {
+        normalize_player_id(row.get("player_id")): dict(row)
+        for row in live_ledger.player_rows
+    }
+    _annotate_rows_with_shared_context(player_map.values(), shared_contexts)
+    pick_map = {
+        str(row.get("asset_id")): dict(row)
+        for row in live_ledger.draft_rows
+    }
+    for row in pick_map.values():
+        origin = normalize_team(row.get("origin_team"))
+        origin_profile = profiles.get(origin)
+        if origin_profile is not None:
+            row["_origin_win_pct"] = origin_profile.win_pct
+            row["_origin_timeline"] = origin_profile.timeline
+    build_timing["maps"] = round(time.perf_counter() - _stage_started, 4)
+
+    _stage_started = time.perf_counter()
+    result = FranchiseTradeFinderSearchContext(
+        ledger=live_ledger,
+        financial_snapshot=financial_snapshot,
+        contract_snapshot=contract_snapshot,
+        profiles=profiles,
+        shared_contexts=shared_contexts,
+        tradable_players={
+            team: tuple(dict(row) for row in rows)
+            for team, rows in tradable_players_working.items()
+        },
+        tradable_picks={
+            team: tuple(dict(row) for row in rows)
+            for team, rows in tradable_picks_working.items()
+        },
+        player_map={key: dict(row) for key, row in player_map.items()},
+        pick_map={key: dict(row) for key, row in pick_map.items()},
+        build_timing=build_timing,
+    )
+    build_timing["freeze"] = round(time.perf_counter() - _stage_started, 4)
+    return result
+
+
 def generate_trade_finder_proposals(
     runtime: Any,
     state: Any,
@@ -1893,6 +2073,7 @@ def generate_trade_finder_proposals(
     max_financial_prechecks: int = 480,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ledger: FranchiseAssetLedger | None = None,
+    search_context: FranchiseTradeFinderSearchContext | None = None,
 ) -> FranchiseTradeFinderResult:
     resolved_active = normalize_team(active_team)
     if goal not in VALID_GOALS:
@@ -1946,49 +2127,28 @@ def generate_trade_finder_proposals(
 
     before_state = _state_signature(state)
     before_trade = _trade_state_signature(trade_state)
-    live_ledger = ledger or build_live_asset_ledger(runtime, state, trade_state)
-    financial_snapshot = build_franchise_financial_snapshot(runtime, state)
-    contract_snapshot = build_franchise_player_contract_snapshot(runtime, state)
-    profiles = build_team_trade_ai_profiles(state, live_ledger)
-    shared_contexts_raw = build_league_asset_market_contexts(
-        state,
-        team_timelines={team: profile.timeline for team, profile in profiles.items()},
+    context = search_context or build_trade_finder_search_context(
+        runtime, state, trade_state, ledger=ledger
     )
-    shared_contexts = {
-        normalize_player_id(player_id): context
-        for player_id, context in shared_contexts_raw.items()
-        if normalize_player_id(player_id)
-    }
+    live_ledger = context.ledger
+    financial_snapshot = context.financial_snapshot
+    contract_snapshot = context.contract_snapshot
+    profiles = context.profiles
+    shared_contexts = context.shared_contexts
     active_profile = profiles[resolved_active]
-    tradable_players = _tradable_players_by_team(
-        runtime, state, live_ledger, contract_snapshot=contract_snapshot
-    )
-    for rows in tradable_players.values():
-        _annotate_rows_with_shared_context(rows, shared_contexts)
 
-    tradable_picks = _tradable_picks_by_team(live_ledger)
-    for rows in tradable_picks.values():
-        for row in rows:
-            origin = normalize_team(row.get("origin_team"))
-            origin_profile = profiles.get(origin)
-            if origin_profile is not None:
-                row["_origin_win_pct"] = origin_profile.win_pct
-                row["_origin_timeline"] = origin_profile.timeline
-    player_map = {
-        normalize_player_id(row.get("player_id")): dict(row)
-        for row in live_ledger.player_rows
+    # Per-search copies preserve the old mutation isolation while the expensive
+    # league-wide setup above is reused across repeated V6A/V6B searches.
+    tradable_players = {
+        team: [dict(row) for row in rows]
+        for team, rows in context.tradable_players.items()
     }
-    _annotate_rows_with_shared_context(player_map.values(), shared_contexts)
-    pick_map = {
-        str(row.get("asset_id")): dict(row)
-        for row in live_ledger.draft_rows
+    tradable_picks = {
+        team: [dict(row) for row in rows]
+        for team, rows in context.tradable_picks.items()
     }
-    for row in pick_map.values():
-        origin = normalize_team(row.get("origin_team"))
-        origin_profile = profiles.get(origin)
-        if origin_profile is not None:
-            row["_origin_win_pct"] = origin_profile.win_pct
-            row["_origin_timeline"] = origin_profile.timeline
+    player_map = {key: dict(row) for key, row in context.player_map.items()}
+    pick_map = {key: dict(row) for key, row in context.pick_map.items()}
 
     all_partners = [
         team for team in sorted(getattr(state, "teams", {}))
@@ -2013,7 +2173,12 @@ def generate_trade_finder_proposals(
             targets = [
                 row
                 for row in tradable_players.get(partner, [])
-                if not _untouchable(row, cpu_profile)
+                if _morale_trade_finder_target_available_v1(
+                    state,
+                    partner,
+                    row,
+                    cpu_profile,
+                )
             ]
             if not targets:
                 continue
@@ -2137,7 +2302,12 @@ def generate_trade_finder_proposals(
         partner_profile = profiles[partner]
         targets = [
             row for row in tradable_players.get(partner, [])
-            if not _untouchable(row, partner_profile)
+            if _morale_trade_finder_target_available_v1(
+                state,
+                partner,
+                row,
+                partner_profile,
+            )
         ]
         if not targets:
             record_rejection("target_pool_empty", (f"{partner}: no contract-eligible tradable player targets",))
@@ -2147,10 +2317,16 @@ def generate_trade_finder_proposals(
             family = position_family(str(row.get("position", "")))
             need_score = active_profile.need_scores.get(family, 0.0)
             primary_bonus = 8.0 if family == active_profile.biggest_need else 0.0
+            morale_market_bonus = morale_trade_finder_search_bonus_v1(
+                state,
+                partner,
+                row,
+            )
             score = (
                 player_value_for_team(row, active_profile, goal=goal)
                 + _fit_score(row, active_profile, goal)
                 + primary_bonus
+                + morale_market_bonus
                 + 0.20 * min(16.0, max(0.0, need_score))
                 - 0.20 * player_value_for_team(row, partner_profile)
             )
@@ -2236,6 +2412,19 @@ def generate_trade_finder_proposals(
             target_id = normalize_player_id(target.get("player_id"))
             if not target_id:
                 continue
+            base_accept_floor_v5b = _cpu_accept_floor(
+                partner_profile=partner_profile,
+                target=target,
+            )
+            market_terms_v5b = build_morale_trade_finder_terms_v1(
+                state,
+                partner,
+                target,
+                base_accept_floor=base_accept_floor_v5b,
+            )
+            target["_morale_trade_finder_terms_v1"] = (
+                market_terms_v5b.to_payload()
+            )
             specs = _candidate_specs_for_target(
                 active_team=resolved_active,
                 partner_team=partner,
@@ -2281,9 +2470,8 @@ def generate_trade_finder_proposals(
                     ledger=live_ledger,
                     active_goal=goal,
                 )
-                accept_floor = _cpu_accept_floor(
-                    partner_profile=partner_profile,
-                    target=target,
+                accept_floor = (
+                    market_terms_v5b.adjusted_accept_floor
                 )
                 guaranteed = spec_index < guaranteed_routes
                 audit_id = hashlib.sha1(

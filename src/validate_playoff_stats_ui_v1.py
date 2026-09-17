@@ -14,7 +14,7 @@ OUTPUTS = ROOT / "outputs"
 REPORT = OUTPUTS / "playoff_stats_ui_validation_v1.json"
 
 VALIDATOR_VERSION = "playoff-stats-ui-validator-v1.0.1-2026-09-11"
-EXPECTED_RUNNER_VERSION = "project-validation-runner-v1.26-2026-09-09"
+EXPECTED_RUNNER_VERSION = "project-validation-runner-v1.27-2026-09-16"
 
 
 def compile_file(path: Path) -> str:

@@ -209,7 +209,11 @@ def _audit_csv_bytes(result: FranchiseTradeFinderResult) -> bytes:
         "side_a_salary", "side_b_salary",
         "user_value_sent", "user_value_received", "user_value_delta",
         "cpu_value_sent", "cpu_value_received", "cpu_value_delta",
-        "cpu_accept_floor", "roster_fit",
+        "cpu_accept_floor_base", "morale_market_floor_adjustment",
+        "cpu_accept_floor", "seller_ask_multiplier",
+        "morale_market_posture", "morale_trade_risk",
+        "morale_trade_request", "morale_market_search_bonus",
+        "roster_fit",
         "guaranteed_exploration", "value_screen_pass",
         "financial_status", "financial_reason_codes",
         "full_legality_status", "can_commit", "legality_reason_codes",
@@ -299,6 +303,57 @@ def _render_deal(
     with metrics[3]:
         st.caption("Deal type")
         st.markdown(f"### {escape(proposal.deal_type)}")
+
+    # FRANCHISE_MORALE_TRADE_FINDER_UI_V5B
+    morale_terms_v5b = dict(
+        proposal.preview_payload.get(
+            "morale_trade_finder_terms_v1",
+            {},
+        )
+        or {}
+    )
+    if morale_terms_v5b.get("material_context"):
+        seller_posture = str(
+            morale_terms_v5b.get(
+                "market_posture",
+                "Keep internal",
+            )
+        )
+        seller_risk = float(
+            morale_terms_v5b.get(
+                "trade_risk",
+                0.0,
+            )
+            or 0.0
+        )
+        seller_ask = float(
+            morale_terms_v5b.get(
+                "seller_ask_multiplier",
+                1.0,
+            )
+            or 1.0
+        )
+        base_floor = float(
+            morale_terms_v5b.get(
+                "base_accept_floor",
+                0.0,
+            )
+            or 0.0
+        )
+        adjusted_floor = float(
+            morale_terms_v5b.get(
+                "adjusted_accept_floor",
+                base_floor,
+            )
+            or base_floor
+        )
+        st.caption(
+            f"Seller posture: {seller_posture} · "
+            f"trade risk {seller_risk:.1f}% · "
+            f"seller ask {seller_ask:.3f}x · "
+            f"CPU accept floor {base_floor:+.1f} → "
+            f"{adjusted_floor:+.1f}"
+        )
 
     if proposal.cpu_response == "counter":
         st.warning(f"CPU counter: {proposal.counter_sweetener or 'additional value requested.'}")

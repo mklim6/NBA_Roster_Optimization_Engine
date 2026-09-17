@@ -1008,6 +1008,10 @@ def render_page() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    # FRANCHISE_PRIMARY_NAV_V1
+    from src.franchise_primary_navigation_v1 import render_franchise_primary_navigation_v1
+    render_franchise_primary_navigation_v1()
+
 
     st.markdown(
         """

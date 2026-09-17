@@ -1,13 +1,18 @@
 # Franchise Mode Current Status
 
-Updated: September 11, 2026
+Updated: September 17, 2026
 
 ## Current milestone
 
-The Live September 7, 2026 franchise start is a release candidate. It is
-available from Franchise Mode > League Hub as a read-only preview followed by
-an explicitly confirmed launch. It has not been activated over the existing
-franchise save.
+The active franchise has advanced into the 2027-28 regular season. The current
+release candidate now includes the Morale V3.0.2 experience, CPU morale
+responses, morale-aware trade-market and Trade Finder bridges, autonomous
+CPU-to-CPU trading, incoming CPU trade offers for the user, and batched
+postgame calendar/market persistence.
+
+The Live September 7, 2026 franchise start remains available from Franchise
+Mode > League Hub as a read-only preview followed by an explicitly confirmed
+launch. It has not replaced the existing franchise save.
 
 The live-start universe currently contains:
 
@@ -40,42 +45,106 @@ The live-start universe currently contains:
   Potential and future outlook are deterministically calibrated from age and
   the same source-informed performance signal rather than flat defaults.
 
+## Active franchise save
+
+The protected active save is now a live 2027-28 regular-season franchise, not
+the September 7 live-start preview:
+
+- 645 players, 320 free agents, and 30 teams with roster sizes from 8 through
+  14.
+- 748 of 1,230 league games are complete; Chicago is 22-26 through 48 games.
+- Chicago is the only user-controlled team.
+- Current day index: 107. The saved active workspace is Game Day.
+- The latest checkpoint reason is `franchise-auto-managed-routine-events`.
+- Active checkpoint SHA-256:
+  `7722cad5934ea69e0379c738e805840039351c9429bcbb451d8c9fb3fe668d0f`.
+
+The direct recovery backup intentionally represents the previous valid state
+and does not need to be byte-identical to the active checkpoint. Both files are
+present and remain independently protected.
+
+## September 15 season-boundary repair
+
+The reported `all_team_rosters_playable` failure was reproduced against the
+active save without modifying it. The cause was ordering inside repeat-offseason
+CPU roster construction: the legal roster-floor rescue was considered only
+after ordinary CPU markets were exhausted, so a bounded CPU round could spend
+its signing slots on already-playable teams and strand an underfilled team.
+
+The repair does not increase the rescue limit:
+
+- A legal, player-accepted roster-floor signing now takes priority whenever a
+  CPU team is below the playable floor.
+- The number of completion attempts is derived from the actual roster deficit.
+- `Open next season` now completes and reload-verifies CPU opening-night rosters
+  before post-Draft trim and the atomic season transition.
+- User-controlled roster deficits are never auto-filled; the UI reports the
+  team, current count, and number of players still needed.
+- On the current save, the transaction stack deterministically finds J'Vonne
+  Hadley for Golden State on a one-year, $1,466,384.04 minimum contract.
+- The active checkpoint was not changed during diagnosis or validation. The
+  next explicit `Open next season` click owns the real signing and transition.
+
 ## Verification state
 
-- Latest unified full release-candidate validation: 94/94 checks passed after
-  the playoff-stats suite-registration repair.
-- Live-start validation: 41/41 checks passed after the overall, skill,
-  potential, production, and shooting profile integrations.
-- Unified quick validation: 39/39 checks passed; 566 Python files compiled.
-- Franchise staff foundation validation: 17/17 checks passed.
-- Explicit checkpoint replacement hotfix validation: 8/8 checks passed.
-- Non-destructive release-candidate read-only gate: unified quick validation,
-  live-cutoff evidence, current-reference data, live start, sub-five free-agency
-  repair, draft forfeitures, and the live asset ledger all passed.
-- September 11 Streamlit smoke: Franchise Home, embedded Free Agency, Draft,
-  League Hub, Transactions, and Draft Capital all render from the protected
-  checkpoint without an app exception.
-- Streamlit live-start preview: 601 players, 415 rostered, 186 free agents,
-  30 game-ready teams, roster range 10-18, and all 1,230 scheduled games. The
-  launch remains disabled behind explicit acknowledgement and typed confirmation.
-- Streamlit Draft workspace: verified to open with the correct postseason gate
-  and no renderer/signature error.
-- Isolated live-start commit: passed save, reload, fingerprint, and recovery
-  manifest checks.
-- Isolated forced launch failure: passed automatic rollback and previous-state
-  restoration checks.
-- Full 1,230-game player-fingerprint regression: 18/18 checks passed, with
-  plausible aggregate FG%, 3P%, and FT% and preserved distribution spread.
-- Live-start fingerprint:
+- The current V2-V6.0.1 morale, CPU-trade, offer, calendar-sync, and postgame
+  block passes all 24 dedicated validators and behavioral regressions.
+- The three validators made stale by the V6.0.1 batched postgame pipeline now
+  validate the actual order: controlled game commit, league catch-up,
+  autonomous CPU market, incoming-offer scan, one durable checkpoint, then
+  next-game selection.
+- The older V2 and V2.1 morale contract tests are forward-compatible with the
+  current V3 implementation while retaining their original behavior checks.
+- These 24 suites are registered in the unified full project validation. The
+  latest V3.0.2 through V6.0.1 suites are also registered directly in the
+  release-candidate gate so `--skip-full` cannot bypass current feature
+  coverage.
+- Project quick gate passes 39/39 checks; all 703 Python files compile.
+- New preseason roster-floor validator: 5/5 checks passed.
+- CPU roster-floor rescue validator: 19/19 checks passed.
+- CPU Free Agency execution validator: 29/29 checks passed read-only.
+- Lifecycle authority, season-boundary snapshot rebase, owner normalization,
+  and Draft V1.1.8 validators all passed.
+- Cross-page franchise-state validation passes after updating its current Trade
+  War Room integration assertion.
+- All 13 post-September 11 feature validators pass after superseded-version
+  checks were made forward-compatible.
+- Live asset ledger and live-cutoff audits pass; the cutoff remains frozen and
+  the checkpoint family remains unchanged.
+- The running Streamlit app hot-reloaded and rendered Franchise Mode, Schedule,
+  League Hub, the season journey, Offseason Headquarters, and next-season
+  routing without an app exception.
+- The expanded unified full suite passes 120/120 checks after the Free Agency
+  performance repair and current UI-validator reconciliation.
+- The final non-destructive release-candidate gate passes with the full suite
+  skipped only because the same 120-check run had just completed. Its quick
+  gate, release worktree audit, frozen-data audits, current feature regressions,
+  and isolated live-start commit/rollback all pass.
+- A final September 17 gate rerun passes all 28 release stages after packaging,
+  including quick validation, worktree classification, current feature
+  regressions, and isolated live-start commit/rollback.
+- The standalone Free Agency page now treats an empty RFA ledger during the
+  regular season as an inactive overlay instead of an invalid anchor-offseason
+  ledger. The strict 64-player check remains enforced when the certified anchor
+  offseason is active.
+- All six Streamlit pages render from a clean extracted release package without
+  an app exception. The packaged protected smoke also passes frozen live start,
+  opening night, one game, save/reload, standings and player-total durability,
+  and exact recovery of the pre-launch source state.
+- The live-start preview, isolated commit/rollback, and 1,230-game shooting
+  regression evidence remain valid. Live-start fingerprint:
   `748bfcd58d6cecf8abab666b34b5d44d176d2e3456baef9a0fff6e033e08bd7b`.
 
 ## Eight-season protected soak
 
 The protected franchise chain now covers all eight completed seasons from
-2026-27 through 2033-34 without modifying the active Streamlit save. The final
-checkpoint opens 2034-35 with eight archived seasons, a fresh 1,230-game
-schedule, complete generated-player Trade Machine registry coverage, a
-league-low roster size of 10, and the Clippers at 10 players.
+2026-27 through 2033-34 without modifying the active Streamlit save. Five
+seasons passed in the original run. Season six was recovered from its preserved
+2031-32 boundary after the user interrupted the slow Free Agency stage; its
+2032-33 checkpoint passes all 11 boundary invariants. A protected continuation
+then passed seasons seven and eight into 2034-35. The final checkpoint has a
+fresh 1,230-game schedule, complete generated-player Trade Machine registry
+coverage, and a league-low roster size of 10.
 
 The soak exposed two real repeat-offseason lifecycle defects, both now repaired
 without increasing the CPU signing/rescue limit:
@@ -95,43 +164,74 @@ five Clippers forfeitures were exercised as 59-pick drafts in 2029 through
 
 ## Deep-season Free Agency performance
 
-The V2 protected performance probe passes against the preserved 2034-35 deep
-state. On the user's release machine the six-signing CPU round completed in
-44.19 seconds, the immediate normal checkpoint reload completed in 2.753
-seconds, the Clippers reached the 8-player game-ready floor, and the active
-franchise checkpoint family remained unchanged. The dedicated V2 validator
-also passes checkpoint hot-reload safety, deferred speculative fingerprint
-semantics, byte-verified carry-forward, and final semantic reload checks.
+The root cause of the long soak was a discarded league-wide offer-board build
+before every roster-floor rescue signing. The floor rescue is now evaluated
+first; the full market is built only when no rescue is required. Financial
+legality, player acceptance, per-signing atomic checkpoint writes, byte
+verification, and final semantic reload remain intact.
+
+The protected deep-state probe improved from 44.19 seconds for six mixed market
+and rescue signings to 21.29 seconds for the five signings actually required to
+bring the Clippers from three players to the eight-player game floor. The
+real 2031-32 Free Agency stage improved from 1,291.41 seconds before interruption
+to 203.93 seconds with the repair. Seasons seven and eight completed their Free
+Agency stages in 286.40 and 348.78 seconds respectively, each with 63 legal
+signings. The active franchise checkpoint family remained unchanged.
+
+The eight-season evidence also identifies a non-blocking realism calibration:
+the 2034-35 league opens with 300 rostered players and 552 free agents, with all
+teams at 10 players. That is fully playable and contract-valid, but a later
+roster-ecology pass can target NBA-like 14–15-player organizations if desired.
 
 ## Save protection
 
-The active franchise checkpoint remains unchanged at SHA-256:
-`ad23baa483a0bb77c9d52b9182c93bf79cc4162a8f25addbff1f89f41b9d8108`.
+The active franchise checkpoint remained unchanged throughout the September 17
+protected soak continuation and release validation at SHA-256:
+`7722cad5934ea69e0379c738e805840039351c9429bcbb451d8c9fb3fe668d0f`.
 
-The primary checkpoint and its direct backup are byte-identical. The launch
-transaction now passes the resolved checkpoint path explicitly to every save
-and reload. A launch first creates a timestamped recovery directory; any
-installation failure restores the pre-launch checkpoint automatically.
+The active checkpoint and its direct backup are both present and unchanged by
+read-only validation. The backup is the previous valid recovery state and is
+not expected to be byte-identical to the active save. A live-start launch first
+creates a timestamped recovery directory; any installation failure restores
+the pre-launch checkpoint automatically.
+
+## Local release package
+
+The clean local release is built at
+`outputs/releases/NBA_Franchise_Simulator_V1_2026-09-17.zip`. It contains the
+current source, six Streamlit pages, runtime data, frozen-reference evidence,
+real-staff reference, generated-player visual assets, documentation, and a
+machine-readable file manifest. It excludes the user's active checkpoint,
+recovery trees, local scenarios, historical ZIPs/staging folders, generated
+probes, and development-only datasets. The adjacent `.sha256` file is the
+distribution integrity sidecar.
+
+On Windows the package should be extracted to a short path such as
+`C:\NBA_Franchise_Simulator`. The protected smoke passed there; an intentionally
+deeply nested staging location exceeded the legacy Windows path-length limit
+during recovery-directory creation.
 
 ## Immediate work queue
 
-1. Perform final release packaging/worktree cleanup. The worktree contains a
-   large amount of historical installer/probe debris and untracked production
-   source; classify it before deleting or tagging anything.
-2. Run the updated non-destructive release-candidate gate, including the Sep. 7
-   freeze, Staff, and deep-season Free Agency V2 performance validators.
-3. Optionally extend the protected chain from eight to ten completed seasons for
-   extra confidence. This is no longer a first-launch blocker.
-4. Launch the live universe only when the user explicitly chooses to replace
-   the active save; retain the generated recovery directory.
-5. Run the post-launch smoke cycle through opening night, one transaction, one
-   free-agent action, Draft Capital, one simulated game, checkpoint reload, and
-   rollback recovery.
+1. Review the accumulated Git diff, then create the release commit/tag when the
+   owner is ready. No commit or tag was created automatically.
+2. Optionally calibrate CPU organizations toward 14–15-player rosters and prune
+   long-term free-agent population growth. This is realism polish, not a
+   lifecycle or release-gate blocker.
+3. Optionally add more explicit progress feedback around multi-minute offseason
+   automation, even though the protected eight-season run now completes.
+
+Estimated required engineering remaining for the polished local release: none.
+Release administration (diff review, commit/tag, and copying the ZIP) should
+take about 15–30 minutes. Optional roster-ecology and progress-feedback polish
+remains approximately 4–10 hours.
 
 ## Longer-term roadmap
 
 Continue against `FRANCHISE_MODE_MASTER_ROADMAP.md`. The deterministic staff
-foundation and its first UI workspace are now present; the largest remaining
-product areas are deeper staff workflows and scouting uncertainty,
-morale/chemistry and player relationships, richer owner/coaching systems, and
+foundation, Morale V3, CPU reactions, morale-driven trade logic, autonomous CPU
+trades, and incoming user offers are now present. After consolidation,
+performance, soak testing, and packaging, the largest remaining expansion areas
+are deeper staff workflows and scouting uncertainty, deeper
+relationship/chemistry effects, richer owner/coaching systems, and
 possession-by-possession Interactive Coach Mode.

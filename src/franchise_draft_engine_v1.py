@@ -751,6 +751,96 @@ def generate_draft_class(state: Any, class_strength: int, *, size: int = DRAFT_C
     return prospects
 
 
+# FRANCHISE_SEASON_LONG_SCOUTING_V1_2
+def initialize_regular_season_scouting_state(
+    state: Any,
+    *,
+    controlled_teams: Iterable[str] = (),
+    class_strength: int = 5,
+) -> dict[str, Any]:
+    """Create the next Draft class during the live season, before the lottery.
+
+    The class and team-specific scouting reports persist into the postseason,
+    lottery and Draft Night. Lottery participants/order are intentionally left
+    unresolved until the postseason is complete.
+    """
+    year = draft_year_for_state(state)
+    existing = draft_state(state)
+    if existing and int(existing.get("draft_year", -1)) == year:
+        existing["controlled_teams"] = sorted(
+            {clean_team(team) for team in controlled_teams if clean_team(team)}
+        )
+        if existing.get("phase") == "season_scouting" and not existing.get("prospects"):
+            existing["prospects"] = generate_draft_class(
+                state, int(existing.get("class_strength", class_strength) or class_strength)
+            )
+        return existing
+
+    raw_existing = getattr(state, DRAFT_STATE_ATTR, None)
+    if isinstance(raw_existing, dict) and raw_existing.get("phase") == "draft_complete":
+        # Preserve staff/scouting evaluation accuracy before the next class replaces this draft state.
+        try:
+            from franchise_staff_system_v1 import archive_completed_scouting_accuracy
+            archive_completed_scouting_accuracy(state, raw_existing)
+        except Exception:
+            # Draft lifecycle must never be blocked by an optional analytics archive.
+            pass
+        _archive_completed_draft(state, raw_existing)
+
+    current = {
+        "version": DRAFT_ENGINE_VERSION,
+        "lottery_rule_version": LOTTERY_RULE_VERSION,
+        "source_season": state.settings.season_label,
+        "target_season": next_season_label(state.settings.season_label),
+        "draft_year": year,
+        "phase": "season_scouting",
+        "class_strength": int(clamp(class_strength, 1, 10)),
+        "lottery_participants": [],
+        "lottery_order": [],
+        "draft_order": [],
+        "prospects": [],
+        "current_pick_index": 0,
+        "controlled_teams": sorted(
+            {clean_team(team) for team in controlled_teams if clean_team(team)}
+        ),
+        "paused": True,
+        "clock_deadline_ts": None,
+        "clock_resume_pending": False,
+        "clock_remaining_seconds": AI_PICK_CLOCK_SECONDS,
+        "clock_seconds": AI_PICK_CLOCK_SECONDS,
+        "completed_at_ts": None,
+        "created_at_ts": time.time(),
+    }
+    current["prospects"] = generate_draft_class(state, current["class_strength"])
+    setattr(state, DRAFT_STATE_ATTR, current)
+    return current
+
+
+def promote_regular_season_scouting_to_lottery(
+    state: Any,
+    *,
+    controlled_teams: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Lock the completed-season lottery field without discarding scouting."""
+    if not postseason_is_complete(state):
+        raise ValueError("The Draft Lottery requires a completed postseason.")
+    current = draft_state(state)
+    if current is None:
+        raise ValueError("The season-long scouting class is not initialized.")
+    if int(current.get("draft_year", -1)) != draft_year_for_state(state):
+        raise ValueError("The live scouting class does not match the current Draft year.")
+    if current.get("phase") != "season_scouting":
+        return current
+    current["controlled_teams"] = sorted(
+        {clean_team(team) for team in controlled_teams if clean_team(team)}
+    )
+    current["lottery_participants"] = lottery_participants_321(state)
+    current["lottery_order"] = []
+    current["draft_order"] = []
+    current["phase"] = "lottery_ready"
+    return current
+
+
 def initialize_draft_state(
     state: Any,
     runtime: Any,
@@ -798,6 +888,11 @@ def initialize_draft_state(
     existing = draft_state(state)
     if existing and int(existing.get("draft_year", -1)) == year:
         existing["controlled_teams"] = sorted({clean_team(team) for team in controlled_teams if clean_team(team)})
+        if existing.get("phase") == "season_scouting":
+            return promote_regular_season_scouting_to_lottery(
+                state,
+                controlled_teams=controlled_teams,
+            )
         return existing
 
     participants = lottery_participants_321(state)
@@ -1058,14 +1153,27 @@ def future_user_picks(state: Any, *, include_current: bool = False) -> list[dict
 
 
 def ai_prospect_score(state: Any, team: str, prospect: dict[str, Any], overall_pick: int) -> float:
+    # FRANCHISE_AI_IMPERFECT_SCOUTING_V1
+    from franchise_scouting_discovery_v1 import ai_scouted_estimate_v1
+
     position = _primary_position(prospect["position"])
     need = _team_need_score(state, team, position)
     timeline_bonus = max(0.0, 22.0 - float(prospect["age"])) * 0.55
-    pick_value_bias = max(0.0, 32.0 - overall_pick) * float(prospect["hidden_potential"]) / 1000.0
+    try:
+        scouting = ai_scouted_estimate_v1(state, team, prospect)
+        estimated_overall = float(scouting["overall"])
+        estimated_potential = float(scouting["potential"])
+    except Exception:
+        # Draft Night must remain available if scouting context is temporarily unavailable.
+        # Fall back to public noisy estimates, never hidden exact ratings.
+        estimated_overall = float(prospect.get("scouted_overall", 70.0))
+        estimated_potential = float(prospect.get("scouted_potential", estimated_overall + 6.0))
+    estimated_board = estimated_overall * 0.57 + estimated_potential * 0.43
+    pick_value_bias = max(0.0, 32.0 - overall_pick) * estimated_potential / 1000.0
     return (
-        float(prospect["big_board_score"]) * 0.70
+        estimated_board * 0.70
         + need * 0.18
-        + float(prospect["hidden_potential"]) * 0.08
+        + estimated_potential * 0.08
         + timeline_bonus
         + pick_value_bias
     )

@@ -121,6 +121,23 @@ class AvailabilityStatus(str, Enum):
     OUT = "out"
 
 
+INJURY_STATUS_HOT_RELOAD_FIX_VERSION = (
+    "franchise-injury-status-hot-reload-fix-v1-2026-09-12"
+)
+
+
+def availability_status_value_is_current(
+    status: Any,
+) -> bool:
+    """Accept valid injury-status values across Streamlit module generations."""
+    raw_value = getattr(status, "value", status)
+    try:
+        AvailabilityStatus(raw_value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class SimulationSettings:
     season_label: str = "2026-27"
@@ -1070,9 +1087,8 @@ def validate_simulation_league_state(
             for player in state.players.values()
         ),
         "injury_status_values_are_current": all(
-            isinstance(
+            availability_status_value_is_current(
                 injury.status,
-                AvailabilityStatus,
             )
             for injury in state.injuries.values()
         ),
@@ -1253,8 +1269,16 @@ def add_player_totals(
 def record_completed_game(
     state: SimulationLeagueState,
     game: CompletedGame,
+    *,
+    _completed_game_already_validated: bool = False,
+    _defer_global_state_validation: bool = False,
 ) -> None:
-    validate_completed_game(state, game)
+    # FRANCHISE_GAME_DAY_PERFORMANCE_V7:
+    # simulate_scheduled_game() already validates its CompletedGame before
+    # committing it. Trusted batch callers can validate the complete league
+    # once after the whole batch instead of after every CPU game.
+    if not _completed_game_already_validated:
+        validate_completed_game(state, game)
 
     home = state.standings[game.home_team]
     away = state.standings[game.away_team]
@@ -1300,7 +1324,17 @@ def record_completed_game(
         ].day_index,
     )
 
-    validate_simulation_league_state(state)
+    # FRANCHISE_MORALE_GAME_HOOK_V1
+    try:
+        from franchise_morale_chemistry_v1 import update_morale_after_game_v1
+        update_morale_after_game_v1(state, game)
+    except Exception as exc:
+        # Morale is persistent franchise context, but it must never invalidate
+        # an otherwise legal completed game. Keep the diagnostic on-state.
+        setattr(state, "franchise_morale_last_error_v1", f"{type(exc).__name__}: {exc}")
+
+    if not _defer_global_state_validation:
+        validate_simulation_league_state(state)
 
 
 def set_player_injury(

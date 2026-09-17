@@ -13,7 +13,10 @@ while str(SRC) in sys.path:
     sys.path.remove(str(SRC))
 sys.path.insert(0, str(SRC))
 
-from franchise_offseason_market_season_v1 import resolve_offseason_market_season
+from franchise_offseason_market_season_v1 import (
+    resolve_offseason_market_season,
+    modeled_future_market_enabled,
+)
 from franchise_completed_season_contract_closeout_v1 import (
     completed_season_contract_closeout_required,
     commit_completed_season_contract_closeout_durably,
@@ -36,6 +39,16 @@ from franchise_free_agency_live_signing_v1 import (
 from franchise_free_agency_player_decision_v1 import (
     FREE_AGENCY_PLAYER_DECISION_VERSION,
     FREE_AGENCY_PLAYER_DECISION_UI_VERSION,
+    evaluate_free_agent_offer_decision,
+)
+from franchise_resigning_negotiation_suite_v1 import (
+    FRANCHISE_RESIGNING_NEGOTIATION_SUITE_VERSION,
+    render_resigning_watchlist_v1,
+    render_negotiation_room_intro_v1,
+    render_player_reaction_v1,
+)
+from franchise_free_agency_visual_dashboard_v1 import (
+    render_free_agency_visual_dashboard_v1,
 )
 from franchise_free_agency_shared_market_v1 import (
     FREE_AGENCY_SHARED_MARKET_UI_VERSION,
@@ -120,7 +133,7 @@ from simulation_franchise_checkpoint_v1 import load_franchise_checkpoint
 from simulation_league_state_v1 import validate_simulation_league_state
 
 
-FREE_AGENCY_WORKSPACE_VERSION = "franchise-free-agency-workspace-v1-2026-08-16"
+FREE_AGENCY_WORKSPACE_VERSION = "franchise-free-agency-workspace-v1.3-visual-command-desk-2026-09-12"
 
 def render_free_agency_workspace(
     *,
@@ -260,7 +273,20 @@ def render_free_agency_workspace(
     rows = apply_prior_salary_to_free_agent_rows(rows, state)
 
     # FRANCHISE_RFA_QO_WORKSPACE_INTEGRATION_V1
+    # The verified 64-player RFA/QO board belongs only to the anchor 2026-27
+    # market. A modeled future market must not reuse stale rights/QO rows.
     _fa_live_rfa_by_id = rfa_market_metadata(state)
+    _fa_future_market_without_anchor_rfa = bool(
+        modeled_future_market_enabled(state)
+        and not _fa_live_rfa_by_id
+    )
+    if _fa_future_market_without_anchor_rfa:
+        st.info(
+            "Modeled future offseason market: the historical 2026-27 RFA/QO "
+            "decision overlay is not carried forward. Free-agent offers, CPU "
+            "competition, salary legality, negotiations, calendar advancement, "
+            "and signings remain active."
+        )
     for _fa_row in rows:
         _fa_pid = str(_fa_row.get("player_id") or "").strip()
         _fa_rfa_live = _fa_live_rfa_by_id.get(_fa_pid)
@@ -274,16 +300,51 @@ def render_free_agency_workspace(
             _fa_row["rights_charge"] = _fa_rfa_live["effective_charge_2026_27"]
             _fa_row["free_agent_amount"] = _fa_rfa_live["free_agent_amount_2026_27"]
         else:
-            _fa_row["prior_team"] = ""
-            _fa_row["free_agent_amount"] = None
+            _fa_market_live = _fa_market_by_id.get(_fa_pid, {})
+            if not modeled_future_market_enabled(state):
+                _fa_row["prior_team"] = str(
+                    _fa_market_live.get("prior_team") or ""
+                ).strip().upper()
+                _fa_row["free_agent_amount"] = _fa_market_live.get(
+                    "free_agent_amount_2026_27"
+                )
+            else:
+                # Do not reuse stale 2026-27 rights/market evidence in a modeled
+                # future market. The negotiation suite may still show recent-team
+                # presentation context from saved games, but never treats that as
+                # rights or cap authority.
+                _fa_row["prior_team"] = ""
+                _fa_row["free_agent_amount"] = None
 
     environment = resolve_free_agency_financial_environment(state)
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Season", season or "Unknown")
-    m2.metric("Phase", phase.replace("_", " ").title() or "Unknown")
-    m3.metric("Free agents", len(rows))
-    m4.metric("Financial source", "Canonical 2026-27" if environment.exact_anchor_season else "Manual review")
+    calendar_snapshot = free_agency_calendar_snapshot(state)
+    try:
+        dashboard_payroll, _dashboard_payroll_detail = team_guaranteed_payroll(
+            state,
+            active_team,
+        )
+    except Exception:
+        dashboard_payroll = None
+    render_free_agency_visual_dashboard_v1(
+        state=state,
+        rows=rows,
+        active_team=active_team,
+        season=season or "Unknown",
+        phase=phase or "offseason",
+        payroll=dashboard_payroll,
+        salary_cap=environment.salary_cap,
+        calendar_day=(
+            calendar_snapshot.offseason_day
+            if calendar_snapshot.initialized
+            else None
+        ),
+        active_negotiations=calendar_snapshot.active_market_count,
+        financial_source=(
+            "Canonical 2026-27"
+            if environment.exact_anchor_season
+            else "Modeled future market"
+        ),
+    )
 
     live_notice = st.session_state.pop("fa_live_signing_notice", None)
     if live_notice:
@@ -305,7 +366,6 @@ def render_free_agency_workspace(
     if calendar_notice:
         st.success(calendar_notice)
 
-    calendar_snapshot = free_agency_calendar_snapshot(state)
     st.markdown("### Offseason free-agency calendar")
     cal1, cal2, cal3, cal4 = st.columns(4)
     cal1.metric("FA day", str(calendar_snapshot.offseason_day) if calendar_snapshot.initialized else "Not started")
@@ -600,9 +660,17 @@ def render_free_agency_workspace(
             "Open Franchise Mode and save your controlled-team preference first."
         )
 
-    left, right = st.columns([1.45, 1.0], gap="large")
+    # FRANCHISE_RESIGNING_NEGOTIATION_SUITE_V1
+    render_resigning_watchlist_v1(
+        state,
+        rows,
+        active_team=active_team,
+    )
 
-    with left:
+    market_section = st.container()
+    offer_section = st.container()
+
+    with market_section:
         st.markdown("### Available players")
         _fa_retained_count = sum(
             1
@@ -689,8 +757,12 @@ def render_free_agency_workspace(
                 },
             )
 
-    with right:
+    # FRANCHISE_OFFER_BUILDER_LAYOUT_POLISH_V1
+    st.markdown("---")
+
+    with offer_section:
         st.markdown("### Offer builder")
+        st.caption("Full-width negotiation workspace for easier building, previewing and reviewing player reactions.")
         if not rows:
             st.info("No free agents are available in the durable franchise state.")
             st.stop()
@@ -723,6 +795,13 @@ def render_free_agency_workspace(
         rfa_direct_signing_allowed = (
             not _selected_is_rfa
             or team == _selected_rfa_prior_team
+        )
+
+        _rsn_context = render_negotiation_room_intro_v1(
+            state,
+            selected_player,
+            signing_team=team,
+            persistent_record=persistent_record,
         )
 
         if _selected_is_rfa:
@@ -1014,6 +1093,15 @@ def render_free_agency_workspace(
                                 )
                             else:
                                 st.rerun()
+
+        # A negotiation-room quick action stages a revised salary and forces
+        # the normal preview / legality / negotiation flow to rebuild.
+        _rsn_pending_salary = st.session_state.pop(
+            "fa_resign_suite_pending_salary",
+            None,
+        )
+        if _rsn_pending_salary is not None:
+            st.session_state["fa_ui_salary"] = float(_rsn_pending_salary)
 
         prior_salary = selected_player.get("last_salary")
         if persistent_record is not None:
@@ -1443,8 +1531,38 @@ def render_free_agency_workspace(
                     else:
                         st.rerun()
 
-        decision = negotiation.user_decision if negotiation_is_current and negotiation is not None else None
-        decision_is_current = negotiation_is_current and decision is not None
+        decision = (
+            negotiation.user_decision
+            if negotiation_is_current and negotiation is not None
+            else None
+        )
+        if (
+            decision is None
+            and backend_offer_passes
+            and preview is not None
+            and preview_signature_matches
+        ):
+            try:
+                decision = evaluate_free_agent_offer_decision(
+                    decision_state,
+                    preview,
+                )
+            except Exception:
+                decision = None
+        decision_is_current = decision is not None and (
+            negotiation_is_current or backend_offer_passes
+        )
+
+        # FRANCHISE_RESIGNING_NEGOTIATION_SUITE_V1
+        render_player_reaction_v1(
+            decision_state,
+            selected_player,
+            signing_team=team,
+            decision=decision,
+            negotiation=negotiation if negotiation_is_current else None,
+            annual_salary=float(annual_salary),
+            years=int(years),
+        )
 
         if negotiation is None or not negotiation_is_current:
             if actual_offseason and selected_market_record is not None:

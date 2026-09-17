@@ -48,6 +48,7 @@ from franchise_free_agency_player_decision_v1 import (
 from franchise_free_agency_transaction_v1 import (
     FreeAgencyOffer,
     FreeAgencyTransactionPreview,
+    commit_free_agency_preview,
     free_agency_state_fingerprint,
 )
 from franchise_free_agency_transaction_v1_1 import (
@@ -65,14 +66,14 @@ CPU_FREE_AGENCY_EXECUTION_SCOPE = (
 CPU_FREE_AGENCY_CONFIRMATION_TOKEN = "CPU_FREE_AGENCY_EXECUTION_V1"
 DEFAULT_CPU_FREE_AGENCY_MAX_SIGNINGS_PER_ROUND = 3
 CPU_FREE_AGENCY_ROSTER_FLOOR_RESCUE_VERSION = (
-    "franchise-free-agency-cpu-roster-floor-rescue-v1.1-pruned-revalidation-2026-09-11"
+    "franchise-free-agency-cpu-roster-floor-rescue-v1.2-floor-first-2026-09-15"
 )
 CPU_FREE_AGENCY_ROSTER_FLOOR_RESCUE_SCOPE = (
     "post-market-cpu-only-game-ready-floor-rescue-with-legal-player-accepted-offers"
 )
 CPU_FREE_AGENCY_ROSTER_FLOOR_MAX_COUNTER_MULTIPLIER = 1.50
 CPU_FREE_AGENCY_DEEP_SEASON_PERFORMANCE_VERSION = (
-    "franchise-free-agency-deep-season-performance-v2-2026-09-11"
+    "franchise-free-agency-deep-season-performance-v3-floor-first-2026-09-17"
 )
 
 
@@ -1231,37 +1232,46 @@ def execute_next_cpu_free_agency_signing_durably(
             "CPU free-agency execution can run only during the actual offseason."
         )
     controlled = controlled_teams_from_durable_checkpoint(checkpoint)
+    # A playable roster is a lifecycle invariant, not a market preference.
+    # Prioritise one legal, player-accepted rescue whenever a CPU team is below
+    # the game-ready floor. Build the league-wide ordinary offer board only when
+    # no rescue exists: the board is irrelevant to a floor rescue and rebuilding
+    # it before every rescue made deep offseasons scale with
+    # (free-agent pool x teams x rescue signings).
+    rescue = build_cpu_roster_floor_rescue_opportunity(
+        state,
+        controlled_teams=controlled,
+    )
+    if rescue is not None:
+        signed = _commit_cpu_roster_floor_rescue_durably(
+            rescue,
+            recovery_directory=recovery_directory,
+            _checkpoint=checkpoint,
+            _checkpoint_hash=checkpoint_hash,
+            _verify_bytes_only=_verify_bytes_only,
+            _verified_checkpoint_sink=_verified_checkpoint_sink,
+        )
+        rescue_plan_fingerprint = (
+            f"roster-floor-rescue:{rescue.rescue_fingerprint}"
+        )
+        return CPUFreeAgencyExecutionStepResult(
+            version=CPU_FREE_AGENCY_EXECUTION_VERSION,
+            status="committed_roster_floor_rescue",
+            plan_fingerprint=rescue_plan_fingerprint,
+            board_fingerprint=rescue_plan_fingerprint,
+            market_fingerprint=f"roster-floor-rescue:{rescue.rescue_fingerprint}",
+            signing=signed,
+            message=(
+                f"Roster-floor rescue: {signed.player_name} signed with "
+                f"{signed.team_abbreviation} for ${signed.annual_salary:,.0f} per year."
+            ),
+        )
     plan = build_cpu_free_agency_execution_plan(
         state,
         controlled_teams=controlled,
         max_targets_per_team=max_targets_per_team,
     )
     if not plan.opportunities:
-        rescue = build_cpu_roster_floor_rescue_opportunity(
-            state,
-            controlled_teams=controlled,
-        )
-        if rescue is not None:
-            signed = _commit_cpu_roster_floor_rescue_durably(
-                rescue,
-                recovery_directory=recovery_directory,
-                _checkpoint=checkpoint,
-                _checkpoint_hash=checkpoint_hash,
-                _verify_bytes_only=_verify_bytes_only,
-                _verified_checkpoint_sink=_verified_checkpoint_sink,
-            )
-            return CPUFreeAgencyExecutionStepResult(
-                version=CPU_FREE_AGENCY_EXECUTION_VERSION,
-                status="committed_roster_floor_rescue",
-                plan_fingerprint=plan.plan_fingerprint,
-                board_fingerprint=plan.board_fingerprint,
-                market_fingerprint=f"roster-floor-rescue:{rescue.rescue_fingerprint}",
-                signing=signed,
-                message=(
-                    f"Roster-floor rescue: {signed.player_name} signed with "
-                    f"{signed.team_abbreviation} for ${signed.annual_salary:,.0f} per year."
-                ),
-            )
         return CPUFreeAgencyExecutionStepResult(
             version=CPU_FREE_AGENCY_EXECUTION_VERSION,
             status="no_accepted_cpu_market",
@@ -1310,6 +1320,574 @@ def execute_next_cpu_free_agency_signing_durably(
         ),
     )
 
+
+
+# FRANCHISE_NEXT_SEASON_ROSTER_FLOOR_BRIDGE_V1
+CPU_NEXT_SEASON_ROSTER_FLOOR_BRIDGE_VERSION = (
+    "franchise-next-season-roster-floor-bridge-v1-2026-09-16"
+)
+
+
+def execute_cpu_roster_floor_bridge_durably(
+    *,
+    max_signings: int = 60,
+    recovery_directory: str | Path | None = None,
+) -> dict[str, Any]:
+    """Fill only under-minimum CPU rosters before the season-boundary validator.
+
+    This is deliberately narrower than a normal CPU Free Agency round. It never
+    reopens the general market, never touches a user-controlled team, and uses
+    the already-certified roster-floor rescue offer/decision/financial gates.
+    Every rescue signing is committed atomically through the existing durable
+    Free Agency transaction path, then the checkpoint is reloaded before the
+    next deficit is evaluated.
+    """
+    if max_signings < 1 or max_signings > 60:
+        raise CPUFreeAgencyExecutionError(
+            "max_signings must be between 1 and 60 for the season-boundary roster-floor bridge."
+        )
+
+    from simulation_franchise_checkpoint_v1 import load_franchise_checkpoint
+
+    checkpoint = load_franchise_checkpoint(allow_backup=False)
+    if checkpoint is None:
+        raise CPUFreeAgencyExecutionError(
+            "The durable franchise checkpoint is unavailable for the season-boundary roster-floor bridge."
+        )
+    state = checkpoint.simulation_state
+    if _phase(state) != "offseason":
+        raise CPUFreeAgencyExecutionError(
+            "The season-boundary roster-floor bridge can run only during the actual offseason."
+        )
+
+    controlled = controlled_teams_from_durable_checkpoint(checkpoint)
+    floor = _minimum_game_player_floor(state)
+    before = _cpu_roster_floor_deficits(state, controlled)
+    committed: list[CPUFreeAgencyLiveSigningResult] = []
+
+    while True:
+        controlled = controlled_teams_from_durable_checkpoint(checkpoint)
+        deficits = _cpu_roster_floor_deficits(state, controlled)
+        if not deficits:
+            break
+        if len(committed) >= max_signings:
+            raise CPUFreeAgencyExecutionError(
+                "The season-boundary roster-floor bridge reached its bounded signing limit "
+                f"with unresolved CPU deficits: {deficits}."
+            )
+
+        opportunity = build_cpu_roster_floor_rescue_opportunity(
+            state,
+            controlled_teams=controlled,
+        )
+        if opportunity is None:
+            raise CPUFreeAgencyExecutionError(
+                "No legal player-accepted minimum/counter rescue could satisfy the remaining "
+                f"CPU roster-floor deficit(s): {deficits}."
+            )
+
+        signing = _commit_cpu_roster_floor_rescue_durably(
+            opportunity,
+            recovery_directory=recovery_directory,
+        )
+        committed.append(signing)
+
+        checkpoint = load_franchise_checkpoint(allow_backup=False)
+        if checkpoint is None:
+            raise CPUFreeAgencyExecutionError(
+                "The durable checkpoint could not be reloaded after a roster-floor rescue signing."
+            )
+        state = checkpoint.simulation_state
+        if _phase(state) != "offseason":
+            raise CPUFreeAgencyExecutionError(
+                "A roster-floor rescue unexpectedly changed the franchise phase."
+            )
+
+    all_counts = {
+        _team(team): len(tuple(getattr(team_state, "roster_player_ids", ()) or ()))
+        for team, team_state in (getattr(state, "teams", {}) or {}).items()
+        if _team(team)
+    }
+    unresolved_all = tuple(
+        sorted(
+            (team, count, floor - count)
+            for team, count in all_counts.items()
+            if count < floor
+        )
+    )
+
+    return {
+        "version": CPU_NEXT_SEASON_ROSTER_FLOOR_BRIDGE_VERSION,
+        "minimum_game_players": floor,
+        "cpu_deficits_before": before,
+        "committed_signing_count": len(committed),
+        "signings": tuple(
+            (
+                item.player_id,
+                item.player_name,
+                item.team_abbreviation,
+                float(item.annual_salary),
+            )
+            for item in committed
+        ),
+        "unresolved_all_team_deficits": unresolved_all,
+    }
+
+
+# FRANCHISE_POST_RETIREMENT_ROSTER_FLOOR_IN_MEMORY_BRIDGE_V2
+CPU_POST_RETIREMENT_ROSTER_FLOOR_BRIDGE_VERSION = (
+    "franchise-post-retirement-roster-floor-bridge-v2-2026-09-16"
+)
+
+
+
+# FRANCHISE_POST_RETIREMENT_MARKET_CLEARANCE_V3
+CPU_POST_RETIREMENT_MARKET_CLEARANCE_VERSION = (
+    "franchise-post-retirement-market-clearance-v3-2026-09-16"
+)
+
+
+def _build_cpu_roster_compliance_market_clearance_v3(
+    state: Any,
+    *,
+    team_abbreviation: str,
+) -> tuple[Any, dict[str, Any]] | None:
+    """Find one legal replacement-level minimum signing for a CPU floor deficit.
+
+    This path is deliberately narrower than normal Free Agency:
+    - the caller has already proven the CPU team is below minimum_game_players;
+    - every normal player-accepted minimum / bounded-counter route has failed;
+    - only a one-year fully guaranteed applicable minimum is considered;
+    - structural/CBA/financial gates must still PASS;
+    - the candidate must be replacement-level by rating/market criteria.
+
+    The player-decision model is still evaluated for ranking and diagnostics,
+    but the final employment decision is treated as a roster-lock market-
+    clearing acceptance for the lowest-demand eligible replacement player.
+    """
+    team = _team(team_abbreviation)
+    free_ids = sorted(
+        {
+            _clean(value)
+            for value in (getattr(state, "free_agent_player_ids", ()) or ())
+            if _clean(value)
+        }
+    )
+    if not team or not free_ids:
+        return None
+
+    candidates: list[tuple[tuple[Any, ...], Any, dict[str, Any]]] = []
+    players = getattr(state, "players", {}) or {}
+
+    for player_id in free_ids:
+        player = players.get(player_id)
+        if player is None:
+            continue
+
+        service, _ = resolve_years_of_service(player)
+        minimum = minimum_salary_floor_for_state(
+            state,
+            years_of_service=service,
+            contract_years=1,
+        )
+        try:
+            minimum_value = float(minimum)
+        except (TypeError, ValueError):
+            continue
+        if minimum_value <= 0.0:
+            continue
+
+        offer = FreeAgencyOffer(
+            player_id=player_id,
+            team_abbreviation=team,
+            annual_salary=round(minimum_value, 2),
+            years=1,
+            guaranteed=True,
+            option_type="",
+        )
+        try:
+            preview = build_rights_exception_free_agency_preview(
+                state,
+                offer,
+                max_roster_size=18,
+            )
+        except Exception:
+            continue
+        if (
+            _clean(getattr(preview, "status", "")).lower() != "pass"
+            or not bool(getattr(preview, "can_commit", False))
+        ):
+            continue
+
+        try:
+            decision = evaluate_free_agent_offer_decision(state, preview)
+        except Exception:
+            decision = None
+
+        overall = 0.0
+        try:
+            overall = float(getattr(player, "overall_rating", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            overall = 0.0
+
+        market_reference = minimum_value
+        utility = 0.0
+        threshold = 100.0
+        if decision is not None:
+            try:
+                market_reference = float(
+                    getattr(decision, "market_salary_reference", minimum_value)
+                    or minimum_value
+                )
+            except (TypeError, ValueError):
+                market_reference = minimum_value
+            try:
+                utility = float(getattr(decision, "utility_score", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                utility = 0.0
+            try:
+                threshold = float(
+                    getattr(decision, "acceptance_threshold", 100.0) or 100.0
+                )
+            except (TypeError, ValueError):
+                threshold = 100.0
+
+        market_ratio = market_reference / max(minimum_value, 1.0)
+        utility_gap = max(0.0, threshold - utility)
+
+        # Replacement-level guardrail. Tier 1 captures clear minimum-market
+        # players. Tier 2 allows a slightly stronger fringe player only when
+        # his market reference and decision gap are still modest.
+        tier = None
+        if overall <= 76.0 or market_ratio <= 1.75:
+            tier = 1
+        elif overall <= 79.0 and market_ratio <= 2.50 and utility_gap <= 30.0:
+            tier = 2
+        if tier is None:
+            continue
+
+        meta = {
+            "version": CPU_POST_RETIREMENT_MARKET_CLEARANCE_VERSION,
+            "team": team,
+            "player_id": player_id,
+            "player_name": _clean(getattr(player, "player_name", "")) or player_id,
+            "overall": round(overall, 3),
+            "minimum_salary": round(minimum_value, 2),
+            "market_reference": round(market_reference, 2),
+            "market_ratio": round(market_ratio, 4),
+            "utility_score": round(utility, 3),
+            "acceptance_threshold": round(threshold, 3),
+            "utility_gap": round(utility_gap, 3),
+            "replacement_tier": tier,
+            "offer_path": "post_retirement_roster_compliance_market_clearance",
+        }
+        rank = (
+            tier,
+            market_ratio,
+            utility_gap,
+            overall,
+            player_id,
+        )
+        candidates.append((rank, preview, meta))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda row: row[0])
+    _, preview, meta = candidates[0]
+    return preview, meta
+
+
+# FRANCHISE_SYNTHETIC_EMERGENCY_REPLACEMENT_V4
+CPU_SYNTHETIC_EMERGENCY_REPLACEMENT_VERSION = (
+    "franchise-synthetic-emergency-replacement-v4-2026-09-16"
+)
+
+
+def _add_synthetic_emergency_replacement_v4(
+    state: Any,
+    *,
+    team_abbreviation: str,
+) -> dict[str, Any]:
+    """Add one simulation-only emergency player to an underfilled CPU roster.
+
+    This is the final roster-compliance fallback after:
+      1) normal player-accepted Free Agency rescue; and
+      2) replacement-level legal minimum market clearance.
+
+    The base simulator already models synthetic emergency replacements at state
+    creation. This helper reuses the same state semantics at a season boundary.
+    The player:
+      - is synthetic;
+      - is non-tradable through the existing contract bridge;
+      - has a `simulation_replacement` zero-salary contract;
+      - does not receive career development;
+      - is removed automatically at the following season boundary.
+    """
+    from simulation_league_state_v1 import (
+        ContractState,
+        InjuryState,
+        PlayerSeasonTotals,
+        SimulationPlayerState,
+    )
+    from simulation_injury_fatigue_v1 import ensure_injury_fatigue_state
+
+    team = _team(team_abbreviation)
+    if team not in (getattr(state, "teams", {}) or {}):
+        raise CPUFreeAgencyExecutionError(
+            f"Emergency replacement team {team!r} does not exist."
+        )
+
+    season = _season(state)
+    season_start = _clean(season).split("-", 1)[0] or "season"
+    prefix = f"SIM_REPL_{team}_{season_start}_"
+
+    existing_ids = set(getattr(state, "players", {}) or {})
+    sequence = 1
+    while f"{prefix}{sequence:02d}" in existing_ids:
+        sequence += 1
+    player_id = f"{prefix}{sequence:02d}"
+
+    player = SimulationPlayerState(
+        player_id=player_id,
+        player_name=f"{team} Emergency Replacement {sequence}",
+        team_abbreviation=team,
+        roster_status="emergency_replacement",
+        overall_rating=66.0,
+        position="UNK",
+        synthetic=True,
+        rating_source="replacement",
+        two_way=False,
+        contract=ContractState(
+            status="simulation_replacement",
+            salary=0.0,
+            years_remaining=0,
+            option_type="",
+            guaranteed=False,
+        ),
+        age=None,
+        potential_rating=66.0,
+        future_outlook_rating=66.0,
+        development_direction="Stable",
+        profile_reliability=0.0,
+        skill_ratings={},
+        stat_factors={},
+        baseline_per_36={},
+        development_history=[],
+    )
+    setattr(
+        player,
+        "emergency_replacement_version_v4",
+        CPU_SYNTHETIC_EMERGENCY_REPLACEMENT_VERSION,
+    )
+    setattr(player, "emergency_replacement_season_v4", season)
+    setattr(player, "emergency_replacement_reason_v4", "cpu_roster_floor")
+
+    state.players[player_id] = player
+
+    team_state = state.teams[team]
+    roster = list(tuple(getattr(team_state, "roster_player_ids", ()) or ()))
+    if player_id not in roster:
+        roster.append(player_id)
+    team_state.roster_player_ids = tuple(roster)
+
+    active = list(tuple(getattr(team_state, "active_player_ids", ()) or ()))
+    if player_id not in active:
+        active.append(player_id)
+    team_state.active_player_ids = tuple(active)
+
+    state.injuries[player_id] = InjuryState(player_id=player_id)
+    state.player_season_totals[player_id] = PlayerSeasonTotals(
+        player_id=player_id
+    )
+
+    # Never expose a synthetic emergency replacement as a normal FA.
+    state.free_agent_player_ids = tuple(
+        value
+        for value in (getattr(state, "free_agent_player_ids", ()) or ())
+        if _clean(value) != player_id
+    )
+
+    # Keep the optional medical-profile map exactly aligned with players.
+    ensure_injury_fatigue_state(state)
+
+    return {
+        "version": CPU_SYNTHETIC_EMERGENCY_REPLACEMENT_VERSION,
+        "team": team,
+        "player_id": player_id,
+        "player_name": player.player_name,
+        "overall": 66.0,
+        "contract_status": "simulation_replacement",
+        "salary": 0.0,
+    }
+
+def execute_cpu_roster_floor_bridge_in_memory_v2(
+    state: Any,
+    *,
+    controlled_teams: Iterable[str] = (),
+    max_signings: int = 60,
+) -> tuple[Any, dict[str, Any]]:
+    """Repair post-retirement CPU roster deficits on the transition copy.
+
+    The career-lifecycle adapter can remove retiring players after the base
+    season transition. This function runs on that *in-memory transition copy*
+    before schedule installation and before the durable season-boundary commit.
+
+    It uses the existing roster-floor rescue offer builder, minimum/CBA gate,
+    and player-decision model. The only special handling is temporary OFFSEASON
+    phase semantics while signings are evaluated, because the copy has already
+    advanced to PRESEASON but cannot legally validate there until its floor
+    deficits are repaired.
+    """
+    if max_signings < 1 or max_signings > 60:
+        raise CPUFreeAgencyExecutionError(
+            "max_signings must be between 1 and 60 for the post-retirement bridge."
+        )
+
+    from simulation_league_state_v1 import (
+        LeaguePhase,
+        validate_simulation_league_state,
+    )
+    from simulation_season_transition_v1 import refresh_team_rotations
+
+    original_phase = getattr(state, "phase", None)
+    working = copy.deepcopy(state)
+    controlled = tuple(sorted({_team(value) for value in controlled_teams if _team(value)}))
+    floor = _minimum_game_player_floor(working)
+    committed: list[tuple[str, str, str, float]] = []
+    market_clearance_signings: list[dict[str, Any]] = []
+    synthetic_emergency_replacements: list[dict[str, Any]] = []
+
+    # Free Agency structural checks and the certified financial gate require
+    # actual offseason semantics. This is a private transition copy only.
+    working.phase = LeaguePhase.OFFSEASON
+
+    while True:
+        deficits = _cpu_roster_floor_deficits(working, controlled)
+        if not deficits:
+            break
+        if len(committed) >= max_signings:
+            raise CPUFreeAgencyExecutionError(
+                "Post-retirement roster repair hit its bounded signing limit "
+                f"with unresolved CPU deficits: {deficits}."
+            )
+
+        opportunity = build_cpu_roster_floor_rescue_opportunity(
+            working,
+            controlled_teams=controlled,
+        )
+        if opportunity is None:
+            deficit_team = deficits[0][0]
+            clearance = _build_cpu_roster_compliance_market_clearance_v3(
+                working,
+                team_abbreviation=deficit_team,
+            )
+            if clearance is None:
+                replacement_meta = _add_synthetic_emergency_replacement_v4(
+                    working,
+                    team_abbreviation=deficit_team,
+                )
+                synthetic_emergency_replacements.append(
+                    dict(replacement_meta)
+                )
+                continue
+
+            clearance_preview, clearance_meta = clearance
+            working, clearance_commit = commit_free_agency_preview(
+                working,
+                clearance_preview,
+                financial_gate=evaluate_rights_exception_financial_gate,
+                max_roster_size=18,
+            )
+            committed.append(
+                (
+                    _clean(getattr(clearance_commit, "player_id", "")),
+                    _clean(getattr(clearance_commit, "player_name", "")),
+                    _team(getattr(clearance_commit, "team_abbreviation", "")),
+                    float(
+                        getattr(clearance_preview.offer, "annual_salary", 0.0)
+                        or 0.0
+                    ),
+                )
+            )
+            market_clearance_signings.append(dict(clearance_meta))
+            continue
+
+        # Rescue discovery deliberately defers the expensive candidate
+        # fingerprint. Rebuild the selected offer once with the full fingerprint
+        # before the pure in-memory commit.
+        preview = build_rights_exception_free_agency_preview(
+            working,
+            opportunity.preview.offer,
+            max_roster_size=18,
+        )
+        if (
+            _clean(getattr(preview, "status", "")).lower() != "pass"
+            or not bool(getattr(preview, "can_commit", False))
+        ):
+            raise CPUFreeAgencyExecutionError(
+                "The selected post-retirement roster rescue no longer passes "
+                "the certified Free Agency transaction gate."
+            )
+
+        decision = evaluate_free_agent_offer_decision(
+            working,
+            preview,
+        )
+        if not bool(getattr(decision, "accepted", False)):
+            raise CPUFreeAgencyExecutionError(
+                "The selected post-retirement roster rescue is no longer "
+                "accepted by the free agent."
+            )
+
+        working, commit = commit_free_agency_preview(
+            working,
+            preview,
+            financial_gate=evaluate_rights_exception_financial_gate,
+            max_roster_size=18,
+        )
+        committed.append(
+            (
+                _clean(getattr(commit, "player_id", "")),
+                _clean(getattr(commit, "player_name", "")),
+                _team(getattr(commit, "team_abbreviation", "")),
+                float(getattr(preview.offer, "annual_salary", 0.0) or 0.0),
+            )
+        )
+
+    # A controlled roster is never auto-filled. Report it explicitly rather
+    # than falling back to a generic all_team_rosters_playable failure.
+    all_deficits = []
+    for team, team_state in sorted((getattr(working, "teams", {}) or {}).items()):
+        count = len(tuple(getattr(team_state, "roster_player_ids", ()) or ()))
+        if count < floor:
+            all_deficits.append((_team(team), count, floor - count))
+    if all_deficits:
+        raise CPUFreeAgencyExecutionError(
+            "Post-retirement roster repair left a user-controlled or otherwise "
+            f"unrepairable team below the {floor}-player floor: {all_deficits}."
+        )
+
+    working.phase = original_phase
+    refresh_team_rotations(working)
+    validate_simulation_league_state(working)
+
+    return working, {
+        "version": CPU_POST_RETIREMENT_ROSTER_FLOOR_BRIDGE_VERSION,
+        "minimum_game_players": floor,
+        "committed_signing_count": len(committed),
+        "signings": tuple(committed),
+        "market_clearance_signing_count": len(market_clearance_signings),
+        "market_clearance_signings": tuple(
+            dict(row) for row in market_clearance_signings
+        ),
+        "synthetic_emergency_replacement_count": len(
+            synthetic_emergency_replacements
+        ),
+        "synthetic_emergency_replacements": tuple(
+            dict(row) for row in synthetic_emergency_replacements
+        ),
+    }
 
 def execute_cpu_free_agency_round_durably(
     *,
@@ -1466,7 +2044,8 @@ def cpu_execution_contract_report() -> dict[str, Any]:
         "cpu_only_markets": True,
         "user_offer_injection": False,
         "roster_floor_rescue_version": CPU_FREE_AGENCY_ROSTER_FLOOR_RESCUE_VERSION,
-        "roster_floor_rescue_runs_only_after_standard_market_exhausts": True,
+        "roster_floor_rescue_runs_only_after_standard_market_exhausts": False,
+        "roster_floor_rescue_prioritized_before_standard_market": True,
         "roster_floor_rescue_cpu_only": True,
         "roster_floor_rescue_requires_underfilled_team": True,
         "roster_floor_rescue_preserves_locked_financial_gate": True,

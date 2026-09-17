@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import random
+from datetime import date
+from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable, Mapping
 
 
-STAFF_SYSTEM_VERSION = "franchise-staff-system-v1.0-2026-09-09"
+STAFF_SYSTEM_VERSION = "franchise-staff-system-v1.2-scout-market-2026-09-16"
 STAFF_STATE_ATTRIBUTE = "franchise_staff_state_v1"
+REAL_STAFF_REFERENCE_VERSION = "nba-real-staff-reference-v1-2026-09-11"
+REAL_STAFF_REFERENCE_DATE = date(2026, 9, 7)
+_REAL_STAFF_REFERENCE_PATH = Path(__file__).resolve().parents[1] / "app_data" / "nba_real_staff_reference_2026_09_07.json"
 
 ROLE_HEAD_COACH = "head_coach"
 ROLE_ASSISTANT_COACH = "assistant_coach"
@@ -103,6 +109,9 @@ class FranchiseStaffState:
     version: str
     season_label: str
     teams: dict[str, TeamStaffState] = field(default_factory=dict)
+    # SCOUT_CHECKPOINT_COMPAT_V1_0_1: class-level None lets legacy checkpoint objects
+    # survive runtime dataclass rebinding before ensure_franchise_staff_state migrates them.
+    scouting_history: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +137,48 @@ def _stable_rng(*parts: Any) -> random.Random:
     digest = hashlib.sha256(payload).digest()
     seed = int.from_bytes(digest[:8], "big", signed=False)
     return random.Random(seed)
+
+
+def _load_real_staff_reference() -> dict[str, Any]:
+    try:
+        payload = json.loads(_REAL_STAFF_REFERENCE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if str(payload.get("version") or "") != REAL_STAFF_REFERENCE_VERSION:
+        return {}
+    teams = payload.get("teams")
+    return teams if isinstance(teams, dict) else {}
+
+
+def _age_on_reference_date(birth_date: str) -> int | None:
+    try:
+        born = date.fromisoformat(str(birth_date))
+    except (TypeError, ValueError):
+        return None
+    years = REAL_STAFF_REFERENCE_DATE.year - born.year
+    if (REAL_STAFF_REFERENCE_DATE.month, REAL_STAFF_REFERENCE_DATE.day) < (born.month, born.day):
+        years -= 1
+    return years
+
+
+def _apply_real_head_coach_identity(team_state: TeamStaffState) -> None:
+    """Overlay verified Sep. 7, 2026 head-coach identity without changing gameplay ratings."""
+    reference = _load_real_staff_reference().get(str(team_state.team).upper())
+    if not isinstance(reference, dict):
+        return
+    coach = reference.get("head_coach")
+    member = team_state.members.get(ROLE_HEAD_COACH)
+    if not isinstance(coach, dict) or not isinstance(member, StaffMember):
+        return
+    name = str(coach.get("name") or "").strip()
+    if name:
+        member.name = name
+    age = _age_on_reference_date(str(coach.get("birth_date") or ""))
+    if age is not None:
+        member.age = age
+    # Contract economics, ratings, traits, and experience stay simulation-generated
+    # so this identity migration cannot alter team effects or checkpoint behavior.
+    member.source = "nba_real_world_head_coach_sep7_2026_simulated_attributes_v1"
 
 
 def _season_label(state: Any) -> str:
@@ -237,10 +288,12 @@ def build_team_staff(team: str) -> TeamStaffState:
     team = str(team or "").strip().upper()
     if not team:
         raise ValueError("A team abbreviation is required to build staff.")
-    return TeamStaffState(
+    team_state = TeamStaffState(
         team=team,
         members={role: _generate_member(team, role) for role in STAFF_ROLES},
     )
+    _apply_real_head_coach_identity(team_state)
+    return team_state
 
 
 def ensure_franchise_staff_state(state: Any) -> FranchiseStaffState:
@@ -252,6 +305,8 @@ def ensure_franchise_staff_state(state: Any) -> FranchiseStaffState:
 
     existing.version = STAFF_SYSTEM_VERSION
     existing.season_label = season
+    if not isinstance(getattr(existing, "scouting_history", None), list):
+        existing.scouting_history = []
     for team in _team_codes(state):
         team_state = existing.teams.get(team)
         if not isinstance(team_state, TeamStaffState):
@@ -260,6 +315,7 @@ def ensure_franchise_staff_state(state: Any) -> FranchiseStaffState:
         for role in STAFF_ROLES:
             if not isinstance(team_state.members.get(role), StaffMember):
                 team_state.members[role] = _generate_member(team, role)
+        _apply_real_head_coach_identity(team_state)
     return existing
 
 
@@ -374,6 +430,11 @@ def staff_rows(state: Any, team: str, *, ensure: bool = True) -> list[dict[str, 
             "communication": member.communication_rating,
             "adaptability": member.adaptability_rating,
             "traits": ", ".join(member.traits),
+            "personnel_basis": (
+                "Real-world · Sep 7, 2026"
+                if member.source == "nba_real_world_head_coach_sep7_2026_simulated_attributes_v1"
+                else "Sim-generated"
+            ),
         })
     return rows
 
@@ -396,9 +457,196 @@ def scouting_error_band(state: Any, team: str, *, potential: bool = False) -> fl
     return round(_clamp(11.0 - (rating - 50.0) * 0.11, 3.0, 11.0), 2)
 
 
+SCOUT_MARKET_SIZE = 8
+SCOUTING_HISTORY_VERSION = "franchise-scouting-track-record-v1.0-2026-09-16"
+
+
+def lead_scout_member(state: Any, team: str, *, ensure: bool = True) -> StaffMember | None:
+    team_state = team_staff(state, team, ensure=ensure)
+    return _role(team_state, ROLE_LEAD_SCOUT)
+
+
+def scouting_error_band_for_rating(rating: float) -> float:
+    """Translate a scouting rating into the same uncertainty scale used in Draft scouting."""
+    return round(_clamp(11.0 - (float(rating) - 50.0) * 0.11, 3.0, 11.0), 2)
+
+
+def _generate_scout_candidate(team: str, season_label: str, slot: int) -> StaffMember:
+    team_code = str(team or "").strip().upper()
+    season = str(season_label or "").strip() or "unknown"
+    rng = _stable_rng(STAFF_SYSTEM_VERSION, "lead_scout_market", team_code, season, int(slot))
+    # Markets contain meaningful archetypes rather than eight near-identical scouts.
+    archetypes = (
+        (82.0, 67.0, "Ready-now evaluator"),
+        (67.0, 84.0, "Upside hunter"),
+        (77.0, 77.0, "Balanced evaluator"),
+        (86.0, 61.0, "Pro-readiness specialist"),
+        (63.0, 88.0, "Projection specialist"),
+        (74.0, 81.0, "Development projection"),
+        (81.0, 73.0, "Film-first evaluator"),
+        (72.0, 75.0, "Value generalist"),
+    )
+    current_center, potential_center, archetype = archetypes[int(slot) % len(archetypes)]
+    scout_current = _rating(rng, current_center, 5.4)
+    scout_potential = _rating(rng, potential_center, 5.4)
+    adaptability = _rating(rng, 73.0, 8.0)
+    communication = _rating(rng, 72.0, 8.0)
+    overall = round(_clamp(0.46 * scout_current + 0.39 * scout_potential + 0.15 * adaptability, 45.0, 96.0), 1)
+    traits = list(rng.sample(TRAITS_BY_ROLE[ROLE_LEAD_SCOUT], k=2))
+    if archetype not in traits:
+        traits = [archetype, traits[0]]
+    age = rng.randint(31, 61)
+    experience = max(2, min(age - 24, rng.randint(4, max(5, age - 26))))
+    years = rng.randint(2, 4)
+    return StaffMember(
+        staff_id=f"scout_market_{team_code.lower()}_{season.replace('-', '_')}_{int(slot)+1}",
+        team="FA",
+        role=ROLE_LEAD_SCOUT,
+        name=_member_name(rng),
+        age=age,
+        years_experience=experience,
+        contract_years_remaining=years,
+        annual_salary_millions=_salary_for_role(ROLE_LEAD_SCOUT, overall, rng),
+        overall_rating=overall,
+        offense_rating=70.0,
+        defense_rating=70.0,
+        rotation_management_rating=70.0,
+        player_development_rating=70.0,
+        scouting_current_rating=scout_current,
+        scouting_potential_rating=scout_potential,
+        medical_prevention_rating=70.0,
+        medical_recovery_rating=70.0,
+        communication_rating=communication,
+        adaptability_rating=adaptability,
+        traits=tuple(traits),
+        source="scout_market_v1",
+    )
+
+
+def scout_market_candidates(state: Any, team: str) -> tuple[StaffMember, ...]:
+    season = _season_label(state)
+    return tuple(_generate_scout_candidate(team, season, slot) for slot in range(SCOUT_MARKET_SIZE))
+
+
+def hire_lead_scout(state: Any, team: str, candidate_staff_id: str) -> StaffMember:
+    team_code = str(team or "").strip().upper()
+    candidate = next(
+        (row for row in scout_market_candidates(state, team_code) if row.staff_id == str(candidate_staff_id)),
+        None,
+    )
+    if candidate is None:
+        raise ValueError("That scout is not available in the current staff market.")
+    team_state = team_staff(state, team_code, ensure=True)
+    if team_state is None:
+        raise ValueError(f"Staff state is unavailable for {team_code}.")
+    hired = StaffMember(**asdict(candidate))
+    hired.team = team_code
+    hired.source = "user_hired_scout_market_v1"
+    team_state.members[ROLE_LEAD_SCOUT] = hired
+    return hired
+
+
+def _draft_prospect_map(draft_state: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    result: dict[str, Mapping[str, Any]] = {}
+    for row in draft_state.get("prospects", []) or []:
+        if not isinstance(row, Mapping):
+            continue
+        pid = str(row.get("prospect_id") or "").strip()
+        if pid:
+            result[pid] = row
+    return result
+
+
+def archive_completed_scouting_accuracy(state: Any, draft_state: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Archive team scouting error after Draft Night without exposing hidden truth beforehand."""
+    current = draft_state if isinstance(draft_state, Mapping) else getattr(state, "franchise_draft_state_v1", None)
+    if not isinstance(current, Mapping) or str(current.get("phase") or "") != "draft_complete":
+        return []
+    scouting_root = current.get("scouting_discovery_v1")
+    if not isinstance(scouting_root, Mapping):
+        return []
+    draft_year = int(current.get("draft_year") or 0)
+    if draft_year <= 0:
+        return []
+    staff_state = ensure_franchise_staff_state(state)
+    history = getattr(staff_state, "scouting_history", None)
+    if not isinstance(history, list):
+        history = []
+        staff_state.scouting_history = history
+    prospects = _draft_prospect_map(current)
+    added: list[dict[str, Any]] = []
+    teams = scouting_root.get("teams")
+    if not isinstance(teams, Mapping):
+        return []
+    for raw_team, payload in teams.items():
+        team_code = str(raw_team or "").strip().upper()
+        if not team_code or not isinstance(payload, Mapping):
+            continue
+        if any(int(row.get("draft_year") or -1) == draft_year and str(row.get("team") or "") == team_code for row in history if isinstance(row, Mapping)):
+            continue
+        reports = payload.get("reports")
+        if not isinstance(reports, Mapping):
+            continue
+        ovr_errors: list[float] = []
+        pot_errors: list[float] = []
+        strong_finds = 0
+        major_misses = 0
+        for pid, report in reports.items():
+            prospect = prospects.get(str(pid))
+            if not isinstance(prospect, Mapping) or not isinstance(report, Mapping):
+                continue
+            try:
+                true_ovr = float(prospect.get("hidden_overall"))
+                true_pot = float(prospect.get("hidden_potential"))
+                est_ovr = float(report.get("scouted_overall"))
+                est_pot = float(report.get("scouted_potential"))
+            except (TypeError, ValueError):
+                continue
+            oerr = abs(est_ovr - true_ovr)
+            perr = abs(est_pot - true_pot)
+            ovr_errors.append(oerr)
+            pot_errors.append(perr)
+            if oerr <= 2.0 and perr <= 4.0:
+                strong_finds += 1
+            if oerr >= 6.0 or perr >= 10.0:
+                major_misses += 1
+        if not ovr_errors:
+            continue
+        scout = lead_scout_member(state, team_code, ensure=True)
+        record = {
+            "version": SCOUTING_HISTORY_VERSION,
+            "draft_year": draft_year,
+            "team": team_code,
+            "lead_scout": getattr(scout, "name", "Unknown"),
+            "lead_scout_id": getattr(scout, "staff_id", ""),
+            "reports_graded": len(ovr_errors),
+            "overall_mae": round(sum(ovr_errors) / len(ovr_errors), 2),
+            "potential_mae": round(sum(pot_errors) / len(pot_errors), 2),
+            "strong_finds": int(strong_finds),
+            "major_misses": int(major_misses),
+        }
+        history.append(record)
+        added.append(record)
+    return added
+
+
+def scouting_track_record_rows(state: Any, team: str) -> list[dict[str, Any]]:
+    archive_completed_scouting_accuracy(state)
+    staff_state = ensure_franchise_staff_state(state)
+    team_code = str(team or "").strip().upper()
+    history = getattr(staff_state, "scouting_history", None)
+    if not isinstance(history, list):
+        history = []
+        staff_state.scouting_history = history
+    rows = [dict(row) for row in history if isinstance(row, Mapping) and str(row.get("team") or "").upper() == team_code]
+    rows.sort(key=lambda row: int(row.get("draft_year") or 0), reverse=True)
+    return rows
+
+
 __all__ = [
     "STAFF_SYSTEM_VERSION",
     "STAFF_STATE_ATTRIBUTE",
+    "REAL_STAFF_REFERENCE_VERSION",
     "STAFF_ROLES",
     "ROLE_LABELS",
     "StaffMember",
@@ -415,4 +663,13 @@ __all__ = [
     "staff_rows",
     "league_staff_summary",
     "scouting_error_band",
+    "ROLE_LEAD_SCOUT",
+    "SCOUT_MARKET_SIZE",
+    "SCOUTING_HISTORY_VERSION",
+    "lead_scout_member",
+    "scouting_error_band_for_rating",
+    "scout_market_candidates",
+    "hire_lead_scout",
+    "archive_completed_scouting_accuracy",
+    "scouting_track_record_rows",
 ]

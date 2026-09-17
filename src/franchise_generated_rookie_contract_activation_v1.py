@@ -95,6 +95,104 @@ def _first_round_salary(
     return amount
 
 
+
+# GENERATED_ROOKIE_ACTIVATION_PEDIGREE_RECOVERY_V1
+GENERATED_ROOKIE_PEDIGREE_RECOVERY_VERSION = (
+    "generated-rookie-activation-pedigree-recovery-v1-2026-09-16"
+)
+
+
+def _generated_draft_pedigree_lookup(
+    state: Any,
+    *,
+    target_season: str,
+) -> dict[str, dict[str, Any]]:
+    """Return authoritative generated-draft pedigree for one rookie class."""
+    target = _clean(target_season)
+    rows: dict[str, dict[str, Any]] = {}
+
+    for draft in list(getattr(state, "franchise_draft_history_v1", ()) or ()):
+        if not isinstance(draft, dict):
+            continue
+        archive_target = _clean(draft.get("target_season", ""))
+        if archive_target != target:
+            continue
+
+        archive_year = _int(draft.get("draft_year"))
+        for pick in list(draft.get("draft_order", ()) or ()):
+            if not isinstance(pick, dict):
+                continue
+            player_id = _clean(pick.get("prospect_id", ""))
+            if not player_id:
+                continue
+
+            rows[player_id] = {
+                "target_season": archive_target,
+                "draft_year": archive_year,
+                "draft_round": _int(pick.get("round")),
+                "draft_pick": _int(pick.get("overall_pick")),
+                "draft_round_pick": _int(pick.get("round_pick")),
+                "drafted_by": _clean(pick.get("owner_team", "")).upper(),
+            }
+
+    return rows
+
+
+def _recover_generated_rookie_pedigree(
+    state: Any,
+    player: Any,
+    *,
+    target_season: str,
+    pedigree_lookup: dict[str, dict[str, Any]],
+) -> tuple[int | None, int | None, int | None]:
+    """Restore draft pedigree erased from a generated rookie's live record.
+
+    The durable completed-draft archive is authoritative for generated players.
+    This mutates only the in-memory transition copy. It is persisted only if the
+    existing atomic season-boundary commit succeeds.
+    """
+    player_id = _clean(getattr(player, "player_id", ""))
+    pedigree = pedigree_lookup.get(player_id)
+
+    live_year = _int(getattr(player, "draft_year", None))
+    live_round = _int(getattr(player, "draft_round", None))
+    live_pick = _int(getattr(player, "draft_pick", None))
+
+    if pedigree is None:
+        return live_year, live_round, live_pick
+
+    archive_year = _int(pedigree.get("draft_year"))
+    archive_round = _int(pedigree.get("draft_round"))
+    archive_pick = _int(pedigree.get("draft_pick"))
+    archive_round_pick = _int(pedigree.get("draft_round_pick"))
+    archive_team = _clean(pedigree.get("drafted_by", "")).upper()
+
+    # For generated players, the completed draft result outranks later generic
+    # career-history enrichment. Restore missing or stale fields from it.
+    if archive_year is not None:
+        live_year = archive_year
+        setattr(player, "draft_year", archive_year)
+    if archive_round is not None:
+        live_round = archive_round
+        setattr(player, "draft_round", archive_round)
+    if archive_pick is not None:
+        live_pick = archive_pick
+        setattr(player, "draft_pick", archive_pick)
+    if archive_round_pick is not None:
+        setattr(player, "draft_round_pick", archive_round_pick)
+    if archive_team:
+        setattr(player, "drafted_by", archive_team)
+
+    if archive_year is not None:
+        setattr(player, "draft_class_id", f"DRAFT-{archive_year}")
+    setattr(
+        player,
+        "generated_rookie_pedigree_recovery_version_v1",
+        GENERATED_ROOKIE_PEDIGREE_RECOVERY_VERSION,
+    )
+
+    return live_year, live_round, live_pick
+
 def activate_generated_rookie_contracts(
     state: Any,
     target_season: str,
@@ -102,6 +200,10 @@ def activate_generated_rookie_contracts(
     target = _clean(target_season)
     target_start = _season_start(target)
     matched = 0
+    pedigree_lookup = _generated_draft_pedigree_lookup(
+        state,
+        target_season=target,
+    )
 
     for player in getattr(state, "players", {}).values():
         if not bool(getattr(player, "generated_prospect", False)):
@@ -109,14 +211,22 @@ def activate_generated_rookie_contracts(
         if _clean(getattr(player, "rookie_season", "")) != target:
             continue
 
-        draft_year = _int(getattr(player, "draft_year", None))
-        draft_round = _int(getattr(player, "draft_round", None))
-        overall_pick = _int(getattr(player, "draft_pick", None))
+        draft_year, draft_round, overall_pick = (
+            _recover_generated_rookie_pedigree(
+                state,
+                player,
+                target_season=target,
+                pedigree_lookup=pedigree_lookup,
+            )
+        )
         contract = getattr(player, "contract", None)
 
         if draft_year != target_start:
+            player_id = _clean(getattr(player, "player_id", ""))
             raise GeneratedRookieContractActivationError(
-                f"Draft year {draft_year!r} does not match target {target!r}."
+                "Generated rookie draft pedigree could not be reconciled: "
+                f"player_id={player_id!r}, draft_year={draft_year!r}, "
+                f"target={target!r}, archive_match={player_id in pedigree_lookup}."
             )
         if draft_round not in {1, 2}:
             raise GeneratedRookieContractActivationError(

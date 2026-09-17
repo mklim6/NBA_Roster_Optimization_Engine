@@ -588,8 +588,14 @@ def _future_profile(
 def build_franchise_player_contract_snapshot(
     runtime: RuntimeData,
     state: Any,
+    *,
+    verify_immutability: bool = True,
 ) -> FranchisePlayerContractSnapshot:
-    before = copy.deepcopy(state)
+    # FRANCHISE_TRADE_MARKET_PERFORMANCE_V7_4
+    # General callers retain the historical defensive immutability audit.
+    # Game Day may disable only this audit when its caller has already
+    # isolated the entire franchise state in a private transaction.
+    before = copy.deepcopy(state) if verify_immutability else None
     players = getattr(state, "players", {})
     if not isinstance(players, dict):
         raise FranchisePlayerContractBridgeError(
@@ -637,14 +643,15 @@ def build_franchise_player_contract_snapshot(
             )
         )
 
-    try:
-        unchanged = state == before
-    except Exception:
-        unchanged = repr(state) == repr(before)
-    if not unchanged:
-        raise FranchisePlayerContractBridgeError(
-            "Player-contract snapshot construction mutated the live franchise state."
-        )
+    if verify_immutability:
+        try:
+            unchanged = state == before
+        except Exception:
+            unchanged = repr(state) == repr(before)
+        if not unchanged:
+            raise FranchisePlayerContractBridgeError(
+                "Player-contract snapshot construction mutated the live franchise state."
+            )
 
     return FranchisePlayerContractSnapshot(
         version=PLAYER_CONTRACT_BRIDGE_VERSION,

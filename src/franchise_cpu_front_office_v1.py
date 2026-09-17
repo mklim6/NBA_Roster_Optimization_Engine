@@ -16,6 +16,10 @@ from franchise_asset_market_value_v1 import (
 
 
 
+from franchise_morale_trade_market_v1 import (
+    apply_cpu_morale_trade_market_to_decisions_v1,
+)
+
 CPU_FRONT_OFFICE_VERSION = "franchise-cpu-front-office-v1.6.2-2026-08-13"
 CPU_FRONT_OFFICE_MODEL_VERSION = "shared-market-context-asset-tier-calibration-v1.6.2-2026-08-13"
 
@@ -3293,6 +3297,14 @@ def build_team_front_office_plan(
         row.player_id
         for row in decisions
         if row.asset_policy == "Exit"
+    )
+
+    # FRANCHISE_MORALE_TRADE_MARKET_BRIDGE_V5A
+    decisions = apply_cpu_morale_trade_market_to_decisions_v1(
+        state,
+        resolved,
+        decisions,
+        controlled_teams=controlled_teams,
     )
 
     (

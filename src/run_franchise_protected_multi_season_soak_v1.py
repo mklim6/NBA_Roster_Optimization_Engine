@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 OUTPUT = ROOT / "outputs" / "franchise_protected_multi_season_soak_v1.json"
 RUNS = ROOT / "outputs" / "_soak"
-VERSION = "franchise-protected-multi-season-soak-v1.1-2026-09-10"
+VERSION = "franchise-protected-multi-season-soak-v1.2-staff-invariant-2026-09-17"
 DEFAULT_SEASONS = 8
 MAX_SEASONS = 10
 EXPECTED_FORFEIT_DRAFT_SIZES = {
@@ -43,6 +43,30 @@ from run_franchise_protected_lifecycle_boundary_regression_v1 import (
     _postseason_stage,
     _staff_signature,
 )
+
+
+def _staff_personnel_signature(state: Any) -> str:
+    """Hash only persistent staff personnel, excluding season metadata/history.
+
+    The staff container intentionally advances ``season_label`` and
+    ``scouting_history`` over a multi-season franchise. Those fields must not
+    invalidate the persistence invariant. In this headless soak no staff
+    transaction is performed, so the 30 teams' actual staff payload should
+    remain byte-for-byte stable.
+    """
+    import hashlib
+
+    staff = getattr(state, "franchise_staff_state_v1", None)
+    if staff is None:
+        return ""
+    teams = getattr(staff, "teams", {}) or {}
+    encoded = json.dumps(
+        _jsonable(teams),
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 class ProtectedMultiSeasonSoakError(RuntimeError):
@@ -107,14 +131,24 @@ def _trade_registry_covers_non_synthetic_players(state: Any, trade_state: Any) -
     return expected.issubset(set(ownership))
 
 
-def _validate_boundary_state(state: Any, *, target_season: str, staff_signature: str, staff_version: str) -> dict[str, bool]:
+def _validate_boundary_state(
+    state: Any,
+    *,
+    target_season: str,
+    staff_personnel_signature: str,
+    staff_version: str,
+) -> dict[str, bool]:
     from regular_season_schedule_v1 import LEAGUE_GAME_COUNT
     from simulation_league_state_v1 import validate_simulation_league_state
+    from franchise_staff_system_v1 import ensure_franchise_staff_state
 
     validate_simulation_league_state(state)
     pop = _population_metrics(state)
-    staff = getattr(state, "franchise_staff_state_v1", None)
+    # Mirror the real UI/runtime behavior at a new season boundary. This may
+    # legitimately advance staff.season_label and append scouting history.
+    staff = ensure_franchise_staff_state(state)
     standings = getattr(state, "standings", {}) or {}
+    history = getattr(staff, "scouting_history", None)
     return {
         "target_season_active": str(getattr(getattr(state, "settings", None), "season_label", "")) == target_season,
         "regular_season_phase": _phase(state) == "regular_season",
@@ -128,7 +162,9 @@ def _validate_boundary_state(state: Any, *, target_season: str, staff_signature:
             and len(getattr(staff, "teams", {}) or {}) == 30
             and str(getattr(staff, "version", "") or "") == staff_version
         ),
-        "staff_signature_stable": _staff_signature(state) == staff_signature,
+        "staff_season_label_current": str(getattr(staff, "season_label", "") or "") == target_season,
+        "staff_personnel_signature_stable": _staff_personnel_signature(state) == staff_personnel_signature,
+        "staff_scouting_history_well_formed": isinstance(history, list),
     }
 
 
@@ -218,8 +254,12 @@ def run_soak(*, seasons: int = DEFAULT_SEASONS, keep_artifacts: bool = False) ->
 
             staff = ensure_franchise_staff_state(live_cp.simulation_state)
             staff_signature = _staff_signature(live_cp.simulation_state)
+            staff_personnel_signature = _staff_personnel_signature(live_cp.simulation_state)
             checks["staff_initialized_once"] = bool(
-                staff and len(getattr(staff, "teams", {}) or {}) == 30 and staff_signature
+                staff
+                and len(getattr(staff, "teams", {}) or {}) == 30
+                and staff_signature
+                and staff_personnel_signature
             )
             live_cp, expected, observed = _save_and_assert_roundtrip(
                 checkpoint_api,
@@ -236,7 +276,8 @@ def run_soak(*, seasons: int = DEFAULT_SEASONS, keep_artifacts: bool = False) ->
             shutil.copy2(temp_primary, clean_live_copy)
             report["details"]["pristine_frozen_fingerprint"] = pristine_live_fp
             report["details"]["gameplay_fixture_fingerprint"] = clean_live_fp
-            report["details"]["staff_signature"] = staff_signature
+            report["details"]["staff_signature_initial_full"] = staff_signature
+            report["details"]["staff_personnel_signature"] = staff_personnel_signature
 
             opening_preview = opening_api.preview_opening_regular_season(live_cp.simulation_state, live_cp.trade_state)
             if not opening_preview.can_commit:
@@ -467,10 +508,18 @@ def run_soak(*, seasons: int = DEFAULT_SEASONS, keep_artifacts: bool = False) ->
                 boundary_checks = _validate_boundary_state(
                     next_cp.simulation_state,
                     target_season=target_season,
-                    staff_signature=staff_signature,
+                    staff_personnel_signature=staff_personnel_signature,
                     staff_version=STAFF_SYSTEM_VERSION,
                 )
                 srep["checks"].update({f"boundary_{k}": v for k,v in boundary_checks.items()})
+                boundary_staff = getattr(next_cp.simulation_state, "franchise_staff_state_v1", None)
+                boundary_history = getattr(boundary_staff, "scouting_history", None)
+                srep["staff"] = {
+                    "version": str(getattr(boundary_staff, "version", "") or ""),
+                    "season_label": str(getattr(boundary_staff, "season_label", "") or ""),
+                    "personnel_signature": _staff_personnel_signature(next_cp.simulation_state),
+                    "scouting_history_count": len(boundary_history) if isinstance(boundary_history, list) else -1,
+                }
                 srep["checks"]["completed_season_archived"] = any(
                     str(getattr(item, "season_label", "") or "") == source_season
                     for item in (getattr(next_cp.simulation_state, "season_history", []) or [])
@@ -505,7 +554,9 @@ def run_soak(*, seasons: int = DEFAULT_SEASONS, keep_artifacts: bool = False) ->
 
             checks["all_requested_seasons_completed"] = report["completed_seasons"] == seasons
             checks["all_season_reports_passed"] = len(season_reports) == seasons and all(bool(x.get("passed")) for x in season_reports)
-            checks["staff_signature_survived_all_seasons"] = _staff_signature(current_cp.simulation_state) == staff_signature
+            checks["staff_personnel_survived_all_seasons"] = (
+                _staff_personnel_signature(current_cp.simulation_state) == staff_personnel_signature
+            )
             checks["season_history_count_matches_soak_depth"] = len(getattr(current_cp.simulation_state, "season_history", []) or []) >= seasons
 
             if seasons >= 7:

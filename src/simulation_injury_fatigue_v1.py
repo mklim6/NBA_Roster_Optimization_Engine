@@ -1709,16 +1709,22 @@ def player_health_report_rows(
             clamp(float(profile.fatigue or 0.0), 0.0, 100.0),
             2,
         )
-        current_fatigue = recovered_fatigue(
-            profile,
+        # Keep the current-day display on the same staff-adjusted recovery
+        # curve used by the next-game projection. Mixing neutral recovery here
+        # with staff-adjusted recovery below could make a later projection
+        # appear higher than the current value for teams with slower recovery.
+        current_fatigue = projected_fatigue(
+            state,
+            player_id,
             max(
                 int(state.current_day_index),
                 int(profile.last_recovery_day or 0),
             ),
         )
-        projected_game_fatigue = round(
-            clamp(float(assessment.fatigue or 0.0), 0.0, 100.0),
-            2,
+        projected_game_fatigue = projected_fatigue(
+            state,
+            player_id,
+            resolved_day,
         )
         try:
             from simulation_medical_injury_v2 import (

@@ -14,4 +14,8 @@ sys.path.insert(0, str(SRC))
 from franchise_free_agency_workspace_v1 import render_free_agency_workspace
 
 st.set_page_config(page_title="NBA Free Agency", page_icon="📝", layout="wide")
+# FRANCHISE_PRIMARY_NAV_V1
+from src.franchise_primary_navigation_v1 import render_franchise_primary_navigation_v1
+render_franchise_primary_navigation_v1()
+
 render_free_agency_workspace(embedded=False)

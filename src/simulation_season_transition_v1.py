@@ -493,6 +493,43 @@ def refresh_team_rotations(
         }
     )
 
+    # CPU_ROOKIE_USAGE_REALISM_V1_ROTATION_POLICY
+    current_season_label = str(state.settings.season_label)
+    durable_draft_meta: dict[str, dict[str, Any]] = {}
+    for draft in list(getattr(state, "franchise_draft_history_v1", ()) or ()):
+        if not isinstance(draft, dict):
+            continue
+        target_season = str(draft.get("target_season", "") or "").strip()
+        for pick_row in list(draft.get("draft_order", ()) or ()):
+            if not isinstance(pick_row, dict):
+                continue
+            prospect_id = str(pick_row.get("prospect_id", "") or "").strip()
+            if not prospect_id:
+                continue
+            durable_draft_meta[prospect_id] = {
+                "target_season": target_season,
+                "draft_pick": pick_row.get("overall_pick"),
+            }
+
+    def draft_pick_number(player_id: str) -> int:
+        player = state.players[player_id]
+        raw = getattr(player, "draft_pick", None)
+        if raw is None:
+            raw = durable_draft_meta.get(player_id, {}).get("draft_pick")
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return 999
+
+    def is_current_rookie(player_id: str) -> bool:
+        player = state.players[player_id]
+        rookie_season = str(getattr(player, "rookie_season", "") or "").strip()
+        if rookie_season == current_season_label:
+            return True
+        return str(
+            durable_draft_meta.get(player_id, {}).get("target_season", "") or ""
+        ).strip() == current_season_label
+
     def youth_priority(player_id: str) -> float:
         player = state.players[player_id]
         age = float(
@@ -555,18 +592,14 @@ def refresh_team_rotations(
 
         gap_bonus = min(3.10, 0.22 * gap)
 
-        pick = getattr(player, "draft_pick", None)
-        try:
-            pick_number = int(pick)
-        except (TypeError, ValueError):
-            pick_number = 999
+        pick_number = draft_pick_number(player_id)
 
         if pick_number <= 5:
-            pedigree_bonus = 1.00
+            pedigree_bonus = 5.50
         elif pick_number <= 14:
-            pedigree_bonus = 0.75
+            pedigree_bonus = 4.00
         elif pick_number <= 30:
-            pedigree_bonus = 0.40
+            pedigree_bonus = 1.75
         else:
             pedigree_bonus = 0.0
 
@@ -667,6 +700,40 @@ def refresh_team_rotations(
                 player_id,
             )
         )
+
+        fringe_rating = float(
+            state.players[ordered_by_overall[rotation_size - 1]].overall_rating
+        )
+        lottery_priority: list[str] = []
+        for player_id in remaining:
+            if not is_current_rookie(player_id):
+                continue
+            pick_number = draft_pick_number(player_id)
+            if pick_number > 14:
+                continue
+            overall = float(state.players[player_id].overall_rating)
+            if pick_number <= 5:
+                minimum_playable = max(64.0, fringe_rating - 10.0)
+            else:
+                minimum_playable = max(66.0, fringe_rating - 7.0)
+            if overall >= minimum_playable:
+                lottery_priority.append(player_id)
+
+        lottery_priority.sort(
+            key=lambda player_id: (
+                draft_pick_number(player_id),
+                -float(state.players[player_id].overall_rating),
+                state.players[player_id].player_name,
+                player_id,
+            )
+        )
+        if lottery_priority:
+            lottery_set = set(lottery_priority)
+            remaining = lottery_priority + [
+                player_id
+                for player_id in remaining
+                if player_id not in lottery_set
+            ]
 
         selected = protected + remaining[
             : max(
@@ -825,6 +892,7 @@ def advance_rostered_contract_clock_v1(
 
     decremented: list[str] = []
     expired: list[str] = []
+    synthetic_replacements_removed: list[str] = []
 
     for team_code in sorted(state.teams):
         team_state = state.teams[team_code]
@@ -842,6 +910,15 @@ def advance_rostered_contract_clock_v1(
             contract = getattr(player, "contract", None)
             if contract is None:
                 kept.append(player_id)
+                continue
+
+            # FRANCHISE_SYNTHETIC_EMERGENCY_REPLACEMENT_CLEANUP_V4
+            if (
+                bool(getattr(player, "synthetic", False))
+                and str(getattr(contract, "status", "") or "").strip().lower()
+                == "simulation_replacement"
+            ):
+                synthetic_replacements_removed.append(player_id)
                 continue
 
             # GENERATED_ROOKIE_PENDING_CONTRACT_CLOCK_GUARD_V1
@@ -904,6 +981,20 @@ def advance_rostered_contract_clock_v1(
 
         team_state.roster_player_ids = tuple(kept)
 
+    if synthetic_replacements_removed:
+        removed = set(synthetic_replacements_removed)
+        free_agents.difference_update(removed)
+        for player_id in removed:
+            state.players.pop(player_id, None)
+            state.injuries.pop(player_id, None)
+            state.player_season_totals.pop(player_id, None)
+            profiles = getattr(state, "injury_fatigue_profiles", None)
+            if isinstance(profiles, dict):
+                profiles.pop(player_id, None)
+            intents = getattr(state, "career_intent_by_player_id", None)
+            if isinstance(intents, dict):
+                intents.pop(player_id, None)
+
     state.free_agent_player_ids = tuple(
         sorted(
             free_agents,
@@ -922,6 +1013,12 @@ def advance_rostered_contract_clock_v1(
         "expired_player_ids": tuple(sorted(expired)),
         "decremented_count": len(decremented),
         "expired_count": len(expired),
+        "synthetic_replacements_removed": tuple(
+            sorted(synthetic_replacements_removed)
+        ),
+        "synthetic_replacements_removed_count": len(
+            synthetic_replacements_removed
+        ),
     }
 
 
@@ -1133,6 +1230,10 @@ def advance_simulation_season(
             archived_postseason_games
         ),
     )
+
+    # FRANCHISE_HISTORY_AWARDS_ARCHIVE_HOOK_V1
+    from franchise_history_awards_archive_v1 import attach_awards_archive_v1
+    attach_awards_archive_v1(state, archive)
 
     for player_id, projection in (
         projections.items()

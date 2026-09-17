@@ -758,6 +758,10 @@ def commit_regular_season_simulation_plan(
                 game_id,
                 seed=None,
                 commit=True,
+                # FRANCHISE_GAME_DAY_PERFORMANCE_V7:
+                # this transaction validates the complete league once after
+                # the full batch, so per-game global validation is redundant.
+                _defer_global_state_validation=True,
             )
             results.append(
                 _game_result_record(

@@ -12,7 +12,7 @@ import franchise_free_agency_transaction_v1 as transaction
 import simulation_franchise_checkpoint_v1 as checkpoint
 
 VALIDATOR_VERSION = "franchise-deep-season-free-agency-performance-hotfix-v2-validator-2026-09-11"
-EXPECTED_PERFORMANCE_VERSION = "franchise-free-agency-deep-season-performance-v2-2026-09-11"
+EXPECTED_PERFORMANCE_VERSION = "franchise-free-agency-deep-season-performance-v3-floor-first-2026-09-17"
 EXPECTED_DEFER_VERSION = "franchise-free-agency-deferred-preview-fingerprint-v1-2026-09-11"
 
 
@@ -153,6 +153,10 @@ def main() -> int:
         "checkpoint_stale_hot_reload_rebind_still_passes": bool(checkpoint_report.get("checks", {}).get("stale_hot_reload_class_is_rebound")),
         "transaction_self_test_passes": transaction_self_test_passed,
         "round_source_uses_byte_verified_carry_forward": "_verify_bytes_only=True" in execution_source,
+        "roster_floor_rescue_precedes_full_market_plan": (
+            execution_source.index("rescue = build_cpu_roster_floor_rescue_opportunity(", execution_source.index("def execute_next_cpu_free_agency_signing_durably("))
+            < execution_source.index("plan = build_cpu_free_agency_execution_plan(", execution_source.index("def execute_next_cpu_free_agency_signing_durably("))
+        ),
         "round_source_releases_mature_graph_before_final_reload": "checkpoint = None" in execution_source and "gc.collect()" in execution_source,
         "checkpoint_source_skips_rebind_only_after_identity_scan": "if not runtime_graph_is_current(payload_object):" in checkpoint_source,
         **deferred,

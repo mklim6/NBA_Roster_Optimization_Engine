@@ -98,10 +98,23 @@ def main() -> int:
     page = ROOT / "pages" / "5_Franchise_Mode.py"
     backend = ROOT / "src" / "franchise_live_asset_ledger_v1.py"
     ui = ROOT / "src" / "franchise_live_asset_ledger_ui_v1.py"
+    trade_war_room = ROOT / "src" / "franchise_trade_war_room_v1.py"
     page_text = page.read_text(encoding="utf-8") if page.is_file() else ""
+    trade_war_room_text = (
+        trade_war_room.read_text(encoding="utf-8")
+        if trade_war_room.is_file()
+        else ""
+    )
     compile_results = {}
     forfeiture_backend = ROOT / "src" / "franchise_draft_forfeitures_v1.py"
-    for path in (page, backend, ui, forfeiture_backend, Path(__file__)):
+    for path in (
+        page,
+        backend,
+        ui,
+        trade_war_room,
+        forfeiture_backend,
+        Path(__file__),
+    ):
         try:
             py_compile.compile(str(path), doraise=True)
             compile_results[str(path.relative_to(ROOT))] = ""
@@ -148,6 +161,10 @@ def main() -> int:
         ),
         "page_wires_live_asset_ledger_ui": (
             "render_live_asset_ledger(" in page_text
+            or (
+                "render_franchise_trade_war_room_v1(" in page_text
+                and "render_live_asset_ledger(" in trade_war_room_text
+            )
         ),
         "all_modified_files_compile": not any(compile_results.values()),
         "checkpoint_hash_still_unchanged": sha256(checkpoint_path) == checkpoint_hash_before,

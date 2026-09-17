@@ -202,11 +202,22 @@ def render_page() -> None:
     import streamlit as st
 
     st.set_page_config(
-        page_title="NBA Front Office Decision Suite",
+        page_title="NBA Franchise Simulator",
         page_icon="🏀",
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    # FRANCHISE_PRIMARY_NAV_V1
+    from src.franchise_primary_navigation_v1 import render_franchise_primary_navigation_v1
+    render_franchise_primary_navigation_v1()
+
+    # FRANCHISE_VISUAL_OVERHAUL_V3
+    from src.franchise_visual_overhaul_v3 import (
+        inject_home_visual_overhaul_v3,
+        render_home_flagship_v3,
+    )
+    inject_home_visual_overhaul_v3()
+
 
     st.markdown(
         """
@@ -552,15 +563,18 @@ def render_page() -> None:
 
     featured = featured_concept(bundle)
 
+    # FRANCHISE_VISUAL_OVERHAUL_V3_HOME_HERO
+    render_home_flagship_v3()
+
     st.markdown(
         """
 <div class="hero-shell">
-  <span class="hero-kicker">🏀 Portfolio analytics product</span>
-  <h1 class="hero-title">NBA Front Office Decision Suite</h1>
+  <span class="hero-kicker">🏆 Flagship franchise management simulator</span>
+  <h1 class="hero-title">NBA Franchise Simulator</h1>
   <p class="hero-copy">
-    A model-driven workspace for exploring legal trade concepts, team-building
-    strategy, roster fit, draft assets, and the long-term effects of front-office
-    decisions.
+    Take control of a persistent NBA universe. Build rosters, manage the cap,
+    navigate trades and free agency, draft and develop players, and carry every
+    decision across seasons.
   </p>
 </div>
 """,
@@ -596,7 +610,7 @@ def render_page() -> None:
     )
 
     st.markdown(
-        '<h2 class="section-title">Explore the decision suite</h2>',
+        '<h2 class="section-title">Flagship experience and supporting tools</h2>',
         unsafe_allow_html=True,
     )
 
@@ -605,7 +619,7 @@ def render_page() -> None:
 <div class="product-grid">
   <div class="product-card active">
     <div class="product-icon">⇄</div>
-    <span class="hero-kicker">Available now</span>
+    <span class="hero-kicker">Supporting analytics tool</span>
     <h3>Trade Lab</h3>
     <p>
       Explore legal mixed player-and-pick concepts, compare each side of the
