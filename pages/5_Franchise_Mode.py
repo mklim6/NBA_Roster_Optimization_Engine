@@ -31896,3 +31896,8 @@ st.caption(
 
 
 )
+
+st.caption(
+    "Copyright © 2026 Matthew Klima. All rights reserved. · "
+    "Independent project; not affiliated with or endorsed by the NBA or NBPA."
+)

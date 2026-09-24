@@ -15,6 +15,7 @@ RELEASE_VERSION = "nba-franchise-simulator-local-v1-2026-09-17"
 ROOT_FILES = (
     ".gitignore",
     "Home.py",
+    "LICENSE.md",
     "README.md",
     "requirements.txt",
 )

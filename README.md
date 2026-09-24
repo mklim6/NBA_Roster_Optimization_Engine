@@ -53,3 +53,13 @@ historical staging folders, local scenarios, and development-only datasets.
 
 See `docs/FRANCHISE_MODE_CURRENT_STATUS.md` and
 `docs/FRANCHISE_MODE_RELEASE_CHECKLIST_V1.md` for current verification details.
+
+## Ownership and license
+
+Original source code, simulation logic, documentation, and project design:
+
+**Copyright © 2026 Matthew Klima. All rights reserved.**
+
+This is proprietary software. See [`LICENSE.md`](LICENSE.md) for the complete
+notice, including the treatment of third-party names, trademarks, data, and
+assets.

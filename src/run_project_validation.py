@@ -260,6 +260,8 @@ def validate_required_files(
 ) -> None:
     required = [
         HOME,
+        ROOT / "LICENSE.md",
+        ROOT / "README.md",
         PAGES / "3_Trade_Machine.py",
         PAGES / "4_Game_Simulator.py",
         APP_DATA / "player_positions_2026_27_v1.json",
