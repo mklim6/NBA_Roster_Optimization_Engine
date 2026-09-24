@@ -51,8 +51,10 @@ historical staging folders, local scenarios, and development-only datasets.
 - Keep `outputs/runtime` when upgrading an existing local installation, but do
   not distribute that directory with a clean release.
 
-See `docs/FRANCHISE_MODE_CURRENT_STATUS.md` and
-`docs/FRANCHISE_MODE_RELEASE_CHECKLIST_V1.md` for current verification details.
+See `docs/FRANCHISE_MODE_CURRENT_STATUS.md`,
+`docs/FRANCHISE_MODE_RELEASE_CHECKLIST_V1.md`, and
+[`docs/FRANCHISE_V2_ROADMAP.md`](docs/FRANCHISE_V2_ROADMAP.md) for current
+verification details and the ordered V2 plan.
 
 ## Ownership and license
 
