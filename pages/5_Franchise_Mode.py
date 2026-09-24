@@ -8319,15 +8319,35 @@ def render_postseason_next_game_controls(
 
 
 
-                    with st.spinner(
+                    with st.status(
 
 
 
-                        "Archiving the season and building the next schedule..."
+                        "Step 1 of 5 · Verifying the durable franchise checkpoint...",
 
 
 
-                    ):
+                        expanded=True,
+
+
+
+                    ) as _season_boundary_status:
+
+
+
+                        _season_boundary_progress = st.progress(
+
+
+
+                            10,
+
+
+
+                            text="Checking save integrity and season-boundary eligibility...",
+
+
+
+                        )
 
 
 
@@ -8360,6 +8380,17 @@ def render_postseason_next_game_controls(
                                 "checkpoint. Reload Franchise Mode before opening the "
                                 "next season."
                             )
+
+                        _season_boundary_status.update(
+                            label="Step 2 of 5 · Completing opening-night rosters..."
+                        )
+                        _season_boundary_progress.progress(
+                            28,
+                            text=(
+                                "Signing only the legal, player-accepted CPU depth "
+                                "needed to reach the playable roster floor..."
+                            ),
+                        )
 
                         # FRANCHISE_PRESEASON_ROSTER_FLOOR_LIVE_UI_WIRING_V1
                         # Resolve actual CPU roster deficits before the phase
@@ -8409,6 +8440,17 @@ def render_postseason_next_game_controls(
                                 "match the verified Free Agency completion result."
                             )
 
+                        _season_boundary_status.update(
+                            label="Step 3 of 5 · Finalizing post-Draft CPU rosters..."
+                        )
+                        _season_boundary_progress.progress(
+                            48,
+                            text=(
+                                "Applying the certified post-Draft roster trim and "
+                                "verifying its checkpoint..."
+                            ),
+                        )
+
                         # FRANCHISE_CPU_POST_DRAFT_ROSTER_TRIM_LIVE_UI_WIRING_V1
                         import franchise_cpu_post_draft_roster_trim_live_v1 as _cpu_post_draft_trim_live
 
@@ -8457,6 +8499,17 @@ def render_postseason_next_game_controls(
                                 "The reloaded post-Draft roster-trim checkpoint does not "
                                 "match the verified atomic trim result."
                             )
+
+                        _season_boundary_status.update(
+                            label="Step 4 of 5 · Auditing all 30 opening-night rosters..."
+                        )
+                        _season_boundary_progress.progress(
+                            68,
+                            text=(
+                                "Running the final game-ready roster-floor bridge and "
+                                "league-wide validation..."
+                            ),
+                        )
 
                         # FRANCHISE_NEXT_SEASON_ROSTER_FLOOR_BRIDGE_UI_V1
                         # Draft completion can leave a CPU roster below the regular-season
@@ -8514,6 +8567,17 @@ def render_postseason_next_game_controls(
                                 "User-controlled teams must be completed manually; CPU teams are "
                                 "repaired automatically only through legal player-accepted signings."
                             )
+
+                        _season_boundary_status.update(
+                            label="Step 5 of 5 · Archiving the season and building the schedule..."
+                        )
+                        _season_boundary_progress.progress(
+                            86,
+                            text=(
+                                "Activating rookies, applying development, archiving "
+                                "history, and generating the 1,230-game schedule..."
+                            ),
+                        )
 
                         # Continue the existing season-boundary transaction from the
                         # exact durable post-trim state. If no trim was required, this
@@ -8581,6 +8645,19 @@ def render_postseason_next_game_controls(
                                 "The reloaded next-season checkpoint does not match "
                                 "the atomic durable commit."
                             )
+
+                        _season_boundary_progress.progress(
+                            100,
+                            text=(
+                                f"{committed.target_season} is ready with a verified "
+                                "durable checkpoint."
+                            ),
+                        )
+                        _season_boundary_status.update(
+                            label=f"{committed.target_season} opened successfully",
+                            state="complete",
+                            expanded=False,
+                        )
 
                         # Refresh BOTH live Franchise states from the exact durable checkpoint.
                         # Do not use the legacy state-save helper here: it performs another
@@ -29107,6 +29184,11 @@ if active_section == "Draft Room":
 
 
 if active_section == "League & Offseason":
+    # FRANCHISE_V2_LEAGUE_SUSTAINABILITY_V1
+    from franchise_v2_league_sustainability_v1 import (
+        render_league_sustainability_v1,
+    )
+
     render_franchise_season_journey_map_v1(
         state=state,
         active_team=active_team,
@@ -29337,6 +29419,8 @@ if active_section == "League & Offseason":
 
 
     )
+
+    render_league_sustainability_v1(state)
 
 
 
