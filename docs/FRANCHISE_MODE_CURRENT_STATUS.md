@@ -99,9 +99,11 @@ The repair does not increase the rescue limit:
   latest V3.0.2 through V6.0.1 suites are also registered directly in the
   release-candidate gate so `--skip-full` cannot bypass current feature
   coverage.
-- Project quick gate passes 39/39 checks; all 734 current source/app/page Python files compile.
+- Project quick gate passes 39/39 checks; all 732 current source/app/page Python files compile.
 - New preseason roster-floor validator: 5/5 checks passed.
-- CPU roster-floor rescue validator: 19/19 checks passed.
+- CPU roster-floor rescue validator: 20/20 checks passed. Its execution-protocol
+  assertion now accepts compatible V1.x durability revisions while preserving
+  the original rescue behavior contract.
 - CPU Free Agency execution validator: 29/29 checks passed read-only.
 - Lifecycle authority, season-boundary snapshot rebase, owner normalization,
   and Draft V1.1.8 validators all passed.
@@ -114,8 +116,9 @@ The repair does not increase the rescue limit:
 - The running Streamlit app hot-reloaded and rendered Franchise Mode, Schedule,
   League Hub, the season journey, Offseason Headquarters, and next-season
   routing without an app exception.
-- The expanded unified full suite passes 120/120 checks after the Free Agency
-  performance repair and current UI-validator reconciliation.
+- The September 29 expanded unified full suite passes 121/121 checks in 317.795
+  seconds after the Free Agency performance and durability work. The protected
+  active checkpoint retained its exact pre-run SHA-256.
 - The final non-destructive release-candidate gate passes with the full suite
   skipped only because the same 120-check run had just completed. Its quick
   gate, release worktree audit, frozen-data audits, current feature regressions,
@@ -130,6 +133,10 @@ The repair does not increase the rescue limit:
   were removed, and no untracked production Python remains. Loose patch bundles,
   generated checkpoints, ZIP remnants, and manual-review notes remain unstaged
   and excluded from this release consolidation.
+- The subsequent repository cleanup moved 35 loose non-source artifacts (about
+  7.1 MB) into the recoverable external archive
+  `C:\Users\klima\Documents\Codex\2026-09-06\i-x20\nba_v2_release_artifacts_2026-09-29_1dd875a`.
+  Historical ignored ZIP backups remain intentionally preserved.
 - The standalone Free Agency page now treats an empty RFA ledger during the
   regular season as an inactive overlay instead of an invalid anchor-offseason
   ledger. The strict 64-player check remains enforced when the certified anchor
@@ -242,9 +249,9 @@ during recovery-directory creation.
 
 ## Immediate work queue
 
-1. Review and classify the accumulated tracked and untracked V2 files, then
-   create the release commit/tag when the owner is ready. No staging, commit, or
-   tag was created automatically.
+1. Review the consolidated V2 commits and create a release tag only when the
+   owner is ready. Source changes are committed locally; no tag or remote push
+   was created automatically.
 2. Optionally calibrate CPU organizations toward 14–15-player rosters and prune
    long-term free-agent population growth. This is realism polish, not a
    lifecycle or release-gate blocker.
