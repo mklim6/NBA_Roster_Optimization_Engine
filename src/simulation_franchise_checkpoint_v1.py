@@ -11,7 +11,9 @@ import pickle
 import shutil
 import sys
 import tempfile
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -30,7 +32,7 @@ CHECKPOINT_VERSION = (
     "simulation-franchise-checkpoint-v1-2026-08-08"
 )
 CHECKPOINT_IMPLEMENTATION_VERSION = (
-    "simulation-franchise-checkpoint-v1.3-2026-09-09"
+    "simulation-franchise-checkpoint-v1.5-pickle-first-2026-09-27"
 )
 DEFAULT_CHECKPOINT_PATH = (
     RUNTIME_DIR
@@ -52,6 +54,13 @@ IO_RETRY_DELAYS = (
     0.40,
     0.80,
 )
+
+RUNTIME_GRAPH_COMPATIBILITY_CACHE_MAX_ENTRIES = 8
+_RUNTIME_GRAPH_COMPATIBILITY_CACHE: OrderedDict[
+    str,
+    tuple[tuple[type[Any], type[Any] | None], ...],
+] = OrderedDict()
+_RUNTIME_GRAPH_COMPATIBILITY_CACHE_LOCK = threading.Lock()
 
 
 class FranchiseCheckpointError(RuntimeError):
@@ -181,7 +190,13 @@ def set_runtime_attribute(
         )
 
 
-def runtime_graph_is_current(value: Any) -> bool:
+def runtime_graph_is_current(
+    value: Any,
+    *,
+    type_identity_sink: list[
+        tuple[type[Any], type[Any] | None]
+    ] | None = None,
+) -> bool:
     """Return True when every resolvable runtime class already matches imports.
 
     A normal checkpoint load historically rebuilt the entire object graph to
@@ -191,13 +206,24 @@ def runtime_graph_is_current(value: Any) -> bool:
     expensive rebinder to run when a stale class identity is actually found.
     """
     memo: set[int] = set()
-    type_cache: dict[type[Any], bool] = {}
+    type_resolution_cache: dict[
+        type[Any],
+        type[Any] | None,
+    ] = {}
     field_cache: dict[type[Any], tuple[str, ...]] = {}
     field_set_cache: dict[type[Any], frozenset[str]] = {}
 
     primitive_types = (
         bool, int, float, complex, str, bytes, bytearray, Path, datetime
     )
+
+    def type_is_current(item_type: type[Any]) -> bool:
+        if item_type not in type_resolution_cache:
+            type_resolution_cache[item_type] = resolve_current_type(
+                item_type
+            )
+        resolved = type_resolution_cache[item_type]
+        return resolved is None or item_type is resolved
 
     def visit(item: Any) -> bool:
         item_id = id(item)
@@ -207,12 +233,7 @@ def runtime_graph_is_current(value: Any) -> bool:
 
         if isinstance(item, Enum):
             item_type = type(item)
-            current = type_cache.get(item_type)
-            if current is None:
-                resolved = resolve_current_type(item_type)
-                current = resolved is None or item_type is resolved
-                type_cache[item_type] = current
-            return current
+            return type_is_current(item_type)
 
         if item is None or isinstance(item, primitive_types):
             return True
@@ -227,12 +248,7 @@ def runtime_graph_is_current(value: Any) -> bool:
             return all(visit(nested) for nested in item)
 
         item_type = type(item)
-        current = type_cache.get(item_type)
-        if current is None:
-            resolved = resolve_current_type(item_type)
-            current = resolved is None or item_type is resolved
-            type_cache[item_type] = current
-        if not current:
+        if not type_is_current(item_type):
             return False
 
         if is_dataclass(item):
@@ -256,7 +272,73 @@ def runtime_graph_is_current(value: Any) -> bool:
             return all(visit(nested) for nested in attributes.values())
         return True
 
-    return visit(value)
+    current = visit(value)
+    if current and type_identity_sink is not None:
+        type_identity_sink.extend(
+            type_resolution_cache.items()
+        )
+    return current
+
+
+def runtime_type_identities_are_current(
+    identities: tuple[
+        tuple[type[Any], type[Any] | None],
+        ...,
+    ],
+) -> bool:
+    """Revalidate the small type manifest retained after a full graph scan."""
+    return all(
+        resolve_current_type(source_type) is resolved_type
+        for source_type, resolved_type in identities
+    )
+
+
+def runtime_graph_is_current_for_payload(
+    payload_sha256: str,
+    value: Any,
+) -> bool:
+    """Avoid rescanning identical bytes while preserving hot-reload safety.
+
+    A successful full scan records only the runtime class identities found in
+    that immutable payload. Loading the same SHA-256 again can revalidate that
+    compact manifest instead of revisiting years of games and transactions.
+    Any imported class replacement invalidates the entry and forces the full
+    scan, which retains the existing Streamlit hot-reload/rebind behavior.
+    """
+    cache_key = str(payload_sha256)
+    with _RUNTIME_GRAPH_COMPATIBILITY_CACHE_LOCK:
+        cached_identities = _RUNTIME_GRAPH_COMPATIBILITY_CACHE.get(
+            cache_key
+        )
+
+    if cached_identities is not None:
+        if runtime_type_identities_are_current(cached_identities):
+            with _RUNTIME_GRAPH_COMPATIBILITY_CACHE_LOCK:
+                if cache_key in _RUNTIME_GRAPH_COMPATIBILITY_CACHE:
+                    _RUNTIME_GRAPH_COMPATIBILITY_CACHE.move_to_end(cache_key)
+            return True
+        with _RUNTIME_GRAPH_COMPATIBILITY_CACHE_LOCK:
+            _RUNTIME_GRAPH_COMPATIBILITY_CACHE.pop(cache_key, None)
+
+    identities: list[
+        tuple[type[Any], type[Any] | None]
+    ] = []
+    current = runtime_graph_is_current(
+        value,
+        type_identity_sink=identities,
+    )
+    if not current:
+        return False
+
+    with _RUNTIME_GRAPH_COMPATIBILITY_CACHE_LOCK:
+        _RUNTIME_GRAPH_COMPATIBILITY_CACHE[cache_key] = tuple(identities)
+        _RUNTIME_GRAPH_COMPATIBILITY_CACHE.move_to_end(cache_key)
+        while (
+            len(_RUNTIME_GRAPH_COMPATIBILITY_CACHE)
+            > RUNTIME_GRAPH_COMPATIBILITY_CACHE_MAX_ENTRIES
+        ):
+            _RUNTIME_GRAPH_COMPATIBILITY_CACHE.popitem(last=False)
+    return True
 
 
 def rebind_runtime_graph(
@@ -575,37 +657,45 @@ def checkpoint_from_payload(
 def encode_checkpoint(
     checkpoint: FranchiseCheckpoint,
 ) -> bytes:
-    # cloudpickle is intentionally used for the payload. Streamlit hot
-    # reloads can leave dataclass and Enum instances whose class identity
-    # no longer matches the latest imported module object. Standard pickle
-    # rejects those live objects; cloudpickle serializes their definitions
-    # and allows the checkpoint to be normalized on load.
+    # The normal runtime graph contains importable module classes, so standard
+    # pickle is both faster and naturally resolves those classes against the
+    # current module generation when a later Streamlit process loads it.
+    # A hot-reloaded session can still hold stale class identities; standard
+    # pickle rejects those objects, in which case cloudpickle remains the
+    # compatibility path and decode_checkpoint performs the guarded rebind.
     try:
-        payload = cloudpickle.dumps(
+        payload = pickle.dumps(
             checkpoint,
             protocol=pickle.HIGHEST_PROTOCOL,
         )
-        serializer = "cloudpickle-v1"
-    except Exception as cloudpickle_error:
-        # Preserve the prior rebinding implementation as a conservative
-        # fallback for objects cloudpickle cannot traverse directly.
+        serializer = "pickle-runtime-reference-v2"
+    except Exception as pickle_error:
         try:
-            normalized = portable_checkpoint(
-                checkpoint
-            )
             payload = cloudpickle.dumps(
-                normalized,
+                checkpoint,
                 protocol=pickle.HIGHEST_PROTOCOL,
             )
-            serializer = (
-                "cloudpickle-rebound-v1"
-            )
-        except Exception as rebound_error:
-            raise FranchiseCheckpointError(
-                "Checkpoint serialization failed.",
-                stage="cloudpickle-payload",
-                cause=rebound_error,
-            ) from cloudpickle_error
+            serializer = "cloudpickle-v1"
+        except Exception as cloudpickle_error:
+            # Preserve the prior rebinding implementation as a conservative
+            # fallback for objects neither serializer can traverse directly.
+            try:
+                normalized = portable_checkpoint(
+                    checkpoint
+                )
+                payload = cloudpickle.dumps(
+                    normalized,
+                    protocol=pickle.HIGHEST_PROTOCOL,
+                )
+                serializer = (
+                    "cloudpickle-rebound-v1"
+                )
+            except Exception as rebound_error:
+                raise FranchiseCheckpointError(
+                    "Checkpoint serialization failed.",
+                    stage="cloudpickle-payload",
+                    cause=rebound_error,
+                ) from cloudpickle_error
 
     envelope = {
         "version": CHECKPOINT_VERSION,
@@ -705,7 +795,10 @@ def decode_checkpoint(
                     payload
                 )
             )
-            if not runtime_graph_is_current(payload_object):
+            if not runtime_graph_is_current_for_payload(
+                actual_digest,
+                payload_object,
+            ):
                 payload_object = (
                     rebind_runtime_graph(
                         payload_object
@@ -997,6 +1090,7 @@ def save_franchise_checkpoint(
     _existing_checkpoint: FranchiseCheckpoint | None = None,
     _expected_existing_sha256: str = "",
     _verify_encoded_bytes_only: bool = False,
+    _verified_file_sha256_sink: list[str] | None = None,
 ) -> FranchiseCheckpoint:
     checkpoint = FranchiseCheckpoint(
         version=CHECKPOINT_VERSION,
@@ -1096,11 +1190,13 @@ def save_franchise_checkpoint(
         )
         if _verify_encoded_bytes_only:
             # Batched CPU Free Agency already holds the exact object graph that
-            # was encoded. Verify the atomic gzip payload byte-for-byte here and
-            # perform one ordinary semantic decode at the end of the round.
+            # was encoded. Read the written primary once, verify its gzip
+            # payload byte-for-byte, and preserve the raw-file SHA-256 for the
+            # next stale-check boundary. This avoids rereading the same file
+            # immediately after every durable signing.
             try:
-                with gzip.open(resolved_path, "rb") as handle:
-                    observed_encoded = handle.read()
+                raw_checkpoint_bytes = resolved_path.read_bytes()
+                observed_encoded = gzip.decompress(raw_checkpoint_bytes)
             except Exception as exc:
                 raise FranchiseCheckpointError(
                     "Checkpoint byte verification could not read the written file.",
@@ -1115,6 +1211,10 @@ def save_franchise_checkpoint(
                 raise FranchiseCheckpointError(
                     "Checkpoint byte verification did not match the encoded payload.",
                     stage="verify-written-encoded-bytes",
+                )
+            if _verified_file_sha256_sink is not None:
+                _verified_file_sha256_sink.append(
+                    hashlib.sha256(raw_checkpoint_bytes).hexdigest()
                 )
             verified = checkpoint
         else:
@@ -1388,6 +1488,62 @@ def run_self_test() -> dict[str, Any]:
             .simulation_state.phase
             is current_module.Phase.PLAYOFFS
         )
+        normal_envelope = pickle.loads(
+            gzip.decompress(path.read_bytes())
+        )
+        stale_envelope = pickle.loads(
+            gzip.decompress(stale_path.read_bytes())
+        )
+
+        cache_module_name = "checkpoint_cache_reload_fixture_v1"
+        cache_module_path = directory_path / f"{cache_module_name}.py"
+        cache_module_path.write_text(
+            "from dataclasses import dataclass\n"
+            "@dataclass\n"
+            "class State:\n"
+            "    games: int\n",
+            encoding="utf-8",
+        )
+        importlib.invalidate_caches()
+        cache_module = importlib.import_module(cache_module_name)
+        cache_path = directory_path / "runtime-cache.pkl.gz"
+        cache_checkpoint = FranchiseCheckpoint(
+            version=CHECKPOINT_VERSION,
+            saved_at_utc=utc_timestamp(),
+            simulation_state=cache_module.State(games=91),
+            trade_state={"revision": 6},
+            preferences={},
+            reason="runtime-cache",
+        )
+        cache_payload = cloudpickle.dumps(
+            cache_checkpoint,
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
+        cache_envelope = {
+            "version": CHECKPOINT_VERSION,
+            "implementation": CHECKPOINT_IMPLEMENTATION_VERSION,
+            "serializer": "cloudpickle-v1",
+            "sha256": hashlib.sha256(cache_payload).hexdigest(),
+            "payload": cache_payload,
+        }
+        write_encoded_checkpoint(
+            cache_path,
+            pickle.dumps(
+                cache_envelope,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            ),
+        )
+        cache_loaded_before_reload = load_franchise_checkpoint(path=cache_path)
+        cache_entry_count_before_reload = len(
+            _RUNTIME_GRAPH_COMPATIBILITY_CACHE
+        )
+        reloaded_cache_module = importlib.reload(cache_module)
+        cache_loaded_after_reload = load_franchise_checkpoint(path=cache_path)
+        cache_hot_reload_rebound = (
+            cache_loaded_after_reload is not None
+            and type(cache_loaded_after_reload.simulation_state)
+            is reloaded_cache_module.State
+        )
 
         with path.open(
             "wb",
@@ -1408,6 +1564,7 @@ def run_self_test() -> dict[str, Any]:
         clear_franchise_checkpoint(
             path=stale_path
         )
+        clear_franchise_checkpoint(path=cache_path)
 
         regression_path = (
             directory_path
@@ -1500,6 +1657,7 @@ def run_self_test() -> dict[str, Any]:
             module_name,
             None,
         )
+        sys.modules.pop(cache_module_name, None)
 
         try:
             sys.path.remove(
@@ -1519,7 +1677,16 @@ def run_self_test() -> dict[str, Any]:
             "implementation_version_is_current": (
                 CHECKPOINT_IMPLEMENTATION_VERSION
                 == (
-                    "simulation-franchise-checkpoint-v1.3-2026-09-09"
+                    "simulation-franchise-checkpoint-v1.5-pickle-first-2026-09-27"
+                )
+            ),
+            "current_runtime_graph_uses_standard_pickle": (
+                normal_envelope.get("serializer")
+                == "pickle-runtime-reference-v2"
+            ),
+            "stale_runtime_graph_uses_cloudpickle_fallback": (
+                str(stale_envelope.get("serializer", "")).startswith(
+                    "cloudpickle"
                 )
             ),
             "checkpoint_round_trip_preserves_state": (
@@ -1551,6 +1718,15 @@ def run_self_test() -> dict[str, Any]:
                 stale_saved.reason
                 == "stale-class"
                 and stale_rebound
+            ),
+            "identical_payload_uses_bounded_runtime_manifest_cache": (
+                cache_loaded_before_reload is not None
+                and cache_entry_count_before_reload >= 1
+                and cache_entry_count_before_reload
+                <= RUNTIME_GRAPH_COMPATIBILITY_CACHE_MAX_ENTRIES
+            ),
+            "runtime_manifest_cache_invalidates_after_hot_reload": (
+                cache_hot_reload_rebound
             ),
             "stale_tab_cannot_overwrite_advanced_state": (
                 regression_result.reason
@@ -1654,7 +1830,7 @@ def main() -> int:
         )
         print(
             "\nSIMULATION FRANCHISE "
-            "CHECKPOINT V1.3 SELF-TEST PASSED"
+            "CHECKPOINT V1.5 SELF-TEST PASSED"
         )
         return 0
 

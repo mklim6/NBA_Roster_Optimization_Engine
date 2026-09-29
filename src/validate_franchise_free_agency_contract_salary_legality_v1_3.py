@@ -34,9 +34,9 @@ from franchise_free_agency_ui_v1 import isolated_offseason_preview_state
 from simulation_franchise_checkpoint_v1 import load_franchise_checkpoint
 from simulation_league_state_v1 import validate_simulation_league_state
 
-EXPECTED = "franchise-free-agency-contract-salary-legality-v1.4-modeled-future-market-2026-08-18"
+EXPECTED = "franchise-free-agency-contract-salary-legality-v1.5-service-evidence-2026-09-24"
 EXPECTED_V12 = "franchise-free-agency-financial-bridge-v1.3-modeled-future-market-2026-08-18"
-VALIDATOR_VERSION = "franchise-free-agency-contract-salary-legality-validator-v1.3.1-2026-08-14"
+VALIDATOR_VERSION = "franchise-free-agency-contract-salary-legality-validator-v1.3.2-2026-09-28"
 
 
 def sha(path: Path) -> str:
@@ -86,23 +86,41 @@ def main() -> int:
     # Use a toy copy of the live state to guarantee cap-space headroom while
     # preserving real structural types. This never touches the durable source.
     toy = copy.deepcopy(test_state)
+    # The exact salary-scale assertions below target the frozen 2026-27 anchor
+    # table. Keep them independent of whichever season the user's live save has
+    # reached; future-market progression has its own explicit check below.
+    toy.settings = replace(toy.settings, season_label="2026-27")
+    setattr(
+        toy,
+        "franchise_completed_season_contract_closeout_v1",
+        None,
+    )
     for roster_id in toy.teams[team].roster_player_ids:
         contract = getattr(toy.players[roster_id], "contract", None)
         if contract is not None:
             contract.salary = 1.0
     toy_player = toy.players[player_id]
-    # Ensure service is unknown for the conservative-window tests.
+    # Use an isolated synthetic ID that cannot resolve through the official
+    # ratings evidence map. This exercises the conservative unknown-service
+    # window without weakening V1.5 evidence for the real player.
+    unknown_player_id = "VALIDATOR-UNKNOWN-SERVICE"
+    unknown_player = copy.deepcopy(toy_player)
+    unknown_player.player_id = unknown_player_id
     saved_service_attrs = {}
     for attr in ("years_of_service", "service_years", "nba_years_of_service", "season_exp", "years_service"):
-        if hasattr(toy_player, attr):
-            saved_service_attrs[attr] = getattr(toy_player, attr)
+        if hasattr(unknown_player, attr):
+            saved_service_attrs[attr] = getattr(unknown_player, attr)
             try:
-                delattr(toy_player, attr)
+                delattr(unknown_player, attr)
             except Exception:
-                setattr(toy_player, attr, None)
+                setattr(unknown_player, attr, None)
+    toy.players[unknown_player_id] = unknown_player
+    toy.free_agent_player_ids = tuple(toy.free_agent_player_ids) + (
+        unknown_player_id,
+    )
 
     safe_offer = FreeAgencyOffer(
-        player_id=player_id,
+        player_id=unknown_player_id,
         team_abbreviation=team,
         annual_salary=4_500_000.0,
         years=4,
@@ -110,7 +128,7 @@ def main() -> int:
         option_type="",
     )
     low_offer = FreeAgencyOffer(
-        player_id=player_id,
+        player_id=unknown_player_id,
         team_abbreviation=team,
         annual_salary=1_000_000.0,
         years=1,
@@ -118,7 +136,7 @@ def main() -> int:
         option_type="",
     )
     high_offer = FreeAgencyOffer(
-        player_id=player_id,
+        player_id=unknown_player_id,
         team_abbreviation=team,
         annual_salary=45_000_000.0,
         years=1,
@@ -126,7 +144,7 @@ def main() -> int:
         option_type="",
     )
     five_year = FreeAgencyOffer(
-        player_id=player_id,
+        player_id=unknown_player_id,
         team_abbreviation=team,
         annual_salary=5_000_000.0,
         years=5,
@@ -134,18 +152,39 @@ def main() -> int:
         option_type="",
     )
     one_year_option = FreeAgencyOffer(
-        player_id=player_id,
+        player_id=unknown_player_id,
         team_abbreviation=team,
         annual_salary=5_000_000.0,
         years=1,
         guaranteed=True,
         option_type="team_option",
     )
+    safe_preview_offer = FreeAgencyOffer(
+        player_id=player_id,
+        team_abbreviation=team,
+        annual_salary=4_500_000.0,
+        years=4,
+        guaranteed=True,
+        option_type="",
+    )
 
     safe_legality = evaluate_contract_salary_legality(toy, safe_offer)
     safe_v12 = evaluate_live_free_agency_financial_gate(toy, safe_offer)
     safe_composed = evaluate_contract_legal_financial_gate(toy, safe_offer)
-    safe_preview = build_contract_legal_free_agency_preview(toy, safe_offer)
+    # The full preview validator requires every player to have injury/stat
+    # coverage, so exercise it with the real isolated player. Unknown-service
+    # salary behavior is already proven independently above.
+    preview_state = copy.deepcopy(toy)
+    preview_state.players.pop(unknown_player_id, None)
+    preview_state.free_agent_player_ids = tuple(
+        pid
+        for pid in preview_state.free_agent_player_ids
+        if str(pid) != unknown_player_id
+    )
+    safe_preview = build_contract_legal_free_agency_preview(
+        preview_state,
+        safe_preview_offer,
+    )
     low = evaluate_contract_salary_legality(toy, low_offer)
     high = evaluate_contract_salary_legality(toy, high_offer)
     five = evaluate_contract_salary_legality(toy, five_year)
@@ -189,10 +228,18 @@ def main() -> int:
     service_after = resolve_years_of_service(player)
     page_text = PAGE.read_text(encoding="utf-8") if PAGE.exists() else ""
 
+    salary_diagnostics = {
+        "safe_legality": {"status": safe_legality.status, "reason": safe_legality.reason, "service": safe_legality.years_of_service, "minimum": safe_legality.minimum_salary_floor},
+        "safe_financial": {"status": safe_v12.status, "reason": safe_v12.reason},
+        "safe_composed": {"status": safe_composed.status, "reason": safe_composed.reason},
+        "safe_preview": {"status": safe_preview.status, "can_commit": safe_preview.can_commit, "message": safe_preview.message},
+        "known_two": {"status": known2.status, "reason": known2.reason, "service": known2.years_of_service, "minimum": known2.minimum_salary_floor},
+    }
+
     checks = {
-        "validator_hotfix_version_is_current": VALIDATOR_VERSION == "franchise-free-agency-contract-salary-legality-validator-v1.3.1-2026-08-14",
+        "validator_hotfix_version_is_current": VALIDATOR_VERSION == "franchise-free-agency-contract-salary-legality-validator-v1.3.2-2026-09-28",
         "contract_salary_legality_version_is_current": FREE_AGENCY_CONTRACT_SALARY_LEGALITY_VERSION == EXPECTED,
-        "financial_bridge_v1_2_is_preserved": FREE_AGENCY_FINANCIAL_BRIDGE_VERSION == EXPECTED_V12,
+        "financial_bridge_is_current": FREE_AGENCY_FINANCIAL_BRIDGE_VERSION == EXPECTED_V12,
         "anchor_salary_cap_is_exact": math.isclose(ANCHOR_SALARY_CAP, 164_961_000.0, abs_tol=0.01),
         "minimum_scale_zero_service_year1_exact": MINIMUM_SALARY_SCALE_2026_27[0][0] == 1_357_763,
         "minimum_scale_two_service_year1_exact": MINIMUM_SALARY_SCALE_2026_27[2][0] == 2_449_421,
@@ -218,10 +265,10 @@ def main() -> int:
         "v1_2_veto_is_preserved": real_v12.status == "pass" or real_composed.status == real_v12.status,
         "age_is_never_used_to_infer_service": service_before == service_after and getattr(player, "age", None) == age_before,
         "durable_source_state_is_unchanged": free_agency_state_fingerprint(durable) == durable_fp,
-        "page_uses_v1_3_contract_legal_preview": "build_contract_legal_free_agency_preview" in page_text,
-        "page_exposes_contract_salary_legality": "Contract salary legality" in page_text,
-        "page_still_has_no_durable_commit_import": "commit_live_financial_free_agency_preview_durably" not in page_text and "commit_free_agency_preview_durably" not in page_text,
-        "page_still_has_no_live_sign_button": "Sign player and save franchise" not in page_text,
+        "workspace_uses_current_contract_legal_preview": "build_contract_legal_free_agency_preview" in page_text,
+        "workspace_exposes_contract_salary_legality": "Contract salary legality" in page_text,
+        "workspace_routes_live_commit_through_persistent_market": "commit_persistent_user_winner_live(" in page_text,
+        "workspace_requires_explicit_signing_action": "I confirm this signing" in page_text and 'key="fa_live_sign_button"' in page_text,
     }
 
     compile_ok = True
@@ -238,7 +285,7 @@ def main() -> int:
     failed = [name for name, passed in checks.items() if not passed]
 
     print("=" * 108)
-    print("FRANCHISE FREE AGENCY CONTRACT SALARY LEGALITY V1.3.1 VALIDATION")
+    print("FRANCHISE FREE AGENCY CONTRACT SALARY LEGALITY V1.5 VALIDATION")
     print("=" * 108)
     for name, passed in checks.items():
         print(f"  {name}: {'PASS' if passed else 'FAIL'}")
@@ -258,6 +305,7 @@ def main() -> int:
         "checks": checks,
         "failed_checks": failed,
         "compile_error": compile_error,
+        "salary_diagnostics": salary_diagnostics,
         "checkpoint_hash_before": before_hash,
         "checkpoint_hash_after": after_hash,
         "passed": not failed,
@@ -266,7 +314,7 @@ def main() -> int:
     print()
     if failed:
         raise AssertionError("V1.3 failed: " + ", ".join(failed))
-    print("FRANCHISE FREE AGENCY CONTRACT SALARY LEGALITY V1.3.1 VALIDATION PASSED")
+    print("FRANCHISE FREE AGENCY CONTRACT SALARY LEGALITY V1.5 VALIDATION PASSED")
     print("READ-ONLY VALIDATION: no live signing or checkpoint write was performed.")
     return 0
 

@@ -1039,20 +1039,18 @@ def commit_controlled_rfa_action_live(
         )
 
     try:
-        checkpoint_module.save_franchise_checkpoint(
+        reloaded = checkpoint_module.save_franchise_checkpoint(
             sim_candidate,
             trade_candidate,
             preferences=copy.deepcopy(
                 dict(getattr(checkpoint, "preferences", {}) or {})
             ),
             reason=f"rfa-qo-live-{transaction_id}",
-            copy_payload=True,
+            copy_payload=False,
+            _return_verified=True,
+            _existing_checkpoint=checkpoint,
+            _expected_existing_sha256=checkpoint_hash_before,
         )
-        reloaded = checkpoint_module.load_franchise_checkpoint()
-        if reloaded is None:
-            raise RFAQOLifecycleError(
-                "Checkpoint reload returned no state after the RFA/QO decision."
-            )
 
         observed_fingerprint = _decision_fingerprint(
             reloaded.simulation_state,

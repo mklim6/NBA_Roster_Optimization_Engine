@@ -46,7 +46,7 @@ from simulation_franchise_checkpoint_v1 import (
 )
 from simulation_league_state_v1 import validate_simulation_league_state
 
-VALIDATOR_VERSION = "franchise-free-agency-live-signing-validator-v1.0.1-2026-08-14"
+VALIDATOR_VERSION = "franchise-free-agency-live-signing-validator-v1.0.2-2026-09-28"
 
 
 def _sha256(path: Path) -> str:
@@ -94,19 +94,23 @@ def main() -> int:
     state = checkpoint.simulation_state
     validate_simulation_league_state(state)
     controlled = controlled_teams_from_durable_checkpoint(checkpoint)
-    page_path = ROOT / "pages" / "6_Free_Agency.py"
-    page_text = page_path.read_text(encoding="utf-8") if page_path.exists() else ""
+    workspace_path = ROOT / "src" / "franchise_free_agency_workspace_v1.py"
+    workspace_text = workspace_path.read_text(encoding="utf-8") if workspace_path.exists() else ""
+    franchise_page_path = ROOT / "pages" / "5_Franchise_Mode.py"
+    franchise_page_text = franchise_page_path.read_text(encoding="utf-8") if franchise_page_path.exists() else ""
+    player_decision_path = ROOT / "src" / "franchise_free_agency_player_decision_v1.py"
+    player_decision_text = player_decision_path.read_text(encoding="utf-8") if player_decision_path.exists() else ""
 
     checks: dict[str, bool] = {
-        "validator_version_is_current": VALIDATOR_VERSION.endswith("2026-08-14"),
+        "validator_version_is_current": VALIDATOR_VERSION.endswith("v1.0.2-2026-09-28"),
         "live_signing_version_is_current": FREE_AGENCY_LIVE_SIGNING_VERSION == "franchise-free-agency-live-signing-v1-2026-08-14",
         "trade_sync_version_is_current": FREE_AGENCY_TRADE_STATE_SYNC_VERSION == "franchise-free-agency-trade-state-sync-v1-2026-08-14",
         "live_ui_version_is_current": FREE_AGENCY_LIVE_UI_VERSION == "franchise-free-agency-live-ui-v1-2026-08-14",
         "base_transaction_v1_is_preserved": FREE_AGENCY_TRANSACTION_VERSION.startswith("franchise-free-agency-transaction-v1"),
         "durable_transaction_v1_1_is_preserved": FREE_AGENCY_TRANSACTION_V1_1_VERSION.startswith("franchise-free-agency-transaction-v1.1"),
         "durable_checkpoint_backend_is_preserved": FREE_AGENCY_DURABLE_COMMIT_VERSION.startswith("franchise-free-agency-durable-commit-v1-"),
-        "financial_bridge_v1_2_is_preserved": FREE_AGENCY_FINANCIAL_BRIDGE_VERSION.startswith("franchise-free-agency-financial-bridge-v1.2"),
-        "salary_legality_v1_3_is_preserved": FREE_AGENCY_CONTRACT_SALARY_LEGALITY_VERSION.startswith("franchise-free-agency-contract-salary-legality-v1.3"),
+        "financial_bridge_is_current": FREE_AGENCY_FINANCIAL_BRIDGE_VERSION == "franchise-free-agency-financial-bridge-v1.3-modeled-future-market-2026-08-18",
+        "salary_legality_is_current": FREE_AGENCY_CONTRACT_SALARY_LEGALITY_VERSION == "franchise-free-agency-contract-salary-legality-v1.5-service-evidence-2026-09-24",
         "preview_ui_helper_is_preserved": FREE_AGENCY_UI_VERSION.startswith("franchise-free-agency-ui-preview-v1"),
         "durable_checkpoint_exists": checkpoint_path.exists(),
         "durable_state_is_valid": True,
@@ -247,24 +251,44 @@ def main() -> int:
         checks["backend_rejects_cpu_team_signing"] = True
         checks["validator_uses_frozen_checkpoint_replacement"] = True
 
-    # UI contract markers.
+    # Current UI contract: Free Agency is embedded in Franchise Mode through
+    # the shared workspace. Persistent negotiation owns the user-facing commit
+    # and Player Decisions retains the canonical live-signing backend call.
     ui_markers = {
-        "page_imports_live_commit_backend": "commit_contract_legal_free_agency_preview_live" in page_text,
-        "page_requires_explicit_confirmation": "fa_live_confirmation" in page_text and "I confirm this signing" in page_text,
-        "page_has_live_sign_button": "Sign player and save franchise" in page_text,
-        "page_blocks_hypothetical_commit": "preview_is_hypothetical" in page_text,
-        "page_blocks_non_offseason_commit": 'phase == "offseason"' in page_text,
-        "page_refreshes_simulation_session_state": 'st.session_state["game_simulator_league_state"]' in page_text,
-        "page_refreshes_trade_session_state": 'st.session_state["trade_machine_league_state"]' in page_text,
-        "page_clears_trade_sync_flag": 'st.session_state["game_simulator_trade_sync_required"] = False' in page_text,
-        "page_reloads_checkpoint_after_commit": "load_franchise_checkpoint()" in page_text,
+        "franchise_page_embeds_free_agency_workspace": (
+            "render_free_agency_workspace" in franchise_page_text
+            and "render_free_agency_workspace(" in franchise_page_text
+        ),
+        "workspace_routes_through_persistent_live_commit": (
+            "commit_persistent_user_winner_live(" in workspace_text
+        ),
+        "player_decision_uses_live_commit_backend": (
+            "commit_contract_legal_free_agency_preview_live(" in player_decision_text
+        ),
+        "workspace_requires_explicit_signing_action": (
+            "I confirm this signing" in workspace_text
+            and 'key="fa_live_sign_button"' in workspace_text
+        ),
+        "workspace_has_live_sign_button": "Confirm and sign" in workspace_text,
+        "workspace_blocks_hypothetical_commit": "preview_is_hypothetical" in workspace_text,
+        "workspace_blocks_non_offseason_commit": 'phase == "offseason"' in workspace_text,
+        "workspace_refreshes_simulation_session_state": (
+            'st.session_state["franchise_simulation_league_state"]' in workspace_text
+        ),
+        "workspace_refreshes_trade_session_state": (
+            'st.session_state["franchise_trade_league_state"]' in workspace_text
+        ),
+        "workspace_reloads_checkpoint_after_commit": "load_franchise_checkpoint()" in workspace_text,
+        "workspace_reruns_after_commit": "st.rerun()" in workspace_text,
     }
     checks.update(ui_markers)
     try:
-        compile(page_text, str(page_path), "exec")
-        checks["page_compiles"] = True
+        compile(workspace_text, str(workspace_path), "exec")
+        compile(franchise_page_text, str(franchise_page_path), "exec")
+        compile(player_decision_text, str(player_decision_path), "exec")
+        checks["current_ui_chain_compiles"] = True
     except Exception:
-        checks["page_compiles"] = False
+        checks["current_ui_chain_compiles"] = False
 
     after_hash = _sha256(checkpoint_path) if checkpoint_path.exists() else ""
     checks["validator_did_not_write_checkpoint"] = before_hash == after_hash

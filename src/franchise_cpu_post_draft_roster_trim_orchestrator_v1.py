@@ -8,12 +8,15 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 ORCHESTRATOR_VERSION = (
-    "franchise-cpu-post-draft-roster-trim-guarded-orchestrator-foundation-v1-2026-08-17"
+    "franchise-cpu-post-draft-roster-trim-v2-standard-contract-ceiling-2026-09-25"
 )
 POST_DRAFT_OFFSEASON_ROSTER_CEILING = 21
+POST_DRAFT_STANDARD_CONTRACT_CEILING = 15
 ORCHESTRATOR_CANONICAL_EXECUTION_ENABLED = False
 CERTIFIED_AUTOMATIC_FINANCIAL_ROUTES = frozenset(
     {
+        "conservative_full_current_salary_one_year_unknown_guarantee",
+        "conservative_generated_rookie_option_current_salary",
         "exact_full_current_salary_one_year_guarantee",
         "exact_non_guaranteed_release",
     }
@@ -43,10 +46,13 @@ class CPUPostDraftTrimTeamPreview:
     team: str
     cpu_managed: bool
     roster_count_before: int
+    standard_contract_count_before: int
     target_roster_size: int
+    target_standard_contract_count: int
     required_cut_count: int
     selected_cut_count: int
     roster_count_after_preview: int
+    standard_contract_count_after_preview: int
     status: str
     selected_releases: tuple[CPUPostDraftTrimSelectedRelease, ...]
     blockers: tuple[str, ...]
@@ -56,6 +62,7 @@ class CPUPostDraftTrimTeamPreview:
 class CPUPostDraftTrimLeaguePreview:
     version: str
     target_roster_size: int
+    target_standard_contract_count: int
     controlled_teams: tuple[str, ...]
     phase: str
     team_previews: tuple[CPUPostDraftTrimTeamPreview, ...]
@@ -138,6 +145,34 @@ def _team_roster_ids(state: Any, team_code: str) -> tuple[str, ...]:
     )
 
 
+def _is_standard_contract_player(player: Any) -> bool:
+    """Return whether a team-associated player occupies a standard slot.
+
+    This mirrors the evidence-based contract classification used by the V2
+    lifecycle trace.  Missing player rows are deliberately not treated as
+    standard contracts, and two-way/Exhibit 10 rows are never selected for a
+    standard-contract trim.
+    """
+
+    if player is None:
+        return False
+    roster_status = _clean(getattr(player, "roster_status", "")).lower()
+    if bool(getattr(player, "two_way", False)) or roster_status == "two_way":
+        return False
+    if roster_status in {"exhibit_10", "free_agent"}:
+        return False
+    return True
+
+
+def _standard_contract_ids(state: Any, team_code: str) -> tuple[str, ...]:
+    players = getattr(state, "players", {}) or {}
+    return tuple(
+        player_id
+        for player_id in _team_roster_ids(state, team_code)
+        if _is_standard_contract_player(players.get(player_id))
+    )
+
+
 def _rotation_ids(team_state: Any) -> set[str]:
     if team_state is None:
         return set()
@@ -191,7 +226,13 @@ def _is_generated(player: Any) -> bool:
     source = _clean(
         _attr(
             player,
-            ("source", "player_source", "origin", "contract_model"),
+            (
+                "source",
+                "player_source",
+                "origin",
+                "contract_model",
+                "rating_source",
+            ),
             "",
         )
     ).lower()
@@ -407,6 +448,19 @@ def _rank_team_candidates(
             )
             continue
 
+        if not _is_standard_contract_player(player):
+            rows.append(
+                {
+                    "player_id": player_id,
+                    "player_name": _player_name(player, player_id),
+                    "eligible": False,
+                    "hard_protection_reasons": ("non_standard_contract",),
+                    "retention_score": 9999.0,
+                    "score_rationale": ("non_standard_contract",),
+                }
+            )
+            continue
+
         decision = decisions.get(player_id)
         role = _role_label(player, decision)
         market_stance = _clean(
@@ -427,25 +481,24 @@ def _rank_team_candidates(
         in_rotation = player_id in rotation_ids
         role_lower = role.lower()
 
-        current_generated_rookie = generated and (
+        current_generated_rookie = (generated or synthetic) and (
             draft_year is None
             or latest_generated_year is None
             or draft_year == latest_generated_year
         )
 
         protections: list[str] = []
-        if synthetic:
-            protections.append("synthetic_player")
+        soft_protections: list[str] = []
         if current_generated_rookie:
             protections.append("current_or_unresolved_generated_rookie")
         if listed_protected and not explicit_cut:
-            protections.append("front_office_protected")
+            soft_protections.append("front_office_protected")
         if role_lower in {"cornerstone", "core"} and not explicit_cut:
             protections.append("core_role")
         if in_rotation and not explicit_cut:
-            protections.append("active_rotation")
+            soft_protections.append("active_rotation")
         if role_lower in {"starter", "rotation"} and not explicit_cut:
-            protections.append("starter_or_rotation_role")
+            soft_protections.append("starter_or_rotation_role")
         if roster_fit.lower() == "need protection" and not explicit_cut:
             protections.append("need_protection_fit")
 
@@ -468,6 +521,8 @@ def _rank_team_candidates(
         if generated and not current_generated_rookie:
             retention += 6.0
             reasons.append("generated_player_runway:+6")
+        if synthetic and not current_generated_rookie:
+            reasons.append("older_synthetic_player_evaluated_normally")
 
         guaranteed, cut_cost = _contract_cut_cost(player)
         if cut_cost > 0.0:
@@ -480,6 +535,15 @@ def _rank_team_candidates(
         if guaranteed is False:
             retention -= 4.0
             reasons.append("explicit_non_guaranteed_contract:-4")
+        if "front_office_protected" in soft_protections:
+            retention += 14.0
+            reasons.append("front_office_protection_priority:+14")
+        if "active_rotation" in soft_protections:
+            retention += 10.0
+            reasons.append("active_rotation_continuity:+10")
+        if "starter_or_rotation_role" in soft_protections:
+            retention += 10.0
+            reasons.append("starter_or_rotation_role_continuity:+10")
         if protections:
             retention += 1000.0
             reasons.append("hard_protection:+1000")
@@ -548,6 +612,7 @@ def build_cpu_post_draft_trim_league_preview(
         )
 
     team_previews: list[CPUPostDraftTrimTeamPreview] = []
+    shared_source_fingerprints: tuple[str, str] | None = None
     overflow_cpu = 0
     executable = 0
     manual_review = 0
@@ -556,22 +621,39 @@ def build_cpu_post_draft_trim_league_preview(
     teams = getattr(simulation_state, "teams", {}) or {}
     for team_code in sorted(_team(value) for value in teams if _team(value)):
         roster_count = len(_team_roster_ids(simulation_state, team_code))
+        standard_contract_count = len(
+            _standard_contract_ids(simulation_state, team_code)
+        )
         required = max(
             0,
-            roster_count - POST_DRAFT_OFFSEASON_ROSTER_CEILING,
+            standard_contract_count - POST_DRAFT_STANDARD_CONTRACT_CEILING,
+        )
+        projected_total_after_standard_trim = roster_count - required
+        unsupported_nonstandard_overflow = (
+            projected_total_after_standard_trim
+            > POST_DRAFT_OFFSEASON_ROSTER_CEILING
         )
         cpu_managed = team_code not in controlled_set
         blockers: list[str] = []
         selections: list[CPUPostDraftTrimSelectedRelease] = []
 
-        if required == 0:
+        if required == 0 and not unsupported_nonstandard_overflow:
             status = "no_trim_required"
         elif not cpu_managed:
             status = "user_controlled_overflow_requires_user_decision"
             blockers.append(
-                f"{team_code} is user-controlled; CPU trim execution is prohibited."
+                f"{team_code} is user-controlled; CPU standard-contract trim "
+                "execution is prohibited."
             )
             user_overflow += 1
+        elif unsupported_nonstandard_overflow:
+            status = "blocked_nonstandard_roster_overflow"
+            blockers.append(
+                f"{team_code} would remain above the {POST_DRAFT_OFFSEASON_ROSTER_CEILING}-player "
+                "offseason ceiling after standard-contract trimming; a separately "
+                "certified non-standard release route is required."
+            )
+            manual_review += 1
         elif "offseason" not in phase:
             status = "blocked_not_offseason"
             blockers.append("CPU post-Draft roster trimming is offseason-only.")
@@ -585,54 +667,76 @@ def build_cpu_post_draft_trim_league_preview(
                 team_plan=plans.get(team_code),
             )
             eligible = [row for row in ranked if row["eligible"]]
-            chosen = eligible[:required]
-            if len(chosen) < required:
-                status = "blocked_insufficient_eligible_candidates"
-                blockers.append(
-                    f"{team_code} needs {required} release(s) but only "
-                    f"{len(chosen)} eligible candidate(s) exist."
+            uncertified: list[dict[str, Any]] = []
+            for row in eligible:
+                if shared_source_fingerprints is None:
+                    shared_source_fingerprints = (
+                        release._simulation_fingerprint(simulation_state),
+                        release._trade_fingerprint(trade_state),
+                    )
+                preview = release.build_cpu_post_draft_release_preview(
+                    checkpoint,
+                    team=team_code,
+                    player_id=row["player_id"],
+                    rationale=row["score_rationale"],
+                    require_non_rotation=False,
+                    _precomputed_source_fingerprints=(
+                        shared_source_fingerprints
+                    ),
                 )
-                manual_review += 1
-            else:
-                all_certified = True
-                for row in chosen:
-                    preview = release.build_cpu_post_draft_release_preview(
-                        checkpoint,
+                certified = (
+                    preview.status == "pass"
+                    and preview.can_commit_to_clone
+                    and preview.financial_treatment
+                    in CERTIFIED_AUTOMATIC_FINANCIAL_ROUTES
+                )
+                if not certified:
+                    uncertified.append(
+                        {
+                            "player_id": row["player_id"],
+                            "status": preview.status,
+                            "financial_treatment": preview.financial_treatment,
+                            "blockers": tuple(preview.blockers),
+                        }
+                    )
+                    continue
+                selections.append(
+                    CPUPostDraftTrimSelectedRelease(
                         team=team_code,
                         player_id=row["player_id"],
-                        rationale=row["score_rationale"],
+                        player_name=row["player_name"],
+                        retention_score=float(row["retention_score"]),
+                        score_rationale=tuple(row["score_rationale"]),
+                        financial_treatment=preview.financial_treatment,
+                        release_status=preview.status,
+                        certified_for_clone_execution=True,
+                        release_blockers=tuple(preview.blockers),
                     )
-                    certified = (
-                        preview.status == "pass"
-                        and preview.can_commit_to_clone
-                        and preview.financial_treatment
-                        in CERTIFIED_AUTOMATIC_FINANCIAL_ROUTES
-                    )
-                    if not certified:
-                        all_certified = False
-                    selections.append(
-                        CPUPostDraftTrimSelectedRelease(
-                            team=team_code,
-                            player_id=row["player_id"],
-                            player_name=row["player_name"],
-                            retention_score=float(row["retention_score"]),
-                            score_rationale=tuple(row["score_rationale"]),
-                            financial_treatment=preview.financial_treatment,
-                            release_status=preview.status,
-                            certified_for_clone_execution=certified,
-                            release_blockers=tuple(preview.blockers),
+                )
+                if len(selections) >= required:
+                    break
+
+            if len(selections) < required:
+                status = "blocked_insufficient_eligible_candidates"
+                blockers.append(
+                    f"{team_code} needs {required} certified standard-contract "
+                    f"release(s) but only {len(selections)} can use an exact "
+                    "automatic financial route."
+                )
+                if uncertified:
+                    blockers.append(
+                        "Uncertified candidates were skipped instead of blocking "
+                        "a later legal candidate: "
+                        + ", ".join(
+                            f"{row['player_id']}={row['status']}/"
+                            f"{row['financial_treatment']}"
+                            for row in uncertified[:5]
                         )
                     )
-                if all_certified:
-                    status = "cpu_trim_plan_executable_on_clone"
-                    executable += 1
-                else:
-                    status = "cpu_trim_plan_requires_manual_review"
-                    blockers.append(
-                        "At least one selected release is blocked or outside "
-                        "the certified automatic financial routes."
-                    )
-                    manual_review += 1
+                manual_review += 1
+            else:
+                status = "cpu_trim_plan_executable_on_clone"
+                executable += 1
 
         team_previews.append(
             CPUPostDraftTrimTeamPreview(
@@ -640,10 +744,15 @@ def build_cpu_post_draft_trim_league_preview(
                 team=team_code,
                 cpu_managed=cpu_managed,
                 roster_count_before=roster_count,
+                standard_contract_count_before=standard_contract_count,
                 target_roster_size=POST_DRAFT_OFFSEASON_ROSTER_CEILING,
+                target_standard_contract_count=POST_DRAFT_STANDARD_CONTRACT_CEILING,
                 required_cut_count=required,
                 selected_cut_count=len(selections),
                 roster_count_after_preview=roster_count - len(selections),
+                standard_contract_count_after_preview=(
+                    standard_contract_count - len(selections)
+                ),
                 status=status,
                 selected_releases=tuple(selections),
                 blockers=tuple(blockers),
@@ -653,6 +762,7 @@ def build_cpu_post_draft_trim_league_preview(
     return CPUPostDraftTrimLeaguePreview(
         version=ORCHESTRATOR_VERSION,
         target_roster_size=POST_DRAFT_OFFSEASON_ROSTER_CEILING,
+        target_standard_contract_count=POST_DRAFT_STANDARD_CONTRACT_CEILING,
         controlled_teams=controlled,
         phase=phase,
         team_previews=tuple(team_previews),
@@ -769,6 +879,7 @@ def execute_cpu_post_draft_trim_on_clone(
             team=team_code,
             player_id=selected.player_id,
             rationale=selected.score_rationale,
+            require_non_rotation=False,
         )
         if (
             release_preview.status != "pass"
@@ -797,9 +908,13 @@ def execute_cpu_post_draft_trim_on_clone(
         final_checkpoint,
         team_code,
     )
-    if final_preview.roster_count_before > POST_DRAFT_OFFSEASON_ROSTER_CEILING:
+    if (
+        final_preview.roster_count_before > POST_DRAFT_OFFSEASON_ROSTER_CEILING
+        or final_preview.standard_contract_count_before
+        > POST_DRAFT_STANDARD_CONTRACT_CEILING
+    ):
         raise CPUPostDraftTrimOrchestratorError(
-            "Clone trim execution finished above the 21-player ceiling."
+            "Clone trim execution finished above a post-Draft roster ceiling."
         )
 
     return CPUPostDraftTrimCloneExecutionResult(
@@ -818,6 +933,7 @@ def orchestrator_contract_report() -> dict[str, Any]:
     return {
         "version": ORCHESTRATOR_VERSION,
         "post_draft_offseason_roster_ceiling": POST_DRAFT_OFFSEASON_ROSTER_CEILING,
+        "post_draft_standard_contract_ceiling": POST_DRAFT_STANDARD_CONTRACT_CEILING,
         "canonical_execution_enabled": ORCHESTRATOR_CANONICAL_EXECUTION_ENABLED,
         "certified_automatic_financial_routes": sorted(
             CERTIFIED_AUTOMATIC_FINANCIAL_ROUTES
@@ -839,4 +955,5 @@ def orchestrator_contract_report() -> dict[str, Any]:
         ),
         "user_controlled_auto_release_allowed": False,
         "uncertified_financial_route_auto_release_allowed": False,
+        "league_preview_reuses_immutable_source_fingerprints": True,
     }

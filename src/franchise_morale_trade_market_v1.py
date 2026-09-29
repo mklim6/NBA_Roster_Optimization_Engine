@@ -15,6 +15,9 @@ from franchise_morale_chemistry_v1 import (
 MORALE_TRADE_MARKET_VERSION = (
     "franchise-morale-trade-market-bridge-v5a-2026-09-16"
 )
+MORALE_TRADE_MARKET_SNAPSHOT_REUSE_VERSION = (
+    "franchise-morale-trade-market-snapshot-reuse-v1-2026-09-25"
+)
 
 
 def _clean(value: Any) -> str:
@@ -100,11 +103,14 @@ def _morale_row(
     state: Any,
     team: str,
     player_id: str,
+    *,
+    snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    snapshot = morale_snapshot_v1(
-        state,
-        team,
-    )
+    if snapshot is None:
+        snapshot = morale_snapshot_v1(
+            state,
+            team,
+        )
     return next(
         (
             row
@@ -119,6 +125,34 @@ def _morale_row(
             == str(player_id)
         ),
         {},
+    )
+
+
+def _willingness_from_context_v1(
+    *,
+    response: str,
+    request_active: bool,
+    core_player: bool,
+) -> float:
+    """Exact planning-only willingness formula from CPU morale response V1."""
+    modifier = {
+        "Keep internal": 0.92,
+        "Listening to offers": 1.10,
+        "On trade block": 1.22,
+    }.get(response, 1.0)
+    if request_active:
+        modifier += 0.08
+    if core_player:
+        modifier -= 0.08
+    return round(
+        max(
+            0.78,
+            min(
+                1.35,
+                modifier,
+            ),
+        ),
+        3,
     )
 
 
@@ -145,6 +179,8 @@ def morale_trade_market_context_v1(
     state: Any,
     team: str,
     player_id: str,
+    *,
+    _snapshot: dict[str, Any] | None = None,
 ) -> MoraleTradeMarketContext:
     resolved_team = _team(team)
     pid = str(player_id)
@@ -152,6 +188,7 @@ def morale_trade_market_context_v1(
         state,
         resolved_team,
         pid,
+        snapshot=_snapshot,
     )
     player = _player(
         state,
@@ -195,13 +232,23 @@ def morale_trade_market_context_v1(
         state,
         pid,
     )
-    willingness = (
-        cpu_trade_willingness_modifier_v1(
-            state,
-            resolved_team,
-            pid,
+    if _snapshot is None:
+        willingness = (
+            cpu_trade_willingness_modifier_v1(
+                state,
+                resolved_team,
+                pid,
+            )
         )
-    )
+    else:
+        # The batched front-office path already has the exact morale row,
+        # response and core-player result. Reuse them rather than rebuilding
+        # the same team morale snapshot a second time for this player.
+        willingness = _willingness_from_context_v1(
+            response=response,
+            request_active=request_active,
+            core_player=core,
+        )
 
     reasons: list[str] = []
     should_market = False
@@ -432,6 +479,14 @@ def apply_cpu_morale_trade_market_to_decisions_v1(
     ):
         return rows
 
+    # Every player context on this team reads the same immutable planning
+    # snapshot during one front-office plan build. The previous path rebuilt
+    # the complete team morale snapshot twice per player.
+    snapshot = morale_snapshot_v1(
+        state,
+        resolved_team,
+    )
+
     adjusted: list[Any] = []
 
     for decision in rows:
@@ -464,6 +519,7 @@ def apply_cpu_morale_trade_market_to_decisions_v1(
                 state,
                 resolved_team,
                 pid,
+                _snapshot=snapshot,
             )
         )
 

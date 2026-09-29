@@ -898,7 +898,7 @@ def _atomic_save(
         )
 
     try:
-        checkpoint_module.save_franchise_checkpoint(
+        reloaded = checkpoint_module.save_franchise_checkpoint(
             simulation_candidate,
             trade_candidate,
             preferences=copy.deepcopy(
@@ -913,15 +913,11 @@ def _atomic_save(
             ),
             reason=
                 f"non-rfa-rights-renouncement-{transaction_id}",
-            copy_payload=True,
+            copy_payload=False,
+            _return_verified=True,
+            _existing_checkpoint=checkpoint,
+            _expected_existing_sha256=checkpoint_hash_before,
         )
-        reloaded = (
-            checkpoint_module.load_franchise_checkpoint()
-        )
-        if reloaded is None:
-            raise NonRFARightsLifecycleError(
-                "Checkpoint reload returned no state after non-RFA rights renouncement."
-            )
         observed = (
             _lifecycle_fingerprint(
                 reloaded.simulation_state,

@@ -565,18 +565,16 @@ def _atomic_save(
     )
 
     try:
-        checkpoint_module.save_franchise_checkpoint(
+        reloaded = checkpoint_module.save_franchise_checkpoint(
             simulation_candidate,
             trade_candidate,
             preferences=_preferences(checkpoint),
             reason=reason,
-            copy_payload=True,
+            copy_payload=False,
+            _return_verified=True,
+            _existing_checkpoint=checkpoint,
+            _expected_existing_sha256=checkpoint_hash_before,
         )
-        reloaded = checkpoint_module.load_franchise_checkpoint()
-        if reloaded is None:
-            raise RFAOfferSheetError(
-                "Checkpoint reload returned no state after the RFA offer-sheet write."
-            )
         observed = _offer_sheet_fingerprint(
             reloaded.simulation_state,
             reloaded.trade_state,

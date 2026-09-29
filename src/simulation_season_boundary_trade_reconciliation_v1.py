@@ -50,6 +50,8 @@ def _years_remaining(player: Any) -> int | None:
 def reconcile_trade_state_after_season_boundary(
     state: SimulationLeagueState,
     trade_state: Any,
+    *,
+    copy_payload: bool = True,
 ) -> tuple[
     SimulationLeagueState,
     Any,
@@ -75,6 +77,10 @@ def reconcile_trade_state_after_season_boundary(
       TradeState metadata;
     - transaction history and live ownership/financial maps are otherwise
       preserved by deepcopy.
+
+    ``copy_payload=False`` is reserved for callers that already own a fully
+    disposable state/trade clone.  It preserves the same reconciliation and
+    validation contract while avoiding another whole-league deepcopy.
     """
     validate_simulation_league_state(state)
 
@@ -98,8 +104,8 @@ def reconcile_trade_state_after_season_boundary(
             "TradeState revision/transaction metadata is invalid."
         ) from exc
 
-    updated_state = copy.deepcopy(state)
-    updated_trade = copy.deepcopy(trade_state)
+    updated_state = copy.deepcopy(state) if copy_payload else state
+    updated_trade = copy.deepcopy(trade_state) if copy_payload else trade_state
     updated_map = getattr(updated_trade, "player_team_by_id")
 
     registered: list[str] = []

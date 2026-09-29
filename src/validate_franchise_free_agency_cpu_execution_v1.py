@@ -45,7 +45,7 @@ from simulation_franchise_checkpoint_v1 import (  # noqa: E402
 )
 
 VALIDATOR_VERSION = (
-    "franchise-free-agency-cpu-execution-validator-v1-2026-08-14"
+    "franchise-free-agency-cpu-execution-validator-v1.0.1-2026-09-27"
 )
 
 
@@ -174,7 +174,7 @@ def main() -> int:
     runner_text = runner_path.read_text(encoding="utf-8") if runner_path.exists() else ""
 
     checks = {
-        "validator_version_is_current": VALIDATOR_VERSION.endswith("v1-2026-08-14"),
+        "validator_version_is_current": VALIDATOR_VERSION.endswith("v1.0.1-2026-09-27"),
         "cpu_execution_version_is_current": report.get("version") == CPU_FREE_AGENCY_EXECUTION_VERSION,
         "cpu_execution_scope_is_current": report.get("scope") == CPU_FREE_AGENCY_EXECUTION_SCOPE,
         "cpu_offer_generation_v1_is_preserved": report.get("offer_generation_version") == CPU_FREE_AGENCY_OFFER_GENERATION_VERSION,
@@ -183,7 +183,14 @@ def main() -> int:
         "user_controlled_commit_is_disabled": report.get("user_controlled_team_commit_allowed") is False,
         "cpu_only_market_scope_is_explicit": report.get("cpu_only_markets") is True,
         "user_offer_injection_is_not_faked": report.get("user_offer_injection") is False,
-        "board_rebuild_after_each_signing_is_required": report.get("board_rebuilt_after_each_signing") is True,
+        "bounded_full_plan_refresh_is_current": (
+            report.get("board_rebuilt_after_each_signing") is False
+            and report.get("full_plan_refresh_interval") == 5
+            and report.get("queued_offers_from_changed_teams_discarded") is True
+            and report.get("queued_player_market_rebuilt_through_current_cba_gate") is True
+            and report.get("queued_player_decision_market_recomputed") is True
+            and report.get("winning_offer_full_preview_revalidated_before_commit") is True
+        ),
         "background_autonomy_is_disabled": report.get("autonomous_background_execution") is False,
         "confirmation_token_is_explicit": CPU_FREE_AGENCY_CONFIRMATION_TOKEN == "CPU_FREE_AGENCY_EXECUTION_V1",
         "runner_exists": runner_path.exists(),

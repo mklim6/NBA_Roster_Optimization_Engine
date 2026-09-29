@@ -16,6 +16,7 @@ from franchise_free_agency_contract_salary_legality_v1_3 import (
     maximum_initial_salary_for_state,
     minimum_salary_floor_for_state,
     resolve_years_of_service,
+    resolve_years_of_service_for_state,
 )
 from franchise_free_agency_financial_bridge_v1_2 import (
     FREE_AGENCY_FINANCIAL_BRIDGE_VERSION,
@@ -38,7 +39,7 @@ from franchise_free_agency_cba_financial_constants_v1 import (
 )
 
 FREE_AGENCY_RIGHTS_EXCEPTIONS_VERSION = (
-    "franchise-free-agency-rights-exceptions-v1.1-modeled-future-minimum-2026-08-18"
+    "franchise-free-agency-rights-exceptions-v1.2-service-evidence-2026-09-24"
 )
 FREE_AGENCY_RIGHTS_EXCEPTIONS_SCOPE = (
     "evidence_only_prior_team_rights_plus_one_year_minimum_salary_exception"
@@ -58,6 +59,89 @@ RIGHTS_BIRD = "bird"
 RIGHTS_EARLY_BIRD = "early_bird"
 RIGHTS_NON_BIRD = "non_bird"
 RIGHTS_UNKNOWN = "unknown"
+
+FREE_AGENCY_RIGHTS_RUNTIME_CACHE_VERSION = (
+    "franchise-free-agency-rights-runtime-cache-v1-2026-09-24"
+)
+
+# Offer-board generation asks the same rights questions many thousands of
+# times. Keep one state's read-only snapshots at a time. Every committed
+# signing changes the free-agent tuple or revision markers and invalidates it.
+_RIGHTS_RUNTIME_CACHE_KEY: tuple[Any, ...] | None = None
+_RIGHTS_RUNTIME_REGISTRY: dict[str, dict[str, Any]] = {}
+_RIGHTS_RUNTIME_REGISTRY_LOADED = False
+_RIGHTS_RUNTIME_RESOLUTIONS: dict[str, "FreeAgencyRightsResolution"] = {}
+_RIGHTS_RUNTIME_ROUTES: dict[
+    tuple[str, str, int], "FreeAgencyExceptionRouteResolution"
+] = {}
+
+
+def _rights_runtime_state_key(state: Any) -> tuple[Any, ...]:
+    raw = getattr(state, FREE_AGENCY_RIGHTS_REGISTRY_ATTRIBUTE, None)
+    free_agents = getattr(state, "free_agent_player_ids", ()) or ()
+    settings = getattr(state, "settings", None)
+    return (
+        id(state),
+        _clean(getattr(settings, "season_label", "")),
+        int(getattr(state, "franchise_transaction_revision", 0) or 0),
+        int(getattr(state, "source_transaction_count", 0) or 0),
+        int(getattr(state, "transition_count", 0) or 0),
+        id(free_agents),
+        len(free_agents),
+        id(raw),
+        len(raw) if isinstance(raw, Mapping) else -1,
+    )
+
+
+def _reset_rights_runtime_cache_if_needed(state: Any) -> tuple[Any, ...]:
+    global _RIGHTS_RUNTIME_CACHE_KEY
+    global _RIGHTS_RUNTIME_REGISTRY
+    global _RIGHTS_RUNTIME_REGISTRY_LOADED
+    global _RIGHTS_RUNTIME_RESOLUTIONS
+    global _RIGHTS_RUNTIME_ROUTES
+
+    key = _rights_runtime_state_key(state)
+    if key != _RIGHTS_RUNTIME_CACHE_KEY:
+        _RIGHTS_RUNTIME_CACHE_KEY = key
+        _RIGHTS_RUNTIME_REGISTRY = {}
+        _RIGHTS_RUNTIME_REGISTRY_LOADED = False
+        _RIGHTS_RUNTIME_RESOLUTIONS = {}
+        _RIGHTS_RUNTIME_ROUTES = {}
+    return key
+
+
+def _rights_registry_snapshot(state: Any) -> dict[str, dict[str, Any]]:
+    _reset_rights_runtime_cache_if_needed(state)
+    global _RIGHTS_RUNTIME_REGISTRY
+    global _RIGHTS_RUNTIME_REGISTRY_LOADED
+    if _RIGHTS_RUNTIME_REGISTRY_LOADED:
+        return _RIGHTS_RUNTIME_REGISTRY
+
+    registry: dict[str, dict[str, Any]] = {}
+    try:
+        from franchise_free_agency_rights_population_v1 import load_overlay_for_state
+
+        overlay = load_overlay_for_state(state)
+        if isinstance(overlay, Mapping):
+            for raw_id, row in overlay.items():
+                pid = _player_id(raw_id)
+                if not pid or not isinstance(row, Mapping):
+                    continue
+                registry[pid] = dict(row)
+    except Exception:
+        pass
+
+    raw = getattr(state, FREE_AGENCY_RIGHTS_REGISTRY_ATTRIBUTE, None)
+    if isinstance(raw, Mapping):
+        for raw_id, row in raw.items():
+            pid = _player_id(raw_id)
+            if not pid or not isinstance(row, Mapping):
+                continue
+            registry[pid] = dict(row)
+
+    _RIGHTS_RUNTIME_REGISTRY = registry
+    _RIGHTS_RUNTIME_REGISTRY_LOADED = True
+    return _RIGHTS_RUNTIME_REGISTRY
 
 
 @dataclass(frozen=True)
@@ -133,44 +217,13 @@ def _player_id(value: Any) -> str:
 
 
 def rights_registry_from_state(state: Any) -> dict[str, dict[str, Any]]:
-    """Return verified rights evidence from the state plus the season-scoped population overlay.
-
-    Explicit state-owned evidence remains authoritative. The external overlay is read-only,
-    season-scoped, and only exposes rows for players who are still in the current free-agent
-    pool. Missing, stale, malformed, or unverified overlay rows are ignored rather than inferred.
-    """
-    registry: dict[str, dict[str, Any]] = {}
-    try:
-        from franchise_free_agency_rights_population_v1 import load_overlay_for_state
-        overlay = load_overlay_for_state(state)
-        if isinstance(overlay, Mapping):
-            for raw_id, row in overlay.items():
-                pid = _player_id(raw_id)
-                if not pid or not isinstance(row, Mapping):
-                    continue
-                registry[pid] = copy.deepcopy(dict(row))
-    except Exception:
-        # Population is an additive evidence layer. Its absence can never make the
-        # locked rights engine less conservative or prevent normal startup.
-        pass
-
-    raw = getattr(state, FREE_AGENCY_RIGHTS_REGISTRY_ATTRIBUTE, None)
-    if raw is None:
-        return registry
-    if not isinstance(raw, Mapping):
-        return registry
-    for raw_id, row in raw.items():
-        pid = _player_id(raw_id)
-        if not pid or not isinstance(row, Mapping):
-            continue
-        # Explicit checkpoint/state evidence wins over the derived overlay.
-        registry[pid] = copy.deepcopy(dict(row))
-    return registry
+    """Return an isolated copy of the current verified rights registry."""
+    return copy.deepcopy(_rights_registry_snapshot(state))
 
 
 def rights_registry_fingerprint(state: Any) -> str:
     encoded = json.dumps(
-        rights_registry_from_state(state),
+        _rights_registry_snapshot(state),
         sort_keys=True,
         separators=(",", ":"),
         default=str,
@@ -211,9 +264,12 @@ def build_rights_registry_candidate(
     return candidate
 
 
-def resolve_free_agency_rights(state: Any, player_id: str) -> FreeAgencyRightsResolution:
+def _resolve_free_agency_rights_uncached(
+    state: Any,
+    player_id: str,
+) -> FreeAgencyRightsResolution:
     pid = _player_id(player_id)
-    row = rights_registry_from_state(state).get(pid)
+    row = _rights_registry_snapshot(state).get(pid)
     if row is None:
         return FreeAgencyRightsResolution(
             version=FREE_AGENCY_RIGHTS_EXCEPTIONS_VERSION,
@@ -282,13 +338,30 @@ def resolve_free_agency_rights(state: Any, player_id: str) -> FreeAgencyRightsRe
     )
 
 
+def resolve_free_agency_rights(
+    state: Any,
+    player_id: str,
+) -> FreeAgencyRightsResolution:
+    _reset_rights_runtime_cache_if_needed(state)
+    pid = _player_id(player_id)
+    cached = _RIGHTS_RUNTIME_RESOLUTIONS.get(pid)
+    if cached is not None:
+        return cached
+    resolved = _resolve_free_agency_rights_uncached(state, pid)
+    _RIGHTS_RUNTIME_RESOLUTIONS[pid] = resolved
+    return resolved
+
+
 def _rights_exception_ceiling(
     state: Any,
     offer: FreeAgencyOffer,
     rights: FreeAgencyRightsResolution,
 ) -> FreeAgencyExceptionRouteResolution:
     player = getattr(state, "players", {}).get(_player_id(offer.player_id))
-    service, _ = resolve_years_of_service(player)
+    service, _ = resolve_years_of_service_for_state(
+        state,
+        offer.player_id,
+    )
     minimum = minimum_salary_floor_for_state(
         state,
         years_of_service=service,
@@ -413,14 +486,28 @@ def resolve_prior_team_exception_route(
     state: Any,
     offer: FreeAgencyOffer,
 ) -> FreeAgencyExceptionRouteResolution:
+    _reset_rights_runtime_cache_if_needed(state)
+    key = (
+        _player_id(offer.player_id),
+        _team(offer.team_abbreviation),
+        int(offer.years),
+    )
+    cached = _RIGHTS_RUNTIME_ROUTES.get(key)
+    if cached is not None:
+        return cached
     rights = resolve_free_agency_rights(state, offer.player_id)
-    return _rights_exception_ceiling(state, offer, rights)
+    resolved = _rights_exception_ceiling(state, offer, rights)
+    _RIGHTS_RUNTIME_ROUTES[key] = resolved
+    return resolved
 
 
 def _minimum_exception_gate(state: Any, offer: FreeAgencyOffer) -> FreeAgencyFinancialGateResult:
     season = resolve_offseason_market_season(state)
     player = getattr(state, "players", {}).get(_player_id(offer.player_id))
-    service, service_source = resolve_years_of_service(player)
+    service, service_source = resolve_years_of_service_for_state(
+        state,
+        offer.player_id,
+    )
     minimum = minimum_salary_floor_for_state(
         state,
         years_of_service=service,
@@ -604,6 +691,10 @@ def rights_exceptions_contract_report() -> dict[str, Any]:
         "version": FREE_AGENCY_RIGHTS_EXCEPTIONS_VERSION,
         "scope": FREE_AGENCY_RIGHTS_EXCEPTIONS_SCOPE,
         "rights_registry_attribute": FREE_AGENCY_RIGHTS_REGISTRY_ATTRIBUTE,
+        "runtime_cache_version": FREE_AGENCY_RIGHTS_RUNTIME_CACHE_VERSION,
+        "runtime_cache_scope": "single_state_read_only_registry_resolution_route",
+        "runtime_cache_invalidates_on_free_agent_or_revision_change": True,
+        "runtime_cache_public_registry_copy_semantics_preserved": True,
         "rights_are_evidence_only": True,
         "age_inference_enabled": False,
         "target_fit_inference_enabled": False,

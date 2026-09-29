@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-LIVE_TRIM_VERSION = "franchise-cpu-post-draft-roster-trim-atomic-live-v1-2026-08-18"
+LIVE_TRIM_VERSION = "franchise-cpu-post-draft-roster-trim-atomic-live-v2-2026-09-25"
 LIVE_TRIM_HISTORY_ATTR = "cpu_post_draft_roster_trim_batch_history_v1"
 
 
@@ -206,7 +206,7 @@ def build_atomic_cpu_post_draft_trim_candidate(
     )
     if user_overflow:
         blockers.append(
-            "User-controlled teams exceed the 21-player offseason ceiling: "
+            "User-controlled teams require a post-Draft roster decision: "
             + ", ".join(user_overflow)
             + ". Resolve those rosters manually before opening the next season."
         )
@@ -288,50 +288,31 @@ def build_atomic_cpu_post_draft_trim_candidate(
         if item.cpu_managed
     )
 
-    safety_counter = 0
-    while True:
-        safety_counter += 1
-        if safety_counter > 100:
-            raise CPUPostDraftRosterTrimLiveError(
-                "CPU post-Draft roster trim exceeded the 100-release safety bound."
-            )
-        preview = orchestrator.build_cpu_post_draft_trim_league_preview(working)
-        user_now = [
-            item.team
-            for item in preview.team_previews
-            if (not item.cpu_managed) and item.required_cut_count > 0
-        ]
-        if user_now:
-            raise CPUPostDraftRosterTrimLiveError(
-                "A user-controlled roster became over the 21-player ceiling during CPU trimming."
-            )
-        overflow = [
-            item
-            for item in preview.team_previews
-            if item.cpu_managed and item.required_cut_count > 0
-        ]
-        if not overflow:
-            break
-        blocked = [
-            item for item in overflow
-            if item.status != "cpu_trim_plan_executable_on_clone"
-        ]
-        if blocked:
-            raise CPUPostDraftRosterTrimLiveError(
-                "CPU trim sequence became non-executable after an earlier approved release: "
-                + ", ".join(f"{item.team}={item.status}" for item in blocked)
-            )
-        item = sorted(overflow, key=lambda row: row.team)[0]
-        if not item.selected_releases:
-            raise CPUPostDraftRosterTrimLiveError(
-                f"{item.team} has an executable trim status but no selected release."
-            )
-        selected = item.selected_releases[0]
+    # The initial preview already certifies the exact number of releases for
+    # every overflowing CPU roster.  Rebuilding the complete 30-team front
+    # office plan after every cut is redundant and caused deep-offseason trim
+    # time to grow into several minutes.  Execute that deterministic plan on
+    # the disposable working clone, while rebuilding each selected player's
+    # narrow release preview against the current state immediately before the
+    # mutation.  A final league-wide preview below remains mandatory.
+    release_plan = [
+        (item, selected)
+        for item in sorted(initial_preview.team_previews, key=lambda row: row.team)
+        if item.cpu_managed and item.required_cut_count > 0
+        for selected in item.selected_releases
+    ]
+    if len(release_plan) != expected_release_count:
+        raise CPUPostDraftRosterTrimLiveError(
+            "Initial CPU trim plan does not contain the expected release count."
+        )
+
+    for item, selected in release_plan:
         release_preview = release.build_cpu_post_draft_release_preview(
             working,
             team=item.team,
             player_id=selected.player_id,
             rationale=selected.score_rationale,
+            require_non_rotation=False,
         )
         if (
             release_preview.status != "pass"
@@ -343,15 +324,21 @@ def build_atomic_cpu_post_draft_trim_candidate(
                 "Final release gate rejected the orchestrator-selected CPU trim target."
             )
         player = working.simulation_state.players[selected.player_id]
-        if bool(getattr(player, "synthetic", False)) or bool(
-            getattr(player, "generated_prospect", False)
+        if release._current_or_unresolved_generated_rookie(
+            working.simulation_state,
+            player,
         ):
             raise CPUPostDraftRosterTrimLiveError(
-                "Generated/synthetic rookie protection was violated by the live batch builder."
+                "Current/unresolved generated rookie protection was violated by the live batch builder."
             )
         candidate = release.build_cpu_post_draft_release_candidate(
             working,
             release_preview,
+            copy_payload=False,
+            # The atomic batch verifies its final combined boundary fingerprint
+            # before persistence. Per-release candidate fingerprints are not
+            # consumed here, so avoid two full mature-state scans per cut.
+            _defer_candidate_fingerprints=True,
         )
         working = _checkpoint_like(
             working,
@@ -375,7 +362,8 @@ def build_atomic_cpu_post_draft_trim_candidate(
     ]
     if remaining_cpu_overflow:
         raise CPUPostDraftRosterTrimLiveError(
-            "Atomic batch candidate finished with CPU teams still above 21: "
+            "Atomic batch candidate finished with CPU teams still above a "
+            "post-Draft roster ceiling: "
             + ", ".join(remaining_cpu_overflow)
         )
 
@@ -517,10 +505,14 @@ def commit_atomic_cpu_post_draft_trim_live(
         cp.save_franchise_checkpoint(
             candidate.simulation_state,
             candidate.trade_state,
-            preferences=copy.deepcopy(candidate.preferences),
+            preferences=candidate.preferences,
             reason=reason,
             path=path,
-            copy_payload=True,
+            # The batch candidate already owns a disposable, fully isolated
+            # clone and is never mutated after this call. Re-copying years of
+            # completed franchise history here adds no isolation; the atomic
+            # writer and mandatory semantic reload below remain authoritative.
+            copy_payload=False,
         )
         reloaded = cp.load_franchise_checkpoint(path=path, allow_backup=False)
         if reloaded is None:
@@ -598,12 +590,14 @@ def live_trim_contract_report() -> dict[str, Any]:
     return {
         "version": LIVE_TRIM_VERSION,
         "offseason_roster_ceiling": 21,
+        "standard_contract_ceiling": 15,
         "canonical_execution_enabled": True,
         "atomic_league_save": True,
         "controlled_team_auto_release_allowed": False,
         "unknown_guarantee_auto_release_allowed": False,
         "generated_or_synthetic_auto_release_allowed": False,
         "fake_trade_history_allowed": False,
+        "atomic_candidate_defers_unused_per_release_fingerprints": True,
         "release_candidate_authority": (
             "franchise_cpu_post_draft_roster_trim_release_v1."
             "build_cpu_post_draft_release_candidate"

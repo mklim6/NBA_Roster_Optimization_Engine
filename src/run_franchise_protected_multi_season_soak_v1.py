@@ -18,6 +18,7 @@ RUNS = ROOT / "outputs" / "_soak"
 VERSION = "franchise-protected-multi-season-soak-v1.2-staff-invariant-2026-09-17"
 DEFAULT_SEASONS = 8
 MAX_SEASONS = 10
+MAX_SUSTAINABLE_CPU_FA_ROUNDS = 12
 EXPECTED_FORFEIT_DRAFT_SIZES = {
     2029: 59,
     2030: 59,
@@ -382,11 +383,18 @@ def run_soak(*, seasons: int = DEFAULT_SEASONS, keep_artifacts: bool = False) ->
 
                 cpu_fa_signings = 0
                 cpu_fa_rounds = 0
-                for round_index in range(1, 7):
+                sustainable_target = cpu_fa_api.cpu_sustainable_roster_target(
+                    closed.simulation_state
+                )
+                cpu_fa_stop_reason = ""
+                for round_index in range(1, MAX_SUSTAINABLE_CPU_FA_ROUNDS + 1):
                     fa_source = _checkpoint_or_raise(checkpoint_api, temp_primary, f"{source_season} CPU FA round {round_index}")
-                    roster_counts = [len(team_state.roster_player_ids) for team_state in fa_source.simulation_state.teams.values()]
-                    minimum_required = int(getattr(fa_source.simulation_state.settings, "minimum_game_players", 8) or 8)
-                    if roster_counts and min(roster_counts) >= minimum_required:
+                    sustainable_deficits = cpu_fa_api.cpu_sustainable_roster_deficits(
+                        fa_source.simulation_state,
+                        (),
+                    )
+                    if not sustainable_deficits:
+                        cpu_fa_stop_reason = "all_cpu_teams_meet_sustainable_roster_target"
                         break
                     rr = cpu_fa_api.execute_cpu_free_agency_round_durably(
                         max_signings=15,
@@ -395,7 +403,13 @@ def run_soak(*, seasons: int = DEFAULT_SEASONS, keep_artifacts: bool = False) ->
                     )
                     cpu_fa_rounds += 1
                     cpu_fa_signings += int(rr.committed_signing_count)
+                    cpu_fa_stop_reason = str(rr.stop_reason or "")
                     if int(rr.committed_signing_count) <= 0:
+                        break
+                    if rr.stop_reason in {
+                        "all_cpu_teams_meet_sustainable_roster_target",
+                        "no_accepted_cpu_market_for_sustainable_roster_deficits",
+                    }:
                         break
                 fa_cp = _checkpoint_or_raise(checkpoint_api, temp_primary, f"{source_season} CPU FA complete")
                 validate_simulation_league_state(fa_cp.simulation_state)
@@ -406,10 +420,20 @@ def run_soak(*, seasons: int = DEFAULT_SEASONS, keep_artifacts: bool = False) ->
                 if not srep["checks"]["cpu_free_agency_reaches_roster_floor"]:
                     underfilled = {k:v for k,v in fa_pop["roster_counts"].items() if v < minimum_required}
                     raise ProtectedMultiSeasonSoakError(f"{source_season} CPU Free Agency exhausted below roster floor: {underfilled}")
+                sustainable_deficits_after = cpu_fa_api.cpu_sustainable_roster_deficits(
+                    fa_cp.simulation_state,
+                    (),
+                )
                 srep["cpu_free_agency"] = {
                     "rounds": cpu_fa_rounds,
                     "signings": cpu_fa_signings,
                     "minimum_roster_after": fa_pop["minimum_roster"],
+                    "sustainable_roster_target": sustainable_target,
+                    "teams_below_sustainable_target_after": len(sustainable_deficits_after),
+                    "total_sustainable_roster_deficit_after": sum(
+                        int(row[2]) for row in sustainable_deficits_after
+                    ),
+                    "stop_reason": cpu_fa_stop_reason,
                 }
                 srep["durations_seconds"]["closeout_and_free_agency"] = round(time.perf_counter() - t0, 3)
 
@@ -455,7 +479,9 @@ def run_soak(*, seasons: int = DEFAULT_SEASONS, keep_artifacts: bool = False) ->
                 trimmed = _checkpoint_or_raise(checkpoint_api, temp_primary, f"{source_season} post-Draft trim")
                 validate_simulation_league_state(trimmed.simulation_state)
                 validate_state(trimmed.trade_state, runtime)
-                srep["checks"]["post_draft_trim_committed_or_unneeded"] = str(trim_result.status) in {"committed", "no_trim_required"}
+                srep["checks"]["post_draft_trim_committed_or_unneeded"] = str(
+                    trim_result.status
+                ) in {"applied", "committed", "no_trim_required"}
                 srep["durations_seconds"]["draft_and_trim"] = round(time.perf_counter() - t0, 3)
 
                 _progress(season_index, seasons, source_season, "atomic boundary to next season")
@@ -550,7 +576,7 @@ def run_soak(*, seasons: int = DEFAULT_SEASONS, keep_artifacts: bool = False) ->
                 report["completed_seasons"] = season_index
                 current_cp = second_cp
                 _write_partial(report)
-                _progress(season_index, seasons, source_season, f"PASS → {target_season}")
+                _progress(season_index, seasons, source_season, f"PASS -> {target_season}")
 
             checks["all_requested_seasons_completed"] = report["completed_seasons"] == seasons
             checks["all_season_reports_passed"] = len(season_reports) == seasons and all(bool(x.get("passed")) for x in season_reports)

@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 DOCS = ROOT / "docs"
-VERSION = "franchise-release-engineering-v1-validator-2026-09-11"
+VERSION = "franchise-release-engineering-v1.1-validator-2026-09-28"
 
 
 def main() -> int:
@@ -34,9 +34,17 @@ def main() -> int:
         "release_checklist_exists": checklist.is_file(),
         "release_checklist_requires_worktree_classification": "untracked production source" in checklist_text.lower(),
         "release_checklist_marks_9_10_optional": "seasons 9-10" in checklist_text and "optional" in checklist_text.lower(),
-        "status_records_deep_fa_v2_probe": "44.19 seconds" in status_text and "2.753" in status_text,
-        "status_queue_moves_to_release_packaging": (
-            "Classify and package the dirty worktree" in status_text
+        "status_records_current_deep_fa_v2_probe": (
+            "39.06 seconds to 19.41 seconds" in status_text
+            and "98.04 seconds to 47.61 seconds" in status_text
+            and "all 12 required signings" in status_text
+        ),
+        "status_records_completed_release_package": (
+            "NBA_Franchise_Simulator_V1_2026-09-17.zip" in status_text
+            and "distribution integrity sidecar" in status_text
+        ),
+        "status_queue_moves_to_release_review": (
+            "Review the accumulated Git diff" in status_text
         ),
     }
     failed = [name for name, passed in checks.items() if not passed]

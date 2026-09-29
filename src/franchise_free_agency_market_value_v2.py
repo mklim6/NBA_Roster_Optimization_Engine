@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from dataclasses import dataclass, asdict
 from typing import Any, Iterable, Mapping
 
@@ -390,8 +391,73 @@ def _true_shooting(totals: Any) -> float | None:
     return points / denom
 
 
-def _recent_totals(player_id: str, completed_games: Mapping[str, Any], schedule: Mapping[str, Any], limit: int = 10) -> Any | None:
-    rows: list[tuple[int, str, Any]] = []
+@dataclass
+class _RecentTotals:
+    games_played: int = 0
+    minutes: float = 0.0
+    points: float = 0.0
+    rebounds: float = 0.0
+    assists: float = 0.0
+    steals: float = 0.0
+    blocks: float = 0.0
+    turnovers: float = 0.0
+    field_goals_made: float = 0.0
+    field_goals_attempted: float = 0.0
+    three_pointers_made: float = 0.0
+    three_pointers_attempted: float = 0.0
+    free_throws_made: float = 0.0
+    free_throws_attempted: float = 0.0
+
+
+_RECENT_TOTAL_FIELDS = (
+    "minutes", "points", "rebounds", "assists", "steals", "blocks",
+    "turnovers", "field_goals_made", "field_goals_attempted",
+    "three_pointers_made", "three_pointers_attempted",
+    "free_throws_made", "free_throws_attempted",
+)
+_RECENT_CONTEXT_INDEX_CACHE_MAX = 16
+_RECENT_CONTEXT_INDEX_CACHE: OrderedDict[
+    tuple[int, int, int, int],
+    tuple[
+        Mapping[str, Any],
+        Mapping[str, Any],
+        dict[str, tuple[Any, ...]],
+    ],
+] = OrderedDict()
+_RECENT_CONTEXT_INDEX_CACHE_BUILDS = 0
+_RECENT_CONTEXT_INDEX_CACHE_HITS = 0
+
+
+def _recent_context_cache_key(
+    completed_games: Mapping[str, Any],
+    schedule: Mapping[str, Any],
+) -> tuple[int, int, int, int]:
+    return (
+        id(completed_games),
+        len(completed_games),
+        id(schedule),
+        len(schedule),
+    )
+
+
+def _build_recent_box_index(
+    completed_games: Mapping[str, Any],
+    schedule: Mapping[str, Any],
+) -> dict[str, tuple[Any, ...]]:
+    """Index completed-game box scores once for repeated market valuation.
+
+    The old implementation scanned the complete league game history once per
+    player valuation. CPU Free Agency can value the same completed season tens
+    of thousands of times, making that scan the dominant market-value cost.
+
+    Preserve the exact old ordering semantics:
+      * completed-game insertion order supplies the fallback day;
+      * scheduled day_index wins when present/non-zero;
+      * duplicate rows for one player in one game use the first box only;
+      * recent rows sort by (day, game_id) descending.
+    """
+    rows_by_player: dict[str, list[tuple[int, str, Any]]] = {}
+
     for order, (game_id, game) in enumerate(completed_games.items()):
         day = order
         scheduled = schedule.get(game_id) if isinstance(schedule, Mapping) else None
@@ -400,28 +466,96 @@ def _recent_totals(player_id: str, completed_games: Mapping[str, Any], schedule:
                 day = int(getattr(scheduled, "day_index", order) or order)
             except (TypeError, ValueError):
                 day = order
+
+        seen_in_game: set[str] = set()
         for box in tuple(getattr(game, "player_box_scores", ()) or ()):
-            if _clean(getattr(box, "player_id", "")) == player_id:
-                rows.append((day, str(game_id), box))
-                break
-    rows.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    boxes = [row[2] for row in rows[: max(1, int(limit))]]
+            player_id = _clean(getattr(box, "player_id", ""))
+            if player_id in seen_in_game:
+                continue
+            seen_in_game.add(player_id)
+            rows_by_player.setdefault(player_id, []).append(
+                (day, str(game_id), box)
+            )
+
+    result: dict[str, tuple[Any, ...]] = {}
+    for player_id, rows in rows_by_player.items():
+        rows.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        result[player_id] = tuple(row[2] for row in rows)
+    return result
+
+
+def _recent_box_index(
+    completed_games: Mapping[str, Any],
+    schedule: Mapping[str, Any],
+) -> dict[str, tuple[Any, ...]]:
+    global _RECENT_CONTEXT_INDEX_CACHE_BUILDS
+    global _RECENT_CONTEXT_INDEX_CACHE_HITS
+
+    key = _recent_context_cache_key(completed_games, schedule)
+    cached = _RECENT_CONTEXT_INDEX_CACHE.get(key)
+    if cached is not None:
+        cached_completed, cached_schedule, index = cached
+        # Hold and verify strong object references so Python id reuse can never
+        # make an unrelated game universe hit this cache entry.
+        if (
+            cached_completed is completed_games
+            and cached_schedule is schedule
+        ):
+            _RECENT_CONTEXT_INDEX_CACHE.move_to_end(key)
+            _RECENT_CONTEXT_INDEX_CACHE_HITS += 1
+            return index
+        _RECENT_CONTEXT_INDEX_CACHE.pop(key, None)
+
+    index = _build_recent_box_index(completed_games, schedule)
+    _RECENT_CONTEXT_INDEX_CACHE[key] = (
+        completed_games,
+        schedule,
+        index,
+    )
+    _RECENT_CONTEXT_INDEX_CACHE.move_to_end(key)
+    _RECENT_CONTEXT_INDEX_CACHE_BUILDS += 1
+
+    while len(_RECENT_CONTEXT_INDEX_CACHE) > _RECENT_CONTEXT_INDEX_CACHE_MAX:
+        _RECENT_CONTEXT_INDEX_CACHE.popitem(last=False)
+    return index
+
+
+def _recent_totals_cache_report() -> dict[str, int]:
+    return {
+        "entries": len(_RECENT_CONTEXT_INDEX_CACHE),
+        "builds": int(_RECENT_CONTEXT_INDEX_CACHE_BUILDS),
+        "hits": int(_RECENT_CONTEXT_INDEX_CACHE_HITS),
+        "max_entries": int(_RECENT_CONTEXT_INDEX_CACHE_MAX),
+    }
+
+
+def _clear_recent_totals_cache() -> None:
+    global _RECENT_CONTEXT_INDEX_CACHE_BUILDS
+    global _RECENT_CONTEXT_INDEX_CACHE_HITS
+
+    _RECENT_CONTEXT_INDEX_CACHE.clear()
+    _RECENT_CONTEXT_INDEX_CACHE_BUILDS = 0
+    _RECENT_CONTEXT_INDEX_CACHE_HITS = 0
+
+
+def _recent_totals(
+    player_id: str,
+    completed_games: Mapping[str, Any],
+    schedule: Mapping[str, Any],
+    limit: int = 10,
+) -> Any | None:
+    boxes = _recent_box_index(completed_games, schedule).get(player_id, ())
+    boxes = boxes[: max(1, int(limit))]
     if not boxes:
         return None
 
-    class Totals:
-        pass
-
-    result = Totals()
-    fields = (
-        "minutes", "points", "rebounds", "assists", "steals", "blocks",
-        "turnovers", "field_goals_made", "field_goals_attempted",
-        "three_pointers_made", "three_pointers_attempted",
-        "free_throws_made", "free_throws_attempted",
-    )
-    setattr(result, "games_played", len(boxes))
-    for field in fields:
-        setattr(result, field, sum(float(getattr(box, field, 0) or 0) for box in boxes))
+    result = _RecentTotals(games_played=len(boxes))
+    for field in _RECENT_TOTAL_FIELDS:
+        setattr(
+            result,
+            field,
+            sum(float(getattr(box, field, 0) or 0) for box in boxes),
+        )
     return result
 
 

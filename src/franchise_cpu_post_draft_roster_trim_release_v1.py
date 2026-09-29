@@ -11,7 +11,7 @@ import shutil
 from typing import Any, Mapping, Sequence
 
 CPU_POST_DRAFT_RELEASE_VERSION = (
-    "franchise-cpu-post-draft-roster-trim-durable-release-transaction-foundation-v1.0.1-2026-08-17"
+    "franchise-cpu-post-draft-roster-trim-durable-release-v2-2026-09-25"
 )
 CPU_POST_DRAFT_RELEASE_HISTORY_ATTR = "cpu_post_draft_roster_trim_release_history_v1"
 CPU_POST_DRAFT_RELEASE_CANONICAL_COMMIT_ENABLED = False
@@ -32,6 +32,7 @@ class CPUPostDraftReleasePreview:
     source_simulation_fingerprint: str
     source_trade_fingerprint: str
     controlled_teams: tuple[str, ...]
+    require_non_rotation: bool
     roster_count_before: int
     roster_count_after: int
     salary: float | None
@@ -270,6 +271,47 @@ def _generated_or_synthetic(player: Any) -> tuple[bool, bool]:
     return generated, synthetic
 
 
+def _player_draft_year(player: Any) -> int | None:
+    for attr in ("draft_year", "generated_draft_year", "rookie_draft_year"):
+        value = getattr(player, attr, None)
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _latest_generated_draft_year(simulation_state: Any) -> int | None:
+    players = getattr(simulation_state, "players", {}) or {}
+    years: list[int] = []
+    for team_state in (getattr(simulation_state, "teams", {}) or {}).values():
+        for value in tuple(getattr(team_state, "roster_player_ids", ()) or ()):
+            player = players.get(_player_id(value))
+            if player is None:
+                continue
+            generated, synthetic = _generated_or_synthetic(player)
+            if not (generated or synthetic):
+                continue
+            draft_year = _player_draft_year(player)
+            if draft_year is not None:
+                years.append(draft_year)
+    return max(years) if years else None
+
+
+def _current_or_unresolved_generated_rookie(
+    simulation_state: Any,
+    player: Any,
+) -> bool:
+    generated, synthetic = _generated_or_synthetic(player)
+    if not (generated or synthetic):
+        return False
+    draft_year = _player_draft_year(player)
+    latest_year = _latest_generated_draft_year(simulation_state)
+    return draft_year is None or latest_year is None or draft_year == latest_year
+
+
 def _rotation_contains(team_state: Any, player_id: str) -> bool:
     rotation = getattr(team_state, "rotation", None)
     if rotation is None:
@@ -290,6 +332,8 @@ def _financial_treatment(player: Any) -> tuple[
     years = fields["years_remaining"]
     guaranteed_remaining = fields["guaranteed_remaining"]
     dead_money = fields["dead_money"]
+    generated, _synthetic = _generated_or_synthetic(player)
+    option_type = _clean(getattr(fields["contract"], "option_type", "")).lower()
 
     blockers: list[str] = []
     if salary is None or salary < 0:
@@ -299,11 +343,46 @@ def _financial_treatment(player: Any) -> tuple[
     if guaranteed is False:
         return "exact_non_guaranteed_release", 0.0, 0.0, ()
 
+    if guaranteed is None and years == 1:
+        # Legacy live-start rows can prove a one-year term and salary without
+        # carrying a guarantee flag. Booking the full current salary as dead
+        # money is conservative: it creates no cap room and has no unresolved
+        # future-season allocation.
+        return (
+            "conservative_full_current_salary_one_year_unknown_guarantee",
+            salary,
+            0.0,
+            (),
+        )
+
     if guaranteed is None:
         blockers.append(
-            "Guarantee status is unresolved; release cannot assume zero dead money."
+            "Multi-year guarantee status is unresolved; release cannot infer "
+            "current or future dead money."
         )
         return "blocked_guarantee_status_unknown", None, None, tuple(blockers)
+
+    if (
+        guaranteed is True
+        and generated
+        and years is not None
+        and years > 1
+        and option_type in {
+            "rookie_scale",
+            "second_round_exception_team_option",
+        }
+    ):
+        # Generated rookie contracts identify their future seasons as team
+        # options but do not carry a per-year guarantee ledger. Preserve the
+        # upcoming/current salary as conservative dead money and decline the
+        # unexercised option seasons. Current draft-class rookies remain
+        # protected by the preview gate and cannot reach this route.
+        return (
+            "conservative_generated_rookie_option_current_salary",
+            salary,
+            0.0,
+            (),
+        )
 
     if dead_money is not None:
         future = (
@@ -349,6 +428,7 @@ def build_cpu_post_draft_release_preview(
     player_id: str,
     rationale: Sequence[str] = (),
     require_non_rotation: bool = True,
+    _precomputed_source_fingerprints: tuple[str, str] | None = None,
 ) -> CPUPostDraftReleasePreview:
     simulation_state = getattr(checkpoint, "simulation_state", None)
     trade_state = getattr(checkpoint, "trade_state", None)
@@ -372,6 +452,7 @@ def build_cpu_post_draft_release_preview(
             source_simulation_fingerprint="",
             source_trade_fingerprint="",
             controlled_teams=(),
+            require_non_rotation=bool(require_non_rotation),
             roster_count_before=0,
             roster_count_after=0,
             salary=None,
@@ -434,16 +515,24 @@ def build_cpu_post_draft_release_preview(
     if player is not None:
         player_name = _clean(getattr(player, "player_name", "")) or player_id
         generated, synthetic = _generated_or_synthetic(player)
-        checks["player_not_generated"] = not generated
-        checks["player_not_synthetic"] = not synthetic
-        if generated:
-            blockers.append("Generated players are protected from this CPU release foundation.")
-        if synthetic:
-            blockers.append("Synthetic players are protected from this CPU release foundation.")
+        protected_generated_rookie = _current_or_unresolved_generated_rookie(
+            simulation_state,
+            player,
+        )
+        checks["player_not_current_or_unresolved_generated_rookie"] = (
+            not protected_generated_rookie
+        )
+        if protected_generated_rookie:
+            blockers.append(
+                "Current or unresolved generated rookies are protected from CPU release; "
+                "older generated players may be evaluated normally."
+            )
 
         if team_state is not None:
             in_rotation = _rotation_contains(team_state, player_id)
-        checks["player_not_in_rotation"] = not in_rotation
+        checks["player_not_in_rotation"] = (
+            not in_rotation or not require_non_rotation
+        )
         if require_non_rotation and in_rotation:
             blockers.append(
                 "Player is in the current rotation; this foundation requires a non-rotation release target."
@@ -454,8 +543,7 @@ def build_cpu_post_draft_release_preview(
         blockers.extend(financial_blockers)
         checks["financial_treatment_exact"] = not treatment.startswith("blocked_")
     else:
-        checks["player_not_generated"] = False
-        checks["player_not_synthetic"] = False
+        checks["player_not_current_or_unresolved_generated_rookie"] = False
         checks["player_not_in_rotation"] = False
         checks["financial_treatment_exact"] = False
 
@@ -478,8 +566,18 @@ def build_cpu_post_draft_release_preview(
     if not checks["trade_state_team_financial_row_available"]:
         blockers.append(f"TradeState financial row for {team} is unavailable.")
 
-    source_sim_fp = _simulation_fingerprint(simulation_state)
-    source_trade_fp = _trade_fingerprint(trade_state)
+    if _precomputed_source_fingerprints is None:
+        source_sim_fp = _simulation_fingerprint(simulation_state)
+        source_trade_fp = _trade_fingerprint(trade_state)
+    else:
+        source_sim_fp, source_trade_fp = (
+            _clean(value)
+            for value in _precomputed_source_fingerprints
+        )
+        if not source_sim_fp or not source_trade_fp:
+            raise CPUPostDraftReleaseError(
+                "Precomputed release fingerprints must contain both state branches."
+            )
     status = "pass" if not blockers and all(checks.values()) else "blocked"
 
     return CPUPostDraftReleasePreview(
@@ -492,6 +590,7 @@ def build_cpu_post_draft_release_preview(
         source_simulation_fingerprint=source_sim_fp,
         source_trade_fingerprint=source_trade_fp,
         controlled_teams=controlled,
+        require_non_rotation=bool(require_non_rotation),
         roster_count_before=len(roster_ids),
         roster_count_after=(len(roster_ids) - 1 if status == "pass" else len(roster_ids)),
         salary=fields["salary"],
@@ -542,8 +641,9 @@ def _prepare_simulation_release(
     simulation_state: Any,
     *,
     preview: CPUPostDraftReleasePreview,
+    copy_payload: bool = True,
 ) -> Any:
-    candidate = copy.deepcopy(simulation_state)
+    candidate = copy.deepcopy(simulation_state) if copy_payload else simulation_state
     teams = getattr(candidate, "teams", None)
     players = getattr(candidate, "players", None)
     if not isinstance(teams, dict) or not isinstance(players, dict):
@@ -673,8 +773,9 @@ def _apply_release_financials(
     trade_state: Any,
     *,
     preview: CPUPostDraftReleasePreview,
+    copy_payload: bool = True,
 ) -> Any:
-    candidate = copy.deepcopy(trade_state)
+    candidate = copy.deepcopy(trade_state) if copy_payload else trade_state
     ownership = getattr(candidate, "player_team_by_id", None)
     financials = getattr(candidate, "team_financials", None)
     if not isinstance(ownership, dict) or not isinstance(financials, dict):
@@ -694,6 +795,8 @@ def _apply_release_financials(
         _apply_numeric_delta(row, "team_salary", -salary)
         _apply_numeric_delta(row, "apron_salary", -salary)
     elif preview.financial_treatment in {
+        "conservative_full_current_salary_one_year_unknown_guarantee",
+        "conservative_generated_rookie_option_current_salary",
         "exact_full_current_salary_one_year_guarantee",
         "exact_explicit_dead_money",
         "exact_from_guaranteed_remaining",
@@ -719,6 +822,9 @@ def _apply_release_financials(
 def build_cpu_post_draft_release_candidate(
     checkpoint: Any,
     preview: CPUPostDraftReleasePreview,
+    *,
+    copy_payload: bool = True,
+    _defer_candidate_fingerprints: bool = False,
 ) -> CPUPostDraftReleaseCandidateResult:
     if preview.version != CPU_POST_DRAFT_RELEASE_VERSION:
         raise CPUPostDraftReleaseError("Release preview version is stale.")
@@ -734,11 +840,13 @@ def build_cpu_post_draft_release_candidate(
             "Checkpoint no longer exposes both durable state branches."
         )
 
-    if _simulation_fingerprint(source_sim) != preview.source_simulation_fingerprint:
+    current_simulation_fingerprint = _simulation_fingerprint(source_sim)
+    if current_simulation_fingerprint != preview.source_simulation_fingerprint:
         raise CPUPostDraftReleaseError(
             "Release preview is stale relative to SimulationState."
         )
-    if _trade_fingerprint(source_trade) != preview.source_trade_fingerprint:
+    current_trade_fingerprint = _trade_fingerprint(source_trade)
+    if current_trade_fingerprint != preview.source_trade_fingerprint:
         raise CPUPostDraftReleaseError(
             "Release preview is stale relative to TradeState."
         )
@@ -748,15 +856,29 @@ def build_cpu_post_draft_release_candidate(
         team=preview.team,
         player_id=preview.player_id,
         rationale=preview.rationale,
+        require_non_rotation=preview.require_non_rotation,
+        _precomputed_source_fingerprints=(
+            current_simulation_fingerprint,
+            current_trade_fingerprint,
+        ),
     )
     if rebuilt.status != "pass" or asdict(rebuilt) != asdict(preview):
         raise CPUPostDraftReleaseError(
             "Release preview no longer reproduces exactly at candidate-build time."
         )
 
+    # Capture the immutable comparison baseline before the optional in-place
+    # atomic-batch path mutates its already-disposable working clone.
+    trade_before = _financial_payload(source_trade, preview.team)
+    trade_transaction_count_before = len(
+        getattr(source_trade, "transaction_history", []) or []
+    )
+    revision_before = int(getattr(source_trade, "state_revision", 0) or 0)
+
     simulation_pre = _prepare_simulation_release(
         source_sim,
         preview=preview,
+        copy_payload=copy_payload,
     )
 
     from simulation_season_boundary_trade_reconciliation_v1 import (
@@ -766,7 +888,8 @@ def build_cpu_post_draft_release_candidate(
     simulation_candidate, trade_reconciled, reconciliation = (
         reconcile_trade_state_after_season_boundary(
             simulation_pre,
-            copy.deepcopy(source_trade),
+            copy.deepcopy(source_trade) if copy_payload else source_trade,
+            copy_payload=copy_payload,
         )
     )
     released = tuple(
@@ -780,15 +903,10 @@ def build_cpu_post_draft_release_candidate(
             "Ownership reconciliation did not release exactly the approved player."
         )
 
-    trade_before = _financial_payload(source_trade, preview.team)
-    trade_transaction_count_before = len(
-        getattr(source_trade, "transaction_history", []) or []
-    )
-    revision_before = int(getattr(source_trade, "state_revision", 0) or 0)
-
     trade_candidate = _apply_release_financials(
         trade_reconciled,
         preview=preview,
+        copy_payload=copy_payload,
     )
 
     revision_after = int(getattr(trade_candidate, "state_revision", 0) or 0)
@@ -832,8 +950,16 @@ def build_cpu_post_draft_release_candidate(
         preview=preview,
         simulation_candidate=simulation_candidate,
         trade_candidate=trade_candidate,
-        simulation_fingerprint=_simulation_fingerprint(simulation_candidate),
-        trade_fingerprint=_trade_fingerprint(trade_candidate),
+        simulation_fingerprint=(
+            ""
+            if _defer_candidate_fingerprints
+            else _simulation_fingerprint(simulation_candidate)
+        ),
+        trade_fingerprint=(
+            ""
+            if _defer_candidate_fingerprints
+            else _trade_fingerprint(trade_candidate)
+        ),
         released_player_ids=released,
         trade_revision_before=revision_before,
         trade_revision_after=revision_after,
@@ -900,6 +1026,7 @@ def commit_cpu_post_draft_release_clone_durably(
         team=preview.team,
         player_id=preview.player_id,
         rationale=preview.rationale,
+        require_non_rotation=preview.require_non_rotation,
     )
     if asdict(rebuilt) != asdict(preview):
         raise CPUPostDraftReleaseError(
@@ -1019,6 +1146,9 @@ def cpu_post_draft_release_contract_report() -> dict[str, Any]:
         ],
         "canonical_checkpoint_hard_blocked_in_clone_commit": True,
         "release_history_timestamp_excluded_from_fingerprint": True,
+        "preview_accepts_internal_precomputed_source_fingerprints": True,
+        "candidate_rechecks_source_before_internal_fingerprint_reuse": True,
+        "atomic_batch_can_defer_unused_candidate_fingerprints": True,
         "fingerprinted_release_history_fields": [
             "version",
             "transaction_id",
@@ -1034,5 +1164,8 @@ def cpu_post_draft_release_contract_report() -> dict[str, Any]:
         ],
         "fake_trade_history_allowed": False,
         "unknown_guarantee_release_allowed": False,
-        "generated_or_synthetic_release_allowed": False,
+        "one_year_unknown_guarantee_conservative_full_salary_allowed": True,
+        "multi_year_unknown_guarantee_release_allowed": False,
+        "current_or_unresolved_generated_rookie_release_allowed": False,
+        "older_generated_or_synthetic_release_allowed": True,
     }

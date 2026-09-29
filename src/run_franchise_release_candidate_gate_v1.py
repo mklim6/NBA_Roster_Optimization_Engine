@@ -373,6 +373,10 @@ def main() -> int:
             "deep_season_free_agency_performance_v2",
             "validate_franchise_deep_season_free_agency_performance_hotfix_v2.py",
         ),
+        (
+            "cpu_fa_durable_batch_hotfix_v1_0_1",
+            "validate_franchise_v2_cpu_fa_durable_batch_hotfix_v1_0_1.py",
+        ),
         ("draft_forfeiture_validation", "validate_franchise_draft_forfeitures_v1.py"),
         ("live_asset_ledger_validation", "validate_franchise_live_asset_ledger_v1.py"),
         ("morale_v3_0_2_validation", "validate_franchise_morale_v3_0_2_dnp_ui_hotfix.py"),
