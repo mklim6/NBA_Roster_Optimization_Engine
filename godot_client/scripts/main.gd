@@ -36,6 +36,7 @@ var roster_payroll_value: Label
 var roster_cap_value: Label
 var roster_chemistry_value: Label
 var roster_rows: VBoxContainer
+var player_detail_overlay: Control
 
 var header_subtitle: Label
 var team_name_label: Label
@@ -466,12 +467,18 @@ func _roster_row(player: Dictionary) -> Control:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.add_theme_stylebox_override("panel", _box(PANEL_ALT, 7, BORDER))
+	panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.tooltip_text = "Open %s player profile" % str(player.get("name", "player"))
+	panel.gui_input.connect(_on_roster_row_input.bind(player))
 
 	var margin := MarginContainer.new()
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_set_margins(margin, 10, 7, 10, 7)
 	panel.add_child(margin)
 
 	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_theme_constant_override("separation", 8)
 	margin.add_child(row)
 
@@ -511,6 +518,279 @@ func _roster_row(player: Dictionary) -> Control:
 	return panel
 
 
+func _on_roster_row_input(event: InputEvent, player: Dictionary) -> void:
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		if mouse_event.button_index == MOUSE_BUTTON_LEFT and mouse_event.pressed:
+			_show_player_detail(player)
+
+
+func _show_player_detail(player: Dictionary) -> void:
+	_close_player_detail()
+
+	player_detail_overlay = Control.new()
+	player_detail_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	player_detail_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(player_detail_overlay)
+	player_detail_overlay.move_to_front()
+
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.72)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	player_detail_overlay.add_child(dim)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var center := CenterContainer.new()
+	center.mouse_filter = Control.MOUSE_FILTER_PASS
+	player_detail_overlay.add_child(center)
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var card := _card(Vector2(940, 650))
+	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	center.add_child(card)
+
+	var body := _card_body(card, 20)
+	body.add_theme_constant_override("separation", 14)
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 14)
+	body.add_child(header)
+
+	var title_box := VBoxContainer.new()
+	title_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_box.add_theme_constant_override("separation", 3)
+	header.add_child(title_box)
+
+	var player_name := Label.new()
+	player_name.text = str(player.get("name", "Unknown Player"))
+	player_name.add_theme_color_override("font_color", TEXT)
+	player_name.add_theme_font_size_override("font_size", 28)
+	title_box.add_child(player_name)
+
+	var subtitle := Label.new()
+	subtitle.text = "%s  •  Age %s  •  OVR %s  •  POT %s  •  %s" % [
+		str(player.get("position", "")),
+		_number_text(player.get("age", null), 1),
+		_number_text(player.get("overall", null), 1),
+		_number_text(player.get("potential", null), 1),
+		str(player.get("development_direction", ""))
+	]
+	subtitle.add_theme_color_override("font_color", MUTED)
+	subtitle.add_theme_font_size_override("font_size", 12)
+	title_box.add_child(subtitle)
+
+	var close_button := _action_button("CLOSE")
+	close_button.pressed.connect(_close_player_detail)
+	header.add_child(close_button)
+
+	var tags := HBoxContainer.new()
+	tags.add_theme_constant_override("separation", 8)
+	body.add_child(tags)
+
+	if bool(player.get("is_starter", false)):
+		tags.add_child(_pill("STARTER", ACCENT))
+	elif bool(player.get("in_rotation", false)):
+		tags.add_child(_pill("ROTATION", GOOD))
+	else:
+		tags.add_child(_pill("RESERVE", MUTED))
+
+	var health = player.get("health", {})
+	var health_status := str(health.get("status", "unknown"))
+	tags.add_child(
+		_pill(
+			str(health.get("display", "Unknown")),
+			GOOD if health_status == "healthy" else BAD
+		)
+	)
+
+	var morale = player.get("morale", {})
+	var morale_status := str(morale.get("status", "Unknown"))
+	var morale_color := MUTED
+	if morale_status in ["Happy", "Thriving", "Content"]:
+		morale_color = GOOD
+	elif morale_status in ["Frustrated", "Angry", "Demanding Trade"]:
+		morale_color = BAD
+	tags.add_child(_pill(morale_status, morale_color))
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(scroll)
+
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 12)
+	scroll.add_child(content)
+
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 12)
+	content.add_child(grid)
+
+	var stats = player.get("season_stats", {})
+	grid.add_child(
+		_detail_card(
+			"SEASON PRODUCTION",
+			[
+				"PPG   %s" % _number_text(stats.get("ppg", null), 1),
+				"RPG   %s" % _number_text(stats.get("rpg", null), 1),
+				"APG   %s" % _number_text(stats.get("apg", null), 1),
+				"MPG   %s" % _number_text(stats.get("mpg", null), 1),
+				"SPG   %s" % _number_text(stats.get("spg", null), 1),
+				"BPG   %s" % _number_text(stats.get("bpg", null), 1),
+				"FG%%   %s" % _pct_text(stats.get("fg_pct", null)),
+				"3P%%   %s" % _pct_text(stats.get("three_pct", null)),
+				"FT%%   %s" % _pct_text(stats.get("ft_pct", null)),
+				"GP / GS   %s / %s" % [
+					str(stats.get("games_played", 0)),
+					str(stats.get("games_started", 0))
+				]
+			]
+		)
+	)
+
+	var contract = player.get("contract", {})
+	var contract_lines := [
+		"Role   %s" % str(player.get("role", "")),
+		"Target minutes   %s" % _number_text(player.get("target_minutes", 0), 0),
+		"Salary   %s" % str(contract.get("salary_display", "N/A")),
+		"Years remaining   %s" % str(contract.get("years_remaining", 0)),
+		"Contract status   %s" % _pretty_phase(str(contract.get("status", ""))),
+		"Option   %s" % _friendly_value(str(contract.get("option_type", ""))),
+		"Rotation order   %s" % _friendly_value(str(player.get("rotation_order", "")))
+	]
+	grid.add_child(_detail_card("ROLE + CONTRACT", contract_lines))
+
+	var morale_reasons := ""
+	for reason in morale.get("reasons", []):
+		if morale_reasons != "":
+			morale_reasons += "\n"
+		morale_reasons += "• " + str(reason)
+
+	if morale_reasons == "":
+		morale_reasons = "No active morale concerns."
+
+	grid.add_child(
+		_detail_card(
+			"MORALE",
+			[
+				"Status   %s" % morale_status,
+				"Score   %s" % _number_text(morale.get("score", null), 1),
+				"Role satisfaction   %s" % _number_text(morale.get("role_satisfaction", null), 1),
+				"Expected role   %s" % _friendly_value(str(morale.get("expected_role", ""))),
+				"Recent minutes   %s" % _number_text(morale.get("recent_minutes", null), 1),
+				"Trade request risk   %s%%" % _number_text(morale.get("trade_request_risk", null), 1),
+				"Trade status   %s" % _friendly_value(str(morale.get("trade_request_status", ""))),
+				morale_reasons
+			]
+		)
+	)
+
+	var health_lines := [
+		"Status   %s" % str(health.get("display", "Unknown")),
+		"Fatigue   %s" % _number_text(health.get("fatigue", null), 1),
+		"Durability   %s" % _ratio_pct_text(health.get("durability", null)),
+		"Risk tier   %s" % _friendly_value(str(health.get("risk_tier", ""))),
+		"Games missed   %s" % str(health.get("season_games_missed", 0)),
+		"Injuries suffered   %s" % str(health.get("injuries_suffered", 0))
+	]
+
+	var expected_return := int(health.get("expected_return_day", 0))
+	if expected_return > 0:
+		health_lines.append("Expected return day   %s" % expected_return)
+
+	var health_notes := str(health.get("notes", ""))
+	if health_notes != "":
+		health_lines.append(health_notes)
+
+	var risk_explanation := str(health.get("risk_explanation", ""))
+	if risk_explanation != "":
+		health_lines.append(risk_explanation)
+
+	grid.add_child(_detail_card("HEALTH + WORKLOAD", health_lines))
+
+	grid.add_child(
+		_detail_card(
+			"DEVELOPMENT",
+			[
+				"Overall   %s" % _number_text(player.get("overall", null), 1),
+				"Potential   %s" % _number_text(player.get("potential", null), 1),
+				"Future outlook   %s" % _number_text(player.get("future_outlook", null), 1),
+				"Direction   %s" % _friendly_value(str(player.get("development_direction", ""))),
+				"Age   %s" % _number_text(player.get("age", null), 1),
+				"Generated prospect   %s" % ("Yes" if bool(player.get("generated_prospect", false)) else "No")
+			]
+		)
+	)
+
+	var skills = player.get("skills", {})
+	grid.add_child(
+		_detail_card(
+			"SKILL RATINGS",
+			[
+				"Scoring   %s" % _number_text(skills.get("scoring_rating", null), 1),
+				"Shooting   %s" % _number_text(skills.get("shooting_rating", null), 1),
+				"Playmaking   %s" % _number_text(skills.get("playmaking_rating", null), 1),
+				"Rebounding   %s" % _number_text(skills.get("rebounding_rating", null), 1),
+				"Defense   %s" % _number_text(skills.get("defense_rating", null), 1),
+				"Efficiency   %s" % _number_text(skills.get("efficiency_rating", null), 1),
+				"Availability   %s" % _number_text(skills.get("availability_rating", null), 1)
+			]
+		)
+	)
+
+	var footer := Label.new()
+	footer.text = "READ-ONLY PLAYER PROFILE • Data comes from the active V2 franchise checkpoint."
+	footer.add_theme_color_override("font_color", MUTED)
+	footer.add_theme_font_size_override("font_size", 10)
+	content.add_child(footer)
+
+
+func _detail_card(title_text: String, lines: Array) -> Control:
+	var card := _card(Vector2(0, 0))
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var body := _card_body(card, 14)
+
+	body.add_child(_small_label(title_text, ACCENT))
+
+	for line in lines:
+		var label := Label.new()
+		label.text = str(line)
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.add_theme_color_override("font_color", TEXT)
+		label.add_theme_font_size_override("font_size", 11)
+		body.add_child(label)
+
+	return card
+
+
+func _close_player_detail() -> void:
+	if player_detail_overlay != null and is_instance_valid(player_detail_overlay):
+		player_detail_overlay.queue_free()
+	player_detail_overlay = null
+
+
+func _friendly_value(value: String) -> String:
+	if value == "" or value == "None" or value == "null":
+		return "None"
+	return value.replace("_", " ").capitalize()
+
+
+func _pct_text(value) -> String:
+	if value == null:
+		return "N/A"
+	return "%.1f%%" % float(value)
+
+
+func _ratio_pct_text(value) -> String:
+	if value == null:
+		return "N/A"
+	return "%.1f%%" % (float(value) * 100.0)
+
+
 func _roster_cell(
 	text_value: String,
 	width: int,
@@ -518,6 +798,7 @@ func _roster_cell(
 	alignment: int = HORIZONTAL_ALIGNMENT_LEFT
 ) -> Label:
 	var label := Label.new()
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.custom_minimum_size = Vector2(width, 0)
 	label.text = text_value
 	label.horizontal_alignment = alignment
@@ -874,7 +1155,7 @@ func _apply_roster_payload(payload: Dictionary) -> void:
 	roster_cap_value.text = str(financial.get("cap_room_estimate_display", "N/A"))
 	roster_chemistry_value.text = _number_text(chemistry.get("score", null), 1)
 
-	roster_status.text = "%s active • %s inactive • %s starters • %s rotation • %s injured" % [
+	roster_status.text = "%s active • %s inactive • %s starters • %s rotation • %s injured • Click a player for full profile" % [
 		str(team.get("active_players", "?")),
 		str(team.get("inactive_players", "?")),
 		str(team.get("starters", "?")),
