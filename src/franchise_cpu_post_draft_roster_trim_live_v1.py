@@ -307,12 +307,21 @@ def build_atomic_cpu_post_draft_trim_candidate(
         )
 
     for item, selected in release_plan:
+        # Preview construction and candidate construction execute back-to-back
+        # against the same disposable working checkpoint. Compute the two
+        # mature-state fingerprints once and pass the exact evidence through
+        # both safety gates instead of rescanning both full state branches.
+        source_release_fingerprints = (
+            release._simulation_fingerprint(working.simulation_state),
+            release._trade_fingerprint(working.trade_state),
+        )
         release_preview = release.build_cpu_post_draft_release_preview(
             working,
             team=item.team,
             player_id=selected.player_id,
             rationale=selected.score_rationale,
             require_non_rotation=False,
+            _precomputed_source_fingerprints=source_release_fingerprints,
         )
         if (
             release_preview.status != "pass"
@@ -339,6 +348,10 @@ def build_atomic_cpu_post_draft_trim_candidate(
             # before persistence. Per-release candidate fingerprints are not
             # consumed here, so avoid two full mature-state scans per cut.
             _defer_candidate_fingerprints=True,
+            # No mutation occurs between the preview and candidate safety gate,
+            # so reuse the exact pair of source fingerprints already verified
+            # above instead of rescanning SimulationState and TradeState.
+            _precomputed_source_fingerprints=source_release_fingerprints,
         )
         working = _checkpoint_like(
             working,
@@ -502,7 +515,7 @@ def commit_atomic_cpu_post_draft_trim_live(
     reason = "cpu-post-draft-roster-trim-atomic-batch-" + str(len(candidate.released_player_ids))
     rollback = False
     try:
-        cp.save_franchise_checkpoint(
+        reloaded = cp.save_franchise_checkpoint(
             candidate.simulation_state,
             candidate.trade_state,
             preferences=candidate.preferences,
@@ -510,15 +523,18 @@ def commit_atomic_cpu_post_draft_trim_live(
             path=path,
             # The batch candidate already owns a disposable, fully isolated
             # clone and is never mutated after this call. Re-copying years of
-            # completed franchise history here adds no isolation; the atomic
-            # writer and mandatory semantic reload below remain authoritative.
+            # completed franchise history here adds no isolation.
             copy_payload=False,
+            # The exact source checkpoint and raw-file SHA are already known
+            # inside this atomic transaction. Reuse that evidence so the writer
+            # does not reload the same mature checkpoint before the write.
+            _existing_checkpoint=checkpoint,
+            _expected_existing_sha256=source_hash,
+            # save_franchise_checkpoint performs its own semantic reload after
+            # the atomic write. Reuse that verified object instead of loading
+            # the same checkpoint a second time immediately afterward.
+            _return_verified=True,
         )
-        reloaded = cp.load_franchise_checkpoint(path=path, allow_backup=False)
-        if reloaded is None:
-            raise CPUPostDraftRosterTrimLiveError(
-                "Post-Draft trim checkpoint reload returned no state."
-            )
         observed_target = durable.checkpoint_boundary_fingerprint(reloaded)
         if observed_target != candidate.target_fingerprint:
             raise CPUPostDraftRosterTrimLiveError(

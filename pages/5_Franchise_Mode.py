@@ -547,10 +547,6 @@ from simulation_postseason_v1 import (  # noqa: E402
 
 
 
-    simulate_postseason_game,
-
-
-
 )
 
 
@@ -843,6 +839,9 @@ from franchise_game_day_broadcast_v1 import (  # noqa: E402
     inject_game_day_broadcast_visuals_v1,
     render_game_day_broadcast_v1,
     render_game_day_final_v1,
+)
+from franchise_coaching_game_day_ui_v1 import (  # noqa: E402
+    render_game_day_coaching_plan_v1,
 )
 from franchise_visual_overhaul_v3 import (  # noqa: E402
     inject_franchise_visual_overhaul_v3,
@@ -9515,155 +9514,11 @@ def render_postseason_next_game_controls(
 
 
 
-    preview_key = (
-
-
-
-        f"{key_prefix}_postseason_preview"
-
-
-
-    )
-
-
-
-    preview_request_key = (
-
-
-
-        f"{key_prefix}_postseason_"
-
-
-
-        "preview_request"
-
-
-
-    )
-
-
-
-    preview = st.session_state.get(
-
-
-
-        preview_key
-
-
-
-    )
-
-
-
-    preview_request = (
-
-
-
-        st.session_state.get(
-
-
-
-            preview_request_key
-
-
-
-        )
-
-
-
-    )
-
-
-
-
-
-
-
-    current_postseason_preview_request = {
-
-
-
-        "game_id": game.game_id,
-
-
-
-        "sit_ids": tuple(sorted(sit_ids)),
-
-
-
-    }
-
-
-
-    if (
-
-
-
-        preview is not None
-
-
-
-        and preview_request
-
-
-
-        != current_postseason_preview_request
-
-
-
-    ):
-
-
-
-        st.session_state.pop(
-
-
-
-            preview_key,
-
-
-
-            None,
-
-
-
-        )
-
-
-
-        st.session_state.pop(
-
-
-
-            preview_request_key,
-
-
-
-            None,
-
-
-
-        )
-
-
-
-        preview = None
-
-
-
-        preview_request = None
-
-
-
-
-
-
-
     action_count = (
 
 
 
-        4
+        3
 
 
 
@@ -9671,7 +9526,7 @@ def render_postseason_next_game_controls(
 
 
 
-        else 2
+        else 1
 
 
 
@@ -9691,39 +9546,7 @@ def render_postseason_next_game_controls(
 
 
 
-    preview_clicked = actions[0].button(
-
-
-
-        "What-if preview",
-
-
-
-        width="stretch",
-
-
-
-        key=(
-
-
-
-            f"{key_prefix}_preview_"
-
-
-
-            "postseason_game"
-
-
-
-        ),
-
-
-
-    )
-
-
-
-    quick_clicked = actions[1].button(
+    quick_clicked = actions[0].button(
 
 
 
@@ -9783,7 +9606,7 @@ def render_postseason_next_game_controls(
 
 
 
-            actions[2].button(
+            actions[1].button(
 
 
 
@@ -9827,7 +9650,7 @@ def render_postseason_next_game_controls(
 
 
 
-            actions[3].button(
+            actions[2].button(
 
 
 
@@ -9864,110 +9687,6 @@ def render_postseason_next_game_controls(
 
 
         )
-
-
-
-
-
-
-
-    if preview_clicked:
-
-
-
-        try:
-
-
-
-            preview = simulate_postseason_game(
-
-
-
-                state,
-
-
-
-                game.game_id,
-
-
-
-                sit_player_ids=(
-
-
-
-                    tuple(sit_ids)
-
-
-
-                ),
-
-
-
-            )
-
-
-
-        except (
-
-
-
-            SimulationPostseasonError,
-
-
-
-            SingleGameSimulationError,
-
-
-
-            SimulationLeagueStateError,
-
-
-
-        ) as exc:
-
-
-
-            st.error(str(exc))
-
-
-
-        else:
-
-
-
-            st.session_state[
-
-
-
-                preview_key
-
-
-
-            ] = preview
-
-
-
-            st.session_state[
-
-
-
-                preview_request_key
-
-
-
-            ] = current_postseason_preview_request
-
-
-
-            preview_request = (
-
-
-
-                current_postseason_preview_request
-
-
-
-            )
 
 
 
@@ -10056,39 +9775,6 @@ def render_postseason_next_game_controls(
 
 
         else:
-
-
-
-            st.session_state.pop(
-
-
-
-                preview_key,
-
-
-
-                None,
-
-
-
-            )
-
-
-
-            st.session_state.pop(
-
-
-
-                preview_request_key,
-
-
-
-                None,
-
-
-
-            )
-
 
 
             st.session_state[
@@ -10330,39 +10016,6 @@ def render_postseason_next_game_controls(
         else:
 
 
-
-            st.session_state.pop(
-
-
-
-                preview_key,
-
-
-
-                None,
-
-
-
-            )
-
-
-
-            st.session_state.pop(
-
-
-
-                preview_request_key,
-
-
-
-                None,
-
-
-
-            )
-
-
-
             st.session_state[
 
 
@@ -10392,113 +10045,6 @@ def render_postseason_next_game_controls(
 
 
             st.rerun()
-
-
-
-
-
-
-
-    preview = st.session_state.get(
-
-
-
-        preview_key
-
-
-
-    )
-
-
-
-    preview_request = (
-
-
-
-        st.session_state.get(
-
-
-
-            preview_request_key
-
-
-
-        )
-
-
-
-    )
-
-
-
-
-
-
-
-    if (
-
-
-
-        preview is not None
-
-
-
-        and preview_request
-
-
-
-        == current_postseason_preview_request
-
-
-
-    ):
-
-
-
-        st.markdown("### What-If Result")
-
-
-
-        st.info(
-
-
-
-            "Sandbox result only. It has not been added to the "
-
-
-
-            "postseason bracket, player totals, fatigue, or injuries."
-
-
-
-        )
-
-
-
-        render_completed_postseason_game(
-
-
-
-            state,
-
-
-
-            game,
-
-
-
-            preview.game,
-
-
-
-        )
-
-
-
-
-
-
-
 
 
 
@@ -24760,6 +24306,21 @@ if active_section == "Team Management":
         player_headshot_resolver=player_headshot_url,
     )
 
+    # FRANCHISE_V2_USER_TWO_WAY_MANAGEMENT_V1
+    from franchise_user_two_way_management_v1 import (
+        render_user_two_way_management_v1,
+    )
+
+    render_user_two_way_management_v1(
+        state=state,
+        trade_state=trade_state,
+        team_code=active_team,
+        controlled_teams=controlled_teams,
+        preferences=franchise_checkpoint_preferences(),
+        disabled=trade_sync_required,
+    )
+    st.divider()
+
 
 
     st.subheader(
@@ -27275,6 +26836,14 @@ if active_section == "Game Day":
 
 
 
+            # FRANCHISE_COACHING_GAME_DAY_UI_V1
+            render_game_day_coaching_plan_v1(
+                state=state,
+                game=current_game,
+                active_team=active_team,
+                sit_player_ids=tuple(sit_ids),
+            )
+
             if not st.session_state.get(FRANCHISE_GAME_ARCHIVE_SESSION_KEY):
                 render_latest_committed_game(state, active_team=active_team)
 
@@ -27789,486 +27358,6 @@ if active_section == "Game Day":
 
 
 
-
-
-
-            current_preview_request = {
-
-
-
-                "game_id": current_game.game_id,
-
-
-
-                "sit_ids": tuple(sorted(sit_ids)),
-
-
-
-                "fingerprint": (
-
-
-
-                    regular_season_state_fingerprint(state)
-
-
-
-                ),
-
-
-
-            }
-
-
-
-            stored_preview = st.session_state.get(
-
-
-
-                "franchise_game_preview"
-
-
-
-            )
-
-
-
-            stored_request = st.session_state.get(
-
-
-
-                "franchise_game_preview_request"
-
-
-
-            )
-
-
-
-            if (
-
-
-
-                stored_preview is not None
-
-
-
-                and stored_request
-
-
-
-                != current_preview_request
-
-
-
-            ):
-
-
-
-                clear_game_day_preview()
-
-
-
-                stored_preview = None
-
-
-
-                stored_request = None
-
-
-
-
-
-
-
-            with st.expander(
-
-
-
-                "Advanced What-If Lab",
-
-
-
-                expanded=False,
-
-
-
-            ):
-
-
-
-                st.caption(
-
-
-
-                    "This optional sandbox does not affect the season. "
-
-
-
-                    "Use it to compare a lineup or rest decision. Changing "
-
-
-
-                    "the selected players immediately invalidates the old result."
-
-
-
-                )
-
-
-
-                what_if_clicked = st.button(
-
-
-
-                    "Run what-if simulation",
-
-
-
-                    width="stretch",
-
-
-
-                    disabled=trade_sync_required,
-
-
-
-                    key=(
-
-
-
-                        "franchise_what_if_"
-
-
-
-                        f"{current_game.game_id}"
-
-
-
-                    ),
-
-
-
-                )
-
-
-
-                if what_if_clicked:
-
-
-
-                    try:
-
-
-
-                        stored_preview = simulate_scheduled_game(
-
-
-
-                            state,
-
-
-
-                            current_game.game_id,
-
-
-
-                            commit=False,
-
-
-
-                            sit_player_ids=tuple(sit_ids),
-
-
-
-                        )
-
-
-
-                    except (
-
-
-
-                        SingleGameSimulationError,
-
-
-
-                        SimulationLeagueStateError,
-
-
-
-                    ) as exc:
-
-
-
-                        st.error(str(exc))
-
-
-
-                    else:
-
-
-
-                        st.session_state[
-
-
-
-                            "franchise_game_preview"
-
-
-
-                        ] = stored_preview
-
-
-
-                        st.session_state[
-
-
-
-                            "franchise_game_preview_request"
-
-
-
-                        ] = current_preview_request
-
-
-
-                        stored_request = current_preview_request
-
-
-
-
-
-
-
-                if (
-
-
-
-                    stored_preview is not None
-
-
-
-                    and stored_request
-
-
-
-                    == current_preview_request
-
-
-
-                ):
-
-
-
-                    completed = stored_preview.game
-
-
-
-                    st.info(
-
-
-
-                        "What-if result only. It has not been added "
-
-
-
-                        "to standings, stats, fatigue, or injuries."
-
-
-
-                    )
-
-
-
-                    score_columns = st.columns([1, 1, 1])
-
-
-
-                    score_columns[0].metric(
-
-
-
-                        completed.away_team,
-
-
-
-                        completed.away_score,
-
-
-
-                    )
-
-
-
-                    score_columns[1].metric(
-
-
-
-                        "OT",
-
-
-
-                        completed.overtime_periods,
-
-
-
-                    )
-
-
-
-                    score_columns[2].metric(
-
-
-
-                        completed.home_team,
-
-
-
-                        completed.home_score,
-
-
-
-                    )
-
-
-
-                    st.dataframe(
-
-
-
-                        box_score_dataframe(state, completed),
-
-
-
-                        hide_index=True,
-
-
-
-                        width="stretch",
-
-
-
-                    )
-
-
-
-                    if (
-
-
-
-                        stored_preview.health_update is not None
-
-
-
-                        and stored_preview.health_update.injury_events
-
-
-
-                    ):
-
-
-
-                        st.warning(
-
-
-
-                            "Sandbox medical outcome. This event is not saved."
-
-
-
-                        )
-
-
-
-                        st.dataframe(
-
-
-
-                            pd.DataFrame(
-
-
-
-                                [
-
-
-
-                                    {
-
-
-
-                                        "Player": event.player_name,
-
-
-
-                                        "Team": event.team,
-
-
-
-                                        "Injury": event.injury_type,
-
-
-
-                                        "Severity": event.severity.title(),
-
-
-
-                                        "Status": event.status
-
-
-
-                                        .replace("_", " ")
-
-
-
-                                        .title(),
-
-
-
-                                        "Estimated Games": (
-
-
-
-                                            event.estimated_games_missed
-
-
-
-                                        ),
-
-
-
-                                        "Why": event.explanation,
-
-
-
-                                    }
-
-
-
-                                    for event in stored_preview
-
-
-
-                                    .health_update.injury_events
-
-
-
-                                ]
-
-
-
-                            ),
-
-
-
-                            hide_index=True,
-
-
-
-                            width="stretch",
-
-
-
-                        )
 
 
 
@@ -30507,139 +29596,11 @@ if active_section == "League & Offseason":
 
 
 
-                next_game_key = (
-
-
-
-                    "franchise_postseason_preview"
-
-
-
-                )
-
-
-
-                preview = st.session_state.get(
-
-
-
-                    next_game_key
-
-
-
-                )
-
-
-
-
-
-
-
-                if (
-
-
-
-                    preview is not None
-
-
-
-                    and getattr(
-
-
-
-                        preview.metadata,
-
-
-
-                        "game_id",
-
-
-
-                        "",
-
-
-
-                    )
-
-
-
-                    != next_game.game_id
-
-
-
-                ):
-
-
-
-                    st.session_state.pop(
-
-
-
-                        next_game_key,
-
-
-
-                        None,
-
-
-
-                    )
-
-
-
-                    preview = None
-
-
-
-
-
-
-
                 game_actions = st.columns(
 
 
 
-                    [1, 1, 1, 1]
-
-
-
-                )
-
-
-
-                preview_clicked = (
-
-
-
-                    game_actions[0].button(
-
-
-
-                        "What-if next game",
-
-
-
-                        width="stretch",
-
-
-
-                        key=(
-
-
-
-                            "franchise_preview_"
-
-
-
-                            "postseason_game"
-
-
-
-                        ),
-
-
-
-                    )
+                    [1, 1, 1]
 
 
 
@@ -30651,7 +29612,7 @@ if active_section == "League & Offseason":
 
 
 
-                    game_actions[1].button(
+                    game_actions[0].button(
 
 
 
@@ -30699,7 +29660,7 @@ if active_section == "League & Offseason":
 
 
 
-                    game_actions[2].button(
+                    game_actions[1].button(
 
 
 
@@ -30743,7 +29704,7 @@ if active_section == "League & Offseason":
 
 
 
-                    game_actions[3].button(
+                    game_actions[2].button(
 
 
 
@@ -30780,78 +29741,6 @@ if active_section == "League & Offseason":
 
 
                 )
-
-
-
-
-
-
-
-                if preview_clicked:
-
-
-
-                    try:
-
-
-
-                        preview = (
-
-
-
-                            simulate_postseason_game(
-
-
-
-                                state,
-
-
-
-                                next_game.game_id,
-
-
-
-                            )
-
-
-
-                        )
-
-
-
-                    except (
-
-
-
-                        SimulationPostseasonError,
-
-
-
-                        SingleGameSimulationError,
-
-
-
-                    ) as exc:
-
-
-
-                        st.error(str(exc))
-
-
-
-                    else:
-
-
-
-                        st.session_state[
-
-
-
-                            next_game_key
-
-
-
-                        ] = preview
 
 
 
@@ -30940,23 +29829,6 @@ if active_section == "League & Offseason":
 
 
                     else:
-
-
-
-                        st.session_state.pop(
-
-
-
-                            next_game_key,
-
-
-
-                            None,
-
-
-
-                        )
-
 
 
                         st.session_state[
@@ -31178,23 +30050,6 @@ if active_section == "League & Offseason":
                     else:
 
 
-
-                        st.session_state.pop(
-
-
-
-                            next_game_key,
-
-
-
-                            None,
-
-
-
-                        )
-
-
-
                         if (
 
 
@@ -31312,158 +30167,6 @@ if active_section == "League & Offseason":
 
 
                         st.rerun()
-
-
-
-
-
-
-
-                preview = st.session_state.get(
-
-
-
-                    next_game_key
-
-
-
-                )
-
-
-
-
-
-
-
-                if preview is not None:
-
-
-
-                    completed = preview.game
-
-
-
-                    st.markdown("### What-If Result")
-
-
-
-                    st.info(
-
-
-
-                        "Sandbox result only. It is not part of the "
-
-
-
-                        "postseason until you use Simulate & commit."
-
-
-
-                    )
-
-
-
-                    score_columns = st.columns(
-
-
-
-                        [2, 1, 2]
-
-
-
-                    )
-
-
-
-                    score_columns[0].metric(
-
-
-
-                        completed.away_team,
-
-
-
-                        completed.away_score,
-
-
-
-                    )
-
-
-
-                    score_columns[1].markdown(
-
-
-
-                        "<h3 style='text-align:center;'>FINAL</h3>",
-
-
-
-                        unsafe_allow_html=True,
-
-
-
-                    )
-
-
-
-                    score_columns[2].metric(
-
-
-
-                        completed.home_team,
-
-
-
-                        completed.home_score,
-
-
-
-                    )
-
-
-
-                    st.dataframe(
-
-
-
-                        box_score_dataframe(
-
-
-
-                            state,
-
-
-
-                            completed,
-
-
-
-                        ),
-
-
-
-                        hide_index=True,
-
-
-
-                        width="stretch",
-
-
-
-                    )
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

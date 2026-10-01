@@ -25,7 +25,17 @@ from simulation_season_transition_controller_v1 import (
     transition_source_fingerprint,
 )
 from franchise_free_agency_live_signing_v1 import (
+    controlled_teams_from_durable_checkpoint,
     trade_state_fingerprint,
+)
+from franchise_cpu_two_way_roster_completion_v1 import (
+    complete_cpu_two_way_rosters_at_boundary,
+)
+from franchise_undrafted_rookie_free_agent_v1 import (
+    materialize_undrafted_rookie_free_agents_after_transition,
+)
+from franchise_free_agent_population_ecology_v1 import (
+    apply_free_agent_population_ecology_at_boundary,
 )
 
 SEASON_BOUNDARY_DURABLE_TRANSITION_VERSION = (
@@ -217,9 +227,42 @@ def build_atomic_season_boundary_candidate(
         expected_target_season=expected_target_season,
     )
 
+    # FRANCHISE_V2_FREE_AGENT_POPULATION_ECOLOGY_V1
+    # Career retirement already ran inside the transition adapter.  Before the
+    # new undrafted class is materialized, bound only the genuine long-term
+    # free-agent market so fringe unsigned players do not accumulate forever.
+    # ``transitioned_state`` is already a disposable candidate owned by this
+    # atomic boundary, so no extra whole-league deepcopy is needed here.
+    ecology_state, _population_ecology = (
+        apply_free_agent_population_ecology_at_boundary(
+            transitioned_state,
+            copy_payload=False,
+        )
+    )
+
+    # The Draft engine generates a deeper 80-player class than the 60 selected
+    # prospects. Materialize the undrafted remainder as real rookie free agents
+    # only after the season transition and population ecology, so rookies do not
+    # receive a pre-rookie development cycle and are protected from same-boundary
+    # attrition. The two-way market can then evaluate this fresh supply normally.
+    undrafted_state, _undrafted_completion = (
+        materialize_undrafted_rookie_free_agents_after_transition(
+            ecology_state,
+        )
+    )
+
+    # Standard Free Agency and post-Draft trimming deliberately operate only on
+    # standard contracts. Fill separate CPU two-way slots once that work is
+    # complete, immediately before TradeState reconciliation so the financial
+    # and ownership ledgers observe the final regular-season roster structure.
+    two_way_state, _two_way_completion = complete_cpu_two_way_rosters_at_boundary(
+        undrafted_state,
+        controlled_teams=controlled_teams_from_durable_checkpoint(checkpoint),
+    )
+
     reconciled_state, reconciled_trade, reconciliation = (
         reconcile_trade_state_after_season_boundary(
-            transitioned_state,
+            two_way_state,
             checkpoint.trade_state,
         )
     )

@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 TARGET = SRC / "franchise_free_agency_cpu_execution_v1.py"
 ACTIVE = ROOT / "outputs" / "runtime" / "franchise_mode_checkpoint_v1.pkl.gz"
-EXPECTED_SHA256 = "679dd6cbc91f8ae9bbbdb6d97de715b00d00d879bef020a0bbf6c5843a34657e"
+EXPECTED_SHA256 = "6a9162dc06acf2f512c95ec7161f4cad4b2a7aac2409b5f9b1d38068a8631878"
 
 
 def sha256(path: Path) -> str:

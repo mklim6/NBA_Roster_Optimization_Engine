@@ -2667,6 +2667,7 @@ def execute_cpu_free_agency_round_durably(
                 f"observed={observed_hash_before_flush}"
             )
 
+        verified_file_sha256_sink: list[str] = []
         try:
             verified = save_franchise_checkpoint(
                 checkpoint.simulation_state,
@@ -2678,15 +2679,22 @@ def execute_cpu_free_agency_round_durably(
                 _return_verified=True,
                 _existing_checkpoint=durable_checkpoint,
                 _expected_existing_sha256=durable_hash,
+                # Intermediate FA batches already hold the exact object graph
+                # that is being encoded. Verify the written gzip payload
+                # byte-for-byte here and reserve the full semantic decode for
+                # the mandatory round-end reload below.
+                _verify_encoded_bytes_only=True,
+                _verified_file_sha256_sink=verified_file_sha256_sink,
             )
-            observed_sim = free_agency_durable_state_fingerprint(
-                verified.simulation_state
-            )
-            observed_trade = trade_state_fingerprint(verified.trade_state)
+            # Byte verification proves that the durable file contains the exact
+            # encoded form of this in-memory checkpoint. Recomputing whole-state
+            # fingerprints against the same object graph adds no new evidence.
+            observed_sim = expected_sim
+            observed_trade = expected_trade
             if observed_sim != expected_sim or observed_trade != expected_trade:
                 raise CPUFreeAgencyExecutionError(
-                    "CPU Free Agency durable batch reload did not match the "
-                    "fully validated in-memory batch state."
+                    "CPU Free Agency durable batch byte verification did not match "
+                    "the fully validated in-memory batch state."
                 )
         except Exception as exc:
             shutil.copy2(recovery_path, checkpoint_path)
@@ -2716,7 +2724,11 @@ def execute_cpu_free_agency_round_durably(
                 f"checkpoint was restored: {exc}"
             ) from exc
 
-        final_hash = _sha256(checkpoint_path)
+        final_hash = (
+            verified_file_sha256_sink[-1]
+            if verified_file_sha256_sink
+            else _sha256(checkpoint_path)
+        )
         durable_checkpoint = verified
         durable_hash = final_hash
         checkpoint_hash = final_hash

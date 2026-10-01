@@ -397,14 +397,16 @@ def main() -> int:
             and "then reveals the result" in page_text
             and "render_game_day_final_v1(" in page_text
         ),
-        "what_if_lab_is_separate": (
-            "Advanced What-If Lab" in page_text
-            and "What-if result only" in page_text
-            and "Commit previewed result" not in page_text
+        "advanced_what_if_ui_removed": (
+            "Advanced What-If Lab" not in page_text
+            and "Run what-if simulation" not in page_text
+            and "What-if result only" not in page_text
+            and "Sandbox medical outcome" not in page_text
         ),
-        "rest_change_invalidates_old_what_if": (
-            "current_preview_request" in page_text
-            and "stored_request" in page_text
+        "normal_game_flow_has_no_sandbox_preview": (
+            "commit=False" not in page_text
+            and "current_preview_request" not in page_text
+            and "simulate_postseason_game(" not in page_text
         ),
         "live_checkpoint_is_repairable": checkpoint["passed"],
         "live_checkpoint_exposes_current_fatigue": (

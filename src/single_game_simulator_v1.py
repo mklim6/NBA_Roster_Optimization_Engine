@@ -64,6 +64,17 @@ from simulation_player_stat_fingerprints_v3 import (  # noqa: E402
     build_player_stat_fingerprint,
     expected_secondary_count,
 )
+from franchise_coaching_role_rotation_v1 import (  # noqa: E402
+    COACHING_ROLE_ROTATION_VERSION,
+    COACHING_WORKLOAD_REDISTRIBUTION_VERSION,
+    coaching_minute_weight_multipliers_v1,
+    coaching_responsibility_multiplier_v1,
+    reconstruct_injury_aware_rotation_v1,
+)
+from franchise_coaching_matchup_tactics_v1 import (  # noqa: E402
+    COACHING_MATCHUP_TACTICS_VERSION,
+    apply_matchup_tactical_counters_v1,
+)
 
 
 ENGINE_VERSION = "single-game-simulator-v1.6-2026-08-08"
@@ -73,6 +84,9 @@ PLAYER_STAT_FINGERPRINT_VERSION = FINGERPRINT_VERSION
 SHOOTING_CALIBRATION_VERSION = (
     "shooting-efficiency-calibration-v1-2026-08-10"
 )
+COACHING_INTELLIGENCE_ROTATION_VERSION = COACHING_ROLE_ROTATION_VERSION
+COACHING_INTELLIGENCE_WORKLOAD_VERSION = COACHING_WORKLOAD_REDISTRIBUTION_VERSION
+COACHING_INTELLIGENCE_MATCHUP_VERSION = COACHING_MATCHUP_TACTICS_VERSION
 SELF_TEST_REPORT = (
     OUTPUTS / "single_game_simulator_v1_self_test.json"
 )
@@ -444,6 +458,30 @@ def select_game_rotation(
     original_starters = (
         team_state.rotation.starter_ids
     )
+    missing_saved_starters = tuple(
+        player_id
+        for player_id in original_starters
+        if player_id not in available
+    )
+
+    # COACHING_INTELLIGENCE_ROLE_ROTATION_V1
+    # Preserve the exact historical healthy path. Functional-role
+    # reconstruction activates only when a saved starter is unavailable
+    # because of injury or an explicit coach/user sit decision.
+    if missing_saved_starters:
+        rotation_ids, starter_ids, _ = (
+            reconstruct_injury_aware_rotation_v1(
+                state,
+                team,
+                available_player_ids=available,
+                original_starter_ids=original_starters,
+                maximum_rotation_players=(
+                    config.maximum_rotation_players
+                ),
+            )
+        )
+        return rotation_ids, starter_ids
+
     starter_ids = [
         player_id
         for player_id in original_starters
@@ -682,6 +720,20 @@ def allocate_minutes(
                 fallback,
                 1.0,
             )
+        )
+
+    # COACHING_INTELLIGENCE_WORKLOAD_REDISTRIBUTION_V1
+    # Only the pre-cap weights move. The existing medical/load-management
+    # upper bounds and exact 240-minute reconciliation remain authoritative.
+    minute_role_multipliers = coaching_minute_weight_multipliers_v1(
+        state,
+        team,
+        rotation_ids=rotation_ids,
+        starter_ids=starter_ids,
+    )
+    for player_id in rotation_ids:
+        weights[player_id] *= float(
+            minute_role_multipliers.get(player_id, 1.0)
         )
 
     # Normal rotations keep regular-season workloads below 38 minutes.
@@ -1153,12 +1205,22 @@ def usage_weights(
             0.90,
             1.10,
         )
+        responsibility_adjustment = (
+            coaching_responsibility_multiplier_v1(
+                state,
+                plan.team_abbreviation,
+                player_id,
+                active_player_ids=plan.player_ids,
+                channel="scoring",
+            )
+        )
         weights[player_id] = max(
             0.25,
             baseline_expectation
             * health_adjustment
             * rating_adjustment
-            * game_variation,
+            * game_variation
+            * responsibility_adjustment,
         )
 
     return weights
@@ -2310,11 +2372,39 @@ def secondary_stat_weights(
         elif stat_name == "assists":
             usage_factor += scoring[player_id].points / 210.0
 
+        responsibility_channel = {
+            "assists": "creation",
+            "turnovers": "creation",
+            "rebounds": "rebounding",
+            "blocks": "rim_defense",
+            "steals": "perimeter_defense",
+        }.get(stat_name)
+        responsibility_adjustment = (
+            coaching_responsibility_multiplier_v1(
+                state,
+                plan.team_abbreviation,
+                player_id,
+                active_player_ids=plan.player_ids,
+                channel=responsibility_channel,
+            )
+            if responsibility_channel
+            else 1.0
+        )
+        if stat_name == "turnovers":
+            responsibility_adjustment = (
+                1.0
+                + (
+                    responsibility_adjustment - 1.0
+                )
+                * 0.55
+            )
+
         weights[player_id] = max(
             0.0001,
             expected
             * health_factor
-            * usage_factor,
+            * usage_factor
+            * responsibility_adjustment,
         )
 
     return weights
@@ -2746,6 +2836,23 @@ def simulate_scheduled_game(
         overtime_periods=0,
         config=resolved_config,
     )
+
+    # COACHING_INTELLIGENCE_MATCHUP_TACTICS_V1
+    # Translate opponent threat recognition and executable defensive counters
+    # into a small rating-space offset. The calibrated score expectation and
+    # score-noise functions below remain unchanged.
+    (
+        home_regulation_plan,
+        away_regulation_plan,
+        _coaching_matchup_tactical_report,
+    ) = apply_matchup_tactical_counters_v1(
+        working_state,
+        home_regulation_plan,
+        away_regulation_plan,
+        offense_rating_weight=resolved_config.offense_rating_weight,
+        opponent_rating_weight=resolved_config.opponent_rating_weight,
+    )
+
     (
         pace,
         expected_home,
@@ -2778,6 +2885,17 @@ def simulate_scheduled_game(
             sit_player_ids=sit_ids,
             overtime_periods=overtime_periods,
             config=resolved_config,
+        )
+        (
+            home_plan,
+            away_plan,
+            _overtime_coaching_matchup_tactical_report,
+        ) = apply_matchup_tactical_counters_v1(
+            working_state,
+            home_plan,
+            away_plan,
+            offense_rating_weight=resolved_config.offense_rating_weight,
+            opponent_rating_weight=resolved_config.opponent_rating_weight,
         )
     else:
         home_plan = home_regulation_plan

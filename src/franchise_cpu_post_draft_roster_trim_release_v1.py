@@ -825,6 +825,7 @@ def build_cpu_post_draft_release_candidate(
     *,
     copy_payload: bool = True,
     _defer_candidate_fingerprints: bool = False,
+    _precomputed_source_fingerprints: tuple[str, str] | None = None,
 ) -> CPUPostDraftReleaseCandidateResult:
     if preview.version != CPU_POST_DRAFT_RELEASE_VERSION:
         raise CPUPostDraftReleaseError("Release preview version is stale.")
@@ -840,12 +841,23 @@ def build_cpu_post_draft_release_candidate(
             "Checkpoint no longer exposes both durable state branches."
         )
 
-    current_simulation_fingerprint = _simulation_fingerprint(source_sim)
+    if _precomputed_source_fingerprints is None:
+        current_simulation_fingerprint = _simulation_fingerprint(source_sim)
+        current_trade_fingerprint = _trade_fingerprint(source_trade)
+    else:
+        current_simulation_fingerprint, current_trade_fingerprint = (
+            _clean(value)
+            for value in _precomputed_source_fingerprints
+        )
+        if not current_simulation_fingerprint or not current_trade_fingerprint:
+            raise CPUPostDraftReleaseError(
+                "Precomputed candidate fingerprints must contain both state branches."
+            )
+
     if current_simulation_fingerprint != preview.source_simulation_fingerprint:
         raise CPUPostDraftReleaseError(
             "Release preview is stale relative to SimulationState."
         )
-    current_trade_fingerprint = _trade_fingerprint(source_trade)
     if current_trade_fingerprint != preview.source_trade_fingerprint:
         raise CPUPostDraftReleaseError(
             "Release preview is stale relative to TradeState."

@@ -77,9 +77,6 @@ PAGE_MARKERS = {
     "load_management": (
         "Load-management suggestion"
     ),
-    "what_if_medical_outcome": (
-        "Sandbox medical outcome"
-    ),
     "persistent_health_repair": (
         "HEALTH_PERSISTENCE_REPAIR_VERSION"
     ),
@@ -521,6 +518,10 @@ def run_validation(seed: int) -> dict[str, Any]:
             marker in page_text
             for marker
             in PAGE_MARKERS.values()
+        ),
+        "what_if_medical_ui_removed": (
+            "Sandbox medical outcome" not in page_text
+            and "Advanced What-If Lab" not in page_text
         ),
         "preview_is_deterministic": (
             preview_deterministic

@@ -23,6 +23,7 @@ DRAFT_HISTORY_ATTR = "franchise_draft_history_v1"
 DRAFT_LIFECYCLE_VERSION = "franchise-draft-lifecycle-v1.1.8-2026-08-10"
 AI_PICK_CLOCK_SECONDS = 120
 DRAFT_CLASS_SIZE = 80
+AI_DRAFT_SCOUTING_CACHE_VERSION = "team-prospect-local-cache-v1-2026-09-29"
 
 # The 3-2-1 lottery is the NBA rule for the 2027, 2028 and 2029 drafts.
 LOTTERY_RULE_VERSION = "nba-3-2-1-lottery-2027-2029"
@@ -1152,22 +1153,52 @@ def future_user_picks(state: Any, *, include_current: bool = False) -> list[dict
     ]
 
 
-def ai_prospect_score(state: Any, team: str, prospect: dict[str, Any], overall_pick: int) -> float:
+def ai_prospect_score(
+    state: Any,
+    team: str,
+    prospect: dict[str, Any],
+    overall_pick: int,
+    *,
+    _scouting_estimate_cache: dict[tuple[str, str], tuple[float, float]] | None = None,
+) -> float:
     # FRANCHISE_AI_IMPERFECT_SCOUTING_V1
     from franchise_scouting_discovery_v1 import ai_scouted_estimate_v1
 
     position = _primary_position(prospect["position"])
     need = _team_need_score(state, team, position)
     timeline_bonus = max(0.0, 22.0 - float(prospect["age"])) * 0.55
-    try:
-        scouting = ai_scouted_estimate_v1(state, team, prospect)
-        estimated_overall = float(scouting["overall"])
-        estimated_potential = float(scouting["potential"])
-    except Exception:
-        # Draft Night must remain available if scouting context is temporarily unavailable.
-        # Fall back to public noisy estimates, never hidden exact ratings.
-        estimated_overall = float(prospect.get("scouted_overall", 70.0))
-        estimated_potential = float(prospect.get("scouted_potential", estimated_overall + 6.0))
+
+    # Scouting uncertainty is specific to the team/prospect pairing. During a
+    # contiguous AI draft simulation the same team sees many of the same
+    # surviving prospects again at its later pick. Reuse only that immutable
+    # estimate; team need is intentionally recomputed above after every pick.
+    cache_key = (
+        clean_team(team),
+        clean_text(prospect.get("prospect_id")),
+    )
+    cached = (
+        _scouting_estimate_cache.get(cache_key)
+        if _scouting_estimate_cache is not None
+        else None
+    )
+    if cached is not None:
+        estimated_overall, estimated_potential = cached
+    else:
+        try:
+            scouting = ai_scouted_estimate_v1(state, team, prospect)
+            estimated_overall = float(scouting["overall"])
+            estimated_potential = float(scouting["potential"])
+            if _scouting_estimate_cache is not None:
+                _scouting_estimate_cache[cache_key] = (
+                    estimated_overall,
+                    estimated_potential,
+                )
+        except Exception:
+            # Draft Night must remain available if scouting context is temporarily unavailable.
+            # Fall back to public noisy estimates, never hidden exact ratings. A
+            # transient failure is deliberately not cached.
+            estimated_overall = float(prospect.get("scouted_overall", 70.0))
+            estimated_potential = float(prospect.get("scouted_potential", estimated_overall + 6.0))
     estimated_board = estimated_overall * 0.57 + estimated_potential * 0.43
     pick_value_bias = max(0.0, 32.0 - overall_pick) * estimated_potential / 1000.0
     return (
@@ -1200,7 +1231,12 @@ def recommended_prospects(state: Any, team: str, *, limit: int = 8) -> list[dict
     return rows[:limit]
 
 
-def choose_ai_prospect(state: Any, *, pick: dict[str, Any] | None = None) -> dict[str, Any]:
+def choose_ai_prospect(
+    state: Any,
+    *,
+    pick: dict[str, Any] | None = None,
+    _scouting_estimate_cache: dict[tuple[str, str], tuple[float, float]] | None = None,
+) -> dict[str, Any]:
     current = draft_state(state)
     if current is None:
         raise ValueError("Draft state is not initialized.")
@@ -1217,7 +1253,16 @@ def choose_ai_prospect(state: Any, *, pick: dict[str, Any] | None = None) -> dic
     board = sorted(
         available,
         key=lambda prospect: (
-            -(ai_prospect_score(state, team, prospect, int(pick["overall_pick"])) + rng.gauss(0.0, 1.7)),
+            -(
+                ai_prospect_score(
+                    state,
+                    team,
+                    prospect,
+                    int(pick["overall_pick"]),
+                    _scouting_estimate_cache=_scouting_estimate_cache,
+                )
+                + rng.gauss(0.0, 1.7)
+            ),
             prospect["big_board_rank"],
         ),
     )
@@ -1376,14 +1421,24 @@ def make_selection(
     return pick
 
 
-def make_ai_selection(state: Any, *, now_ts: float | None = None, integrate: bool = True) -> dict[str, Any]:
+def make_ai_selection(
+    state: Any,
+    *,
+    now_ts: float | None = None,
+    integrate: bool = True,
+    _scouting_estimate_cache: dict[tuple[str, str], tuple[float, float]] | None = None,
+) -> dict[str, Any]:
     current = draft_state(state)
     if current is None:
         raise ValueError("Draft state is not initialized.")
     pick = current_pick(current)
     if pick is None:
         raise ValueError("No pick is on the clock.")
-    prospect = choose_ai_prospect(state, pick=pick)
+    prospect = choose_ai_prospect(
+        state,
+        pick=pick,
+        _scouting_estimate_cache=_scouting_estimate_cache,
+    )
     return make_selection(
         state,
         prospect["prospect_id"],
@@ -1399,6 +1454,7 @@ def catch_up_expired_ai_picks(state: Any, *, now_ts: float | None = None, integr
         return 0
     now = float(now_ts if now_ts is not None else time.time())
     made = 0
+    scouting_estimate_cache: dict[tuple[str, str], tuple[float, float]] = {}
     while made < max_picks:
         pick = current_pick(current)
         if pick is None or is_user_pick(current, pick) or current.get("paused"):
@@ -1410,7 +1466,12 @@ def catch_up_expired_ai_picks(state: Any, *, now_ts: float | None = None, integr
         if deadline is None or float(deadline) > now:
             break
         selection_time = float(deadline)
-        make_ai_selection(state, now_ts=selection_time, integrate=integrate)
+        make_ai_selection(
+            state,
+            now_ts=selection_time,
+            integrate=integrate,
+            _scouting_estimate_cache=scouting_estimate_cache,
+        )
         made += 1
         current = draft_state(state)
         if current is None or current.get("phase") != "draft_in_progress":
@@ -1435,10 +1496,16 @@ def simulate_to_next_user_pick(state: Any, *, now_ts: float | None = None, integ
     if current is None:
         return 0
     made = 0
+    scouting_estimate_cache: dict[tuple[str, str], tuple[float, float]] = {}
     while current.get("phase") == "draft_in_progress" and made < max_picks:
         if is_user_pick(current):
             break
-        make_ai_selection(state, now_ts=now_ts, integrate=integrate)
+        make_ai_selection(
+            state,
+            now_ts=now_ts,
+            integrate=integrate,
+            _scouting_estimate_cache=scouting_estimate_cache,
+        )
         made += 1
         current = draft_state(state)
     return made
@@ -1451,11 +1518,17 @@ def simulate_to_next_round(state: Any, *, now_ts: float | None = None, integrate
         return 0
     starting_round = int(pick["round"])
     made = 0
+    scouting_estimate_cache: dict[tuple[str, str], tuple[float, float]] = {}
     while current.get("phase") == "draft_in_progress":
         pick = current_pick(current)
         if pick is None or int(pick["round"]) != starting_round:
             break
-        make_ai_selection(state, now_ts=now_ts, integrate=integrate)
+        make_ai_selection(
+            state,
+            now_ts=now_ts,
+            integrate=integrate,
+            _scouting_estimate_cache=scouting_estimate_cache,
+        )
         made += 1
         current = draft_state(state)
     return made
@@ -1464,8 +1537,14 @@ def simulate_to_next_round(state: Any, *, now_ts: float | None = None, integrate
 def simulate_rest_of_draft(state: Any, *, now_ts: float | None = None, integrate: bool = True) -> int:
     current = draft_state(state)
     made = 0
+    scouting_estimate_cache: dict[tuple[str, str], tuple[float, float]] = {}
     while current and current.get("phase") == "draft_in_progress":
-        make_ai_selection(state, now_ts=now_ts, integrate=integrate)
+        make_ai_selection(
+            state,
+            now_ts=now_ts,
+            integrate=integrate,
+            _scouting_estimate_cache=scouting_estimate_cache,
+        )
         made += 1
         current = draft_state(state)
     return made

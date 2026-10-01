@@ -151,12 +151,6 @@ def run_validation() -> dict[str, Any]:
         "one_way_game_simulation": (
             '"Simulate game"'
         ),
-        "advanced_what_if_lab": (
-            '"Advanced What-If Lab"'
-        ),
-        "what_if_invalidation": (
-            "current_preview_request"
-        ),
         "game_day_final_broadcast": (
             "render_game_day_final_v1("
         ),
@@ -294,6 +288,17 @@ def run_validation() -> dict[str, Any]:
         in page_text
         and "set_franchise_state("
         in page_text
+    )
+    checks[
+        "advanced_what_if_ui_removed"
+    ] = (
+        "Advanced What-If Lab" not in page_text
+        and "Run what-if simulation" not in page_text
+        and "What-if result only" not in page_text
+        and "What-if preview" not in page_text
+        and "What-if next game" not in page_text
+        and "simulate_postseason_game(" not in page_text
+        and "commit=False" not in page_text
     )
 
     page_compiles, page_error = (

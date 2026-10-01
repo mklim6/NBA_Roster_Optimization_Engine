@@ -54,7 +54,7 @@ def main() -> int:
     )
 
     sim_start = page.find("if simulate_commit_clicked:")
-    sim_end = page.find("current_preview_request =", sim_start)
+    sim_end = page.find('if active_section == "League Stories":', sim_start)
     sim = page[sim_start:sim_end] if sim_start >= 0 and sim_end > sim_start else ""
     auto_pos = sim.find("run_cpu_autonomous_trade_market_v1(")
     incoming_pos = sim.find("run_cpu_incoming_trade_offer_tick_v1(")

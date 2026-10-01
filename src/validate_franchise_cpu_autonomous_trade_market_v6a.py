@@ -48,7 +48,7 @@ def main() -> int:
     runner = _function_source(module, "run_cpu_autonomous_trade_market_v1")
 
     sim_start = page.find("if simulate_commit_clicked:")
-    sim_end = page.find("current_preview_request =", sim_start)
+    sim_end = page.find('if active_section == "League Stories":', sim_start)
     sim = page[sim_start:sim_end] if sim_start >= 0 and sim_end > sim_start else ""
     league_sync_pos = sim.find("catch_up_cpu_schedule_v1(")
     auto_pos = sim.find("run_cpu_autonomous_trade_market_v1(")
