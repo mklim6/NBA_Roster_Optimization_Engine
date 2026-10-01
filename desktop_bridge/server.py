@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import hashlib
 import sys
 
 from starlette.applications import Starlette
@@ -12,18 +13,92 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.3.0"
+API_VERSION = "0.4.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
+V3_WORKING_CHECKPOINT_PATH = (
+    REPO_ROOT
+    / "outputs"
+    / "runtime"
+    / "v3_godot_working_checkpoint.pkl.gz"
+)
 
 # V2 checkpoints were serialized with top-level src module names.
 # Keep src directly importable so cloudpickle can resolve them.
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from simulation_franchise_checkpoint_v1 import load_franchise_checkpoint
+from simulation_franchise_checkpoint_v1 import (
+    DEFAULT_CHECKPOINT_PATH,
+    load_franchise_checkpoint,
+    save_franchise_checkpoint,
+)
+from franchise_command_center_v1 import (
+    apply_rotation_plan,
+    rotation_plan_from_rows,
+)
 
+
+
+def _file_sha256(path: Path) -> str | None:
+    if not path.exists():
+        return None
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _active_team_from_checkpoint(checkpoint: Any) -> str:
+    return str(
+        checkpoint.preferences.get("franchise_pref_active_team", "")
+        or ""
+    ).strip().upper()
+
+
+def _working_checkpoint() -> Any | None:
+    return load_franchise_checkpoint(
+        path=V3_WORKING_CHECKPOINT_PATH,
+        allow_backup=False,
+    )
+
+
+def _rotation_plan_payload(plan: Any) -> dict[str, Any]:
+    return {
+        "team": plan.team,
+        "starter_ids": list(plan.starter_ids),
+        "rotation_player_ids": list(plan.rotation_player_ids),
+        "minutes_targets": dict(plan.minutes_targets),
+        "total_minutes": float(plan.total_minutes),
+    }
+
+
+def _rotation_rows_from_request(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object.")
+
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        raise ValueError("Request body must contain a 'rows' array.")
+
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("Every rotation row must be a JSON object.")
+
+        normalized.append(
+            {
+                "player_id": str(row.get("player_id", "") or "").strip(),
+                "starter": bool(row.get("starter", False)),
+                "in_rotation": bool(row.get("in_rotation", False)),
+                "minutes": float(row.get("minutes", 0.0) or 0.0),
+            }
+        )
+
+    return normalized
 
 TEAM_NAMES = {
     "ATL": "Atlanta Hawks",
@@ -727,6 +802,8 @@ async def health(_: Request) -> JSONResponse:
             "api_version": API_VERSION,
             "phase": "V3 desktop development",
             "read_only": True,
+            "active_v2_read_only": True,
+            "v3_working_save_writable": True,
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         }
     )
@@ -740,7 +817,8 @@ async def project_meta(_: Request) -> JSONResponse:
             "backend": "Python",
             "client": "Godot",
             "simulation_source": "validated V2 engine",
-            "save_access": "read_only",
+            "save_access": "active_v2_read_only__v3_working_save_writable",
+            "working_save_path": str(V3_WORKING_CHECKPOINT_PATH),
             "api_version": API_VERSION,
         }
     )
@@ -911,6 +989,296 @@ async def roster_summary(_: Request) -> JSONResponse:
         )
 
 
+
+async def working_save_status(_: Request) -> JSONResponse:
+    try:
+        active_v2 = load_franchise_checkpoint()
+        if active_v2 is None:
+            return JSONResponse(
+                {
+                    "error": "active_v2_checkpoint_not_found",
+                    "active_v2_read_only": True,
+                },
+                status_code=404,
+            )
+
+        working = _working_checkpoint()
+        active_team = _active_team_from_checkpoint(active_v2)
+
+        payload: dict[str, Any] = {
+            "api_version": API_VERSION,
+            "active_v2_read_only": True,
+            "active_v2_path": str(DEFAULT_CHECKPOINT_PATH),
+            "active_v2_sha256": _file_sha256(DEFAULT_CHECKPOINT_PATH),
+            "working_save_path": str(V3_WORKING_CHECKPOINT_PATH),
+            "working_save_exists": working is not None,
+            "active_team": active_team,
+        }
+
+        if working is not None:
+            state = working.simulation_state
+            working_team = _active_team_from_checkpoint(working)
+            team_state = state.teams.get(working_team)
+            payload["working_save"] = {
+                "team": working_team,
+                "season": str(state.settings.season_label),
+                "phase": _enum_value(state.phase),
+                "day_index": int(state.current_day_index),
+                "sha256": _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+                "reason": str(working.reason),
+                "rotation": (
+                    {
+                        "starter_ids": list(team_state.rotation.starter_ids),
+                        "rotation_player_ids": list(
+                            team_state.rotation.rotation_player_ids
+                        ),
+                        "minutes_targets": dict(
+                            team_state.rotation.minutes_targets
+                        ),
+                        "total_minutes": round(
+                            sum(team_state.rotation.minutes_targets.values()),
+                            1,
+                        ),
+                    }
+                    if team_state is not None
+                    else None
+                ),
+            }
+
+        return JSONResponse(payload)
+
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "working_save_status_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "active_v2_read_only": True,
+            },
+            status_code=500,
+        )
+
+
+async def reset_working_save(_: Request) -> JSONResponse:
+    try:
+        active_v2_sha_before = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+        active = load_franchise_checkpoint()
+
+        if active is None:
+            return JSONResponse(
+                {
+                    "error": "active_v2_checkpoint_not_found",
+                    "active_v2_read_only": True,
+                },
+                status_code=404,
+            )
+
+        V3_WORKING_CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+        save_franchise_checkpoint(
+            active.simulation_state,
+            active.trade_state,
+            preferences=active.preferences,
+            reason="V3 working save initialized from active V2 checkpoint",
+            path=V3_WORKING_CHECKPOINT_PATH,
+            copy_payload=False,
+            force_replace=True,
+        )
+
+        verified = _working_checkpoint()
+        if verified is None:
+            raise RuntimeError("V3 working checkpoint could not be reloaded.")
+
+        active_v2_sha_after = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+
+        if active_v2_sha_before != active_v2_sha_after:
+            raise RuntimeError(
+                "Active V2 checkpoint changed during V3 working-save reset."
+            )
+
+        state = verified.simulation_state
+        active_team = _active_team_from_checkpoint(verified)
+
+        return JSONResponse(
+            {
+                "status": "ok",
+                "api_version": API_VERSION,
+                "active_v2_read_only": True,
+                "active_v2_unchanged": True,
+                "active_v2_sha256": active_v2_sha_after,
+                "working_save_path": str(V3_WORKING_CHECKPOINT_PATH),
+                "working_save_sha256": _file_sha256(
+                    V3_WORKING_CHECKPOINT_PATH
+                ),
+                "team": active_team,
+                "season": str(state.settings.season_label),
+                "phase": _enum_value(state.phase),
+                "day_index": int(state.current_day_index),
+            }
+        )
+
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "working_save_reset_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "active_v2_read_only": True,
+            },
+            status_code=500,
+        )
+
+
+async def rotation_preview(request: Request) -> JSONResponse:
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse(
+                {
+                    "error": "v3_working_save_not_initialized",
+                    "hint": "POST /v3/working-save/reset first.",
+                },
+                status_code=409,
+            )
+
+        state = checkpoint.simulation_state
+        active_team = _active_team_from_checkpoint(checkpoint)
+        payload = await request.json()
+        rows = _rotation_rows_from_request(payload)
+
+        plan = rotation_plan_from_rows(
+            state,
+            active_team,
+            rows,
+        )
+
+        return JSONResponse(
+            {
+                "status": "valid",
+                "api_version": API_VERSION,
+                "write_performed": False,
+                "working_save_only": True,
+                "active_v2_read_only": True,
+                "plan": _rotation_plan_payload(plan),
+            }
+        )
+
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "status": "invalid",
+                "error": "rotation_preview_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "write_performed": False,
+                "working_save_only": True,
+                "active_v2_read_only": True,
+            },
+            status_code=400,
+        )
+
+
+async def rotation_apply(request: Request) -> JSONResponse:
+    try:
+        active_v2_sha_before = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse(
+                {
+                    "error": "v3_working_save_not_initialized",
+                    "hint": "POST /v3/working-save/reset first.",
+                },
+                status_code=409,
+            )
+
+        state = checkpoint.simulation_state
+        active_team = _active_team_from_checkpoint(checkpoint)
+        payload = await request.json()
+        rows = _rotation_rows_from_request(payload)
+
+        plan = rotation_plan_from_rows(
+            state,
+            active_team,
+            rows,
+        )
+        updated_state = apply_rotation_plan(
+            state,
+            plan,
+        )
+
+        save_franchise_checkpoint(
+            updated_state,
+            checkpoint.trade_state,
+            preferences=checkpoint.preferences,
+            reason="V3 Godot rotation update",
+            path=V3_WORKING_CHECKPOINT_PATH,
+            copy_payload=False,
+            force_replace=True,
+        )
+
+        verified = _working_checkpoint()
+        if verified is None:
+            raise RuntimeError("Saved V3 working checkpoint could not be reloaded.")
+
+        verified_team = verified.simulation_state.teams[active_team]
+        verified_rotation = verified_team.rotation
+
+        persisted = (
+            tuple(verified_rotation.starter_ids) == tuple(plan.starter_ids)
+            and tuple(verified_rotation.rotation_player_ids)
+            == tuple(plan.rotation_player_ids)
+            and {
+                str(player_id): round(float(minutes), 1)
+                for player_id, minutes in verified_rotation.minutes_targets.items()
+            }
+            == {
+                str(player_id): round(float(minutes), 1)
+                for player_id, minutes in plan.minutes_targets.items()
+            }
+        )
+
+        if not persisted:
+            raise RuntimeError(
+                "V3 rotation write did not persist exactly after reload."
+            )
+
+        active_v2_sha_after = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+        active_v2_unchanged = active_v2_sha_before == active_v2_sha_after
+
+        if not active_v2_unchanged:
+            raise RuntimeError(
+                "Active V2 checkpoint changed during isolated V3 rotation write."
+            )
+
+        return JSONResponse(
+            {
+                "status": "applied",
+                "api_version": API_VERSION,
+                "working_save_only": True,
+                "active_v2_read_only": True,
+                "active_v2_unchanged": True,
+                "persisted_after_reload": True,
+                "active_v2_sha256": active_v2_sha_after,
+                "working_save_sha256": _file_sha256(
+                    V3_WORKING_CHECKPOINT_PATH
+                ),
+                "plan": _rotation_plan_payload(plan),
+            }
+        )
+
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "rotation_apply_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "working_save_only": True,
+                "active_v2_read_only": True,
+            },
+            status_code=400,
+        )
+
 async def not_found(_: Request, __: Exception) -> JSONResponse:
     return JSONResponse({"error": "not_found"}, status_code=404)
 
@@ -920,6 +1288,10 @@ routes = [
     Route("/v3/meta", project_meta, methods=["GET"]),
     Route("/v3/franchise-summary", franchise_summary, methods=["GET"]),
     Route("/v3/roster", roster_summary, methods=["GET"]),
+    Route("/v3/working-save/status", working_save_status, methods=["GET"]),
+    Route("/v3/working-save/reset", reset_working_save, methods=["POST"]),
+    Route("/v3/rotation/preview", rotation_preview, methods=["POST"]),
+    Route("/v3/rotation/apply", rotation_apply, methods=["POST"]),
 ]
 
 
