@@ -2,6 +2,7 @@ extends Control
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
+const ROSTER_URL := "http://127.0.0.1:8765/v3/roster"
 
 const BG := Color("07101d")
 const SIDEBAR := Color("0b1525")
@@ -20,6 +21,21 @@ var bridge_detail: Label
 var retry_button: Button
 var http_request: HTTPRequest
 var summary_request: HTTPRequest
+var roster_request: HTTPRequest
+
+var home_page: Control
+var roster_page: Control
+var current_page := "HOME"
+var nav_buttons := {}
+var roster_payload := {}
+
+var roster_subtitle: Label
+var roster_status: Label
+var roster_count_value: Label
+var roster_payroll_value: Label
+var roster_cap_value: Label
+var roster_chemistry_value: Label
+var roster_rows: VBoxContainer
 
 var header_subtitle: Label
 var team_name_label: Label
@@ -58,8 +74,21 @@ func _build_interface() -> void:
 	shell.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	shell.add_child(_build_sidebar())
-	shell.add_child(_build_main_area())
 
+	var content_stack := Control.new()
+	content_stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content_stack.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	shell.add_child(content_stack)
+
+	home_page = _build_main_area()
+	content_stack.add_child(home_page)
+	home_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	roster_page = _build_roster_area()
+	content_stack.add_child(roster_page)
+	roster_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	_show_page("HOME")
 
 func _build_sidebar() -> Control:
 	var sidebar_panel := PanelContainer.new()
@@ -305,6 +334,236 @@ func _metric_card(label_text: String, value_text: String, detail_text: String) -
 
 	return card
 
+func _build_roster_area() -> Control:
+	var outer := MarginContainer.new()
+	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_set_margins(outer, 32, 26, 32, 28)
+
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 16)
+	outer.add_child(column)
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 12)
+
+	var titles := VBoxContainer.new()
+	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	titles.add_theme_constant_override("separation", 3)
+
+	var title := Label.new()
+	title.text = "ROSTER COMMAND CENTER"
+	title.add_theme_color_override("font_color", TEXT)
+	title.add_theme_font_size_override("font_size", 28)
+	titles.add_child(title)
+
+	roster_subtitle = Label.new()
+	roster_subtitle.text = "LOADING ACTIVE V2 ROSTER..."
+	roster_subtitle.add_theme_color_override("font_color", MUTED)
+	roster_subtitle.add_theme_font_size_override("font_size", 12)
+	titles.add_child(roster_subtitle)
+	header.add_child(titles)
+
+	var refresh := _action_button("REFRESH")
+	refresh.pressed.connect(_request_roster)
+	header.add_child(refresh)
+	column.add_child(header)
+
+	var metrics := GridContainer.new()
+	metrics.columns = 4
+	metrics.add_theme_constant_override("h_separation", 14)
+	metrics.add_theme_constant_override("v_separation", 14)
+	metrics.add_child(_roster_summary_card("ROSTER", "LOADING..."))
+	metrics.add_child(_roster_summary_card("PAYROLL", "LOADING..."))
+	metrics.add_child(_roster_summary_card("CAP ROOM EST.", "LOADING..."))
+	metrics.add_child(_roster_summary_card("CHEMISTRY", "LOADING..."))
+	column.add_child(metrics)
+
+	roster_status = Label.new()
+	roster_status.text = "Waiting for the read-only roster endpoint."
+	roster_status.add_theme_color_override("font_color", MUTED)
+	roster_status.add_theme_font_size_override("font_size", 11)
+	column.add_child(roster_status)
+
+	var roster_card := _card(Vector2(0, 0))
+	roster_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	roster_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var body := _card_body(roster_card, 16)
+
+	body.add_child(_section_title("ACTIVE ROSTER"))
+	body.add_child(_roster_table_header())
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(scroll)
+
+	roster_rows = VBoxContainer.new()
+	roster_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	roster_rows.add_theme_constant_override("separation", 5)
+	scroll.add_child(roster_rows)
+
+	var loading := Label.new()
+	loading.text = "Loading players from the active V2 checkpoint..."
+	loading.add_theme_color_override("font_color", MUTED)
+	loading.add_theme_font_size_override("font_size", 12)
+	roster_rows.add_child(loading)
+
+	column.add_child(roster_card)
+
+	var note := Label.new()
+	note.text = "READ-ONLY • Cap room is an active-roster contract estimate while full team financial tables are unavailable in this save."
+	note.add_theme_color_override("font_color", MUTED)
+	note.add_theme_font_size_override("font_size", 10)
+	column.add_child(note)
+
+	return outer
+
+
+func _roster_summary_card(label_text: String, value_text: String) -> Control:
+	var card := _card(Vector2(0, 88))
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var body := _card_body(card, 14)
+
+	body.add_child(_small_label(label_text, MUTED))
+
+	var value := Label.new()
+	value.text = value_text
+	value.add_theme_color_override("font_color", TEXT)
+	value.add_theme_font_size_override("font_size", 21)
+	body.add_child(value)
+
+	match label_text:
+		"ROSTER":
+			roster_count_value = value
+		"PAYROLL":
+			roster_payroll_value = value
+		"CAP ROOM EST.":
+			roster_cap_value = value
+		"CHEMISTRY":
+			roster_chemistry_value = value
+
+	return card
+
+
+func _roster_table_header() -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.add_child(_roster_cell("PLAYER", 180, MUTED))
+	row.add_child(_roster_cell("POS", 62, MUTED))
+	row.add_child(_roster_cell("OVR", 48, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	row.add_child(_roster_cell("AGE", 44, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	row.add_child(_roster_cell("ROLE", 180, MUTED))
+	row.add_child(_roster_cell("MIN", 48, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	row.add_child(_roster_cell("SALARY", 78, MUTED))
+	row.add_child(_roster_cell("MORALE", 82, MUTED))
+	row.add_child(_roster_cell("HEALTH", 128, MUTED))
+	row.add_child(_roster_cell("PPG", 50, MUTED, HORIZONTAL_ALIGNMENT_RIGHT))
+	return row
+
+
+func _roster_row(player: Dictionary) -> Control:
+	var panel := PanelContainer.new()
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.add_theme_stylebox_override("panel", _box(PANEL_ALT, 7, BORDER))
+
+	var margin := MarginContainer.new()
+	_set_margins(margin, 10, 7, 10, 7)
+	panel.add_child(margin)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	margin.add_child(row)
+
+	var player_name := str(player.get("name", "Unknown"))
+	var starter := bool(player.get("is_starter", false))
+	var name_color := ACCENT if starter else TEXT
+	if starter:
+		player_name = "[S] " + player_name
+
+	var morale = player.get("morale", {})
+	var morale_text := str(morale.get("status", ""))
+	var morale_color := MUTED
+	if morale_text in ["Happy", "Thriving", "Content"]:
+		morale_color = GOOD
+	elif morale_text in ["Frustrated", "Angry", "Demanding Trade"]:
+		morale_color = BAD
+
+	var health = player.get("health", {})
+	var health_text := str(health.get("display", "Unknown"))
+	var health_status := str(health.get("status", "unknown"))
+	var health_color := GOOD if health_status == "healthy" else BAD
+
+	var contract = player.get("contract", {})
+	var stats = player.get("season_stats", {})
+
+	row.add_child(_roster_cell(player_name, 180, name_color))
+	row.add_child(_roster_cell(str(player.get("position", "")), 62, TEXT))
+	row.add_child(_roster_cell(_number_text(player.get("overall", null), 1), 48, TEXT, HORIZONTAL_ALIGNMENT_CENTER))
+	row.add_child(_roster_cell(_number_text(player.get("age", null), 1), 44, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	row.add_child(_roster_cell(str(player.get("role", "")), 180, TEXT))
+	row.add_child(_roster_cell(_number_text(player.get("target_minutes", 0.0), 0), 48, TEXT, HORIZONTAL_ALIGNMENT_CENTER))
+	row.add_child(_roster_cell(str(contract.get("salary_display", "N/A")), 78, TEXT))
+	row.add_child(_roster_cell(morale_text, 82, morale_color))
+	row.add_child(_roster_cell(health_text, 128, health_color))
+	row.add_child(_roster_cell(_number_text(stats.get("ppg", 0.0), 1), 50, TEXT, HORIZONTAL_ALIGNMENT_RIGHT))
+
+	return panel
+
+
+func _roster_cell(
+	text_value: String,
+	width: int,
+	color: Color,
+	alignment: int = HORIZONTAL_ALIGNMENT_LEFT
+) -> Label:
+	var label := Label.new()
+	label.custom_minimum_size = Vector2(width, 0)
+	label.text = text_value
+	label.horizontal_alignment = alignment
+	label.add_theme_color_override("font_color", color)
+	label.add_theme_font_size_override("font_size", 11)
+	return label
+
+
+func _number_text(value, decimals: int = 1) -> String:
+	if value == null:
+		return "N/A"
+
+	var number := float(value)
+	if decimals <= 0:
+		return str(int(round(number)))
+
+	return "%.1f" % number
+
+
+func _show_page(page_name: String) -> void:
+	current_page = page_name
+
+	if home_page != null:
+		home_page.visible = page_name == "HOME"
+
+	if roster_page != null:
+		roster_page.visible = page_name == "ROSTER"
+
+	for key in nav_buttons.keys():
+		var button: Button = nav_buttons[key]
+		_apply_nav_button_style(button, str(key) == page_name)
+
+	if page_name == "ROSTER":
+		_request_roster()
+	elif page_name == "HOME":
+		_request_franchise_summary()
+
+
+func _apply_nav_button_style(button: Button, active: bool) -> void:
+	button.add_theme_color_override("font_color", TEXT if active else MUTED)
+	button.add_theme_stylebox_override(
+		"normal",
+		_box(PANEL_ALT if active else SIDEBAR, 8)
+	)
+
+
 func _build_activity_panel() -> Control:
 	var card := _card(Vector2(0, 0))
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -375,7 +634,8 @@ func _activity(category: String, text_value: String, age: String) -> Control:
 func _wide_action(title_text: String, subtitle_text: String) -> Control:
 	var button := Button.new()
 	button.custom_minimum_size = Vector2(0, 64)
-	button.text = "%s\n%s" % [title_text, subtitle_text]
+	button.text = "%s
+%s" % [title_text, subtitle_text]
 	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	button.add_theme_font_size_override("font_size", 12)
 	button.add_theme_color_override("font_color", TEXT)
@@ -383,8 +643,11 @@ func _wide_action(title_text: String, subtitle_text: String) -> Control:
 	button.add_theme_stylebox_override("normal", _box(PANEL_ALT, 9, BORDER))
 	button.add_theme_stylebox_override("hover", _box(PANEL_HOVER, 9, ACCENT))
 	button.add_theme_stylebox_override("pressed", _box(PANEL_HOVER, 9, ACCENT))
-	return button
 
+	if title_text == "OPEN ROSTER":
+		button.pressed.connect(_show_page.bind("ROSTER"))
+
+	return button
 
 func _nav_button(text_value: String, active: bool = false) -> Button:
 	var button := Button.new()
@@ -392,15 +655,18 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 	button.text = text_value
 	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	button.add_theme_font_size_override("font_size", 12)
-	button.add_theme_color_override("font_color", TEXT if active else MUTED)
 	button.add_theme_color_override("font_hover_color", TEXT)
 	button.add_theme_color_override("font_disabled_color", Color("53647c"))
-	button.add_theme_stylebox_override("normal", _box(PANEL_ALT if active else SIDEBAR, 8))
 	button.add_theme_stylebox_override("hover", _box(PANEL_HOVER, 8))
 	button.add_theme_stylebox_override("pressed", _box(PANEL_ALT, 8))
 	button.add_theme_stylebox_override("disabled", _box(SIDEBAR, 8))
-	return button
+	_apply_nav_button_style(button, active)
 
+	if text_value == "HOME" or text_value == "ROSTER":
+		nav_buttons[text_value] = button
+		button.pressed.connect(_show_page.bind(text_value))
+
+	return button
 
 func _action_button(text_value: String, primary: bool = false) -> Button:
 	var button := Button.new()
@@ -505,6 +771,11 @@ func _build_http_client() -> void:
 	summary_request.request_completed.connect(_on_summary_completed)
 	add_child(summary_request)
 
+	roster_request = HTTPRequest.new()
+	roster_request.timeout = 4.0
+	roster_request.request_completed.connect(_on_roster_completed)
+	add_child(roster_request)
+
 func _check_bridge() -> void:
 	if http_request == null:
 		return
@@ -542,6 +813,99 @@ func _on_health_completed(
 	)
 
 	_request_franchise_summary()
+	_request_roster()
+
+
+func _request_roster() -> void:
+	if roster_request == null:
+		return
+
+	if roster_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		roster_request.cancel_request()
+
+	if roster_status != null:
+		roster_status.text = "Refreshing live V2 roster..."
+
+	var error := roster_request.request(ROSTER_URL)
+	if error != OK:
+		_set_roster_error("Could not request the active roster.")
+
+
+func _on_roster_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		_set_roster_error("Active V2 roster could not be loaded.")
+		return
+
+	var payload = JSON.parse_string(body.get_string_from_utf8())
+
+	if typeof(payload) != TYPE_DICTIONARY:
+		_set_roster_error("Roster endpoint returned invalid data.")
+		return
+
+	if payload.has("error"):
+		_set_roster_error(str(payload.get("error")))
+		return
+
+	_apply_roster_payload(payload)
+
+
+func _apply_roster_payload(payload: Dictionary) -> void:
+	roster_payload = payload
+
+	var team = payload.get("team", {})
+	var season = payload.get("season", {})
+	var financial = payload.get("financial", {})
+	var chemistry = payload.get("chemistry", {})
+	var players = payload.get("players", [])
+
+	roster_subtitle.text = "%s • %s • LEAGUE DAY %s • LIVE V2 SAVE" % [
+		str(team.get("name", "Active Franchise")).to_upper(),
+		str(season.get("label", "")),
+		str(season.get("day_index", "?"))
+	]
+
+	roster_count_value.text = "%s rostered" % str(team.get("roster_size", "?"))
+	roster_payroll_value.text = str(financial.get("payroll_display", "N/A"))
+	roster_cap_value.text = str(financial.get("cap_room_estimate_display", "N/A"))
+	roster_chemistry_value.text = _number_text(chemistry.get("score", null), 1)
+
+	roster_status.text = "%s active • %s inactive • %s starters • %s rotation • %s injured" % [
+		str(team.get("active_players", "?")),
+		str(team.get("inactive_players", "?")),
+		str(team.get("starters", "?")),
+		str(team.get("rotation_players", "?")),
+		str(team.get("injured_players", "?"))
+	]
+
+	for child in roster_rows.get_children():
+		roster_rows.remove_child(child)
+		child.queue_free()
+
+	for player in players:
+		if typeof(player) == TYPE_DICTIONARY:
+			roster_rows.add_child(_roster_row(player))
+
+
+func _set_roster_error(message: String) -> void:
+	if roster_subtitle != null:
+		roster_subtitle.text = "V2 ROSTER DATA UNAVAILABLE"
+
+	if roster_status != null:
+		roster_status.text = message
+
+	if roster_count_value != null:
+		roster_count_value.text = "N/A"
+	if roster_payroll_value != null:
+		roster_payroll_value.text = "N/A"
+	if roster_cap_value != null:
+		roster_cap_value.text = "N/A"
+	if roster_chemistry_value != null:
+		roster_chemistry_value.text = "N/A"
 
 
 func _request_franchise_summary() -> void:
@@ -639,7 +1003,10 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 		cap_detail.text = "Live cap field pending"
 	else:
 		cap_value.text = str(cap_display)
-		cap_detail.text = "Available"
+		if bool(financial.get("is_estimate", false)):
+			cap_detail.text = "Roster-contract estimate"
+		else:
+			cap_detail.text = "Available"
 
 	var draft_year = draft.get("draft_year", null)
 	if draft_year == null:
