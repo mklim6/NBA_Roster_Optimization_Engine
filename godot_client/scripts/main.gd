@@ -1,6 +1,7 @@
 extends Control
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
+const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
 
 const BG := Color("07101d")
 const SIDEBAR := Color("0b1525")
@@ -18,6 +19,22 @@ var bridge_status: Label
 var bridge_detail: Label
 var retry_button: Button
 var http_request: HTTPRequest
+var summary_request: HTTPRequest
+
+var header_subtitle: Label
+var team_name_label: Label
+var team_detail_label: Label
+var next_game_matchup: Label
+var next_game_detail: Label
+
+var record_value: Label
+var record_detail: Label
+var chemistry_value: Label
+var chemistry_detail: Label
+var cap_value: Label
+var cap_detail: Label
+var draft_value: Label
+var draft_detail: Label
 
 
 func _ready() -> void:
@@ -122,10 +139,10 @@ func _build_main_area() -> Control:
 	metrics.columns = 4
 	metrics.add_theme_constant_override("h_separation", 14)
 	metrics.add_theme_constant_override("v_separation", 14)
-	metrics.add_child(_metric_card("RECORD", "18-12", "3rd in East"))
-	metrics.add_child(_metric_card("CHEMISTRY", "82", "Strong"))
-	metrics.add_child(_metric_card("CAP SPACE", "$8.3M", "Available"))
-	metrics.add_child(_metric_card("NEXT PICK", "2027 1st", "Owned"))
+	metrics.add_child(_metric_card("RECORD", "LOADING...", "Waiting for V2 save"))
+	metrics.add_child(_metric_card("CHEMISTRY", "LOADING...", "Waiting for V2 save"))
+	metrics.add_child(_metric_card("CAP SPACE", "LOADING...", "Waiting for V2 save"))
+	metrics.add_child(_metric_card("DRAFT CLASS", "LOADING...", "Waiting for V2 save"))
 	column.add_child(metrics)
 
 	var lower := HBoxContainer.new()
@@ -152,11 +169,11 @@ func _build_header() -> Control:
 	title.add_theme_font_size_override("font_size", 28)
 	titles.add_child(title)
 
-	var subtitle := Label.new()
-	subtitle.text = "2026-27  •  NOVEMBER 18  •  REGULAR SEASON"
-	subtitle.add_theme_color_override("font_color", MUTED)
-	subtitle.add_theme_font_size_override("font_size", 12)
-	titles.add_child(subtitle)
+	header_subtitle = Label.new()
+	header_subtitle.text = "LOADING ACTIVE V2 FRANCHISE..."
+	header_subtitle.add_theme_color_override("font_color", MUTED)
+	header_subtitle.add_theme_font_size_override("font_size", 12)
+	titles.add_child(header_subtitle)
 	row.add_child(titles)
 
 	var alpha := Label.new()
@@ -168,7 +185,6 @@ func _build_header() -> Control:
 
 	return row
 
-
 func _build_team_card() -> Control:
 	var card := _card(Vector2(250, 190))
 	var body := _card_body(card, 20)
@@ -176,25 +192,24 @@ func _build_team_card() -> Control:
 	var kicker := _small_label("YOUR FRANCHISE", ACCENT)
 	body.add_child(kicker)
 
-	var team := Label.new()
-	team.text = "CHICAGO"
-	team.add_theme_color_override("font_color", TEXT)
-	team.add_theme_font_size_override("font_size", 30)
-	body.add_child(team)
+	team_name_label = Label.new()
+	team_name_label.text = "LOADING..."
+	team_name_label.add_theme_color_override("font_color", TEXT)
+	team_name_label.add_theme_font_size_override("font_size", 30)
+	body.add_child(team_name_label)
 
-	var sub := Label.new()
-	sub.text = "Eastern Conference\nContender • Year 1"
-	sub.add_theme_color_override("font_color", MUTED)
-	sub.add_theme_font_size_override("font_size", 13)
-	body.add_child(sub)
+	team_detail_label = Label.new()
+	team_detail_label.text = "Reading active franchise checkpoint..."
+	team_detail_label.add_theme_color_override("font_color", MUTED)
+	team_detail_label.add_theme_font_size_override("font_size", 13)
+	body.add_child(team_detail_label)
 
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(spacer)
 
-	body.add_child(_pill("TEAM OVR 87", GOOD))
+	body.add_child(_pill("LIVE V2 SAVE", GOOD))
 	return card
-
 
 func _build_next_game_card() -> Control:
 	var card := _card(Vector2(360, 190))
@@ -203,17 +218,17 @@ func _build_next_game_card() -> Control:
 
 	body.add_child(_small_label("NEXT GAME", ACCENT))
 
-	var matchup := Label.new()
-	matchup.text = "CHICAGO  vs  BOSTON"
-	matchup.add_theme_color_override("font_color", TEXT)
-	matchup.add_theme_font_size_override("font_size", 24)
-	body.add_child(matchup)
+	next_game_matchup = Label.new()
+	next_game_matchup.text = "LOADING..."
+	next_game_matchup.add_theme_color_override("font_color", TEXT)
+	next_game_matchup.add_theme_font_size_override("font_size", 24)
+	body.add_child(next_game_matchup)
 
-	var detail := Label.new()
-	detail.text = "Tomorrow • 7:30 PM\nHome • Game 31"
-	detail.add_theme_color_override("font_color", MUTED)
-	detail.add_theme_font_size_override("font_size", 13)
-	body.add_child(detail)
+	next_game_detail = Label.new()
+	next_game_detail.text = "Reading schedule..."
+	next_game_detail.add_theme_color_override("font_color", MUTED)
+	next_game_detail.add_theme_font_size_override("font_size", 13)
+	body.add_child(next_game_detail)
 
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -225,7 +240,6 @@ func _build_next_game_card() -> Control:
 	actions.add_child(_action_button("PLAY / SIM", true))
 	body.add_child(actions)
 	return card
-
 
 func _build_engine_card() -> Control:
 	var card := _card(Vector2(300, 190))
@@ -274,8 +288,22 @@ func _metric_card(label_text: String, value_text: String, detail_text: String) -
 	detail.add_theme_color_override("font_color", GOOD)
 	detail.add_theme_font_size_override("font_size", 11)
 	body.add_child(detail)
-	return card
 
+	match label_text:
+		"RECORD":
+			record_value = value
+			record_detail = detail
+		"CHEMISTRY":
+			chemistry_value = value
+			chemistry_detail = detail
+		"CAP SPACE":
+			cap_value = value
+			cap_detail = detail
+		"DRAFT CLASS":
+			draft_value = value
+			draft_detail = detail
+
+	return card
 
 func _build_activity_panel() -> Control:
 	var card := _card(Vector2(0, 0))
@@ -472,6 +500,10 @@ func _build_http_client() -> void:
 	http_request.request_completed.connect(_on_health_completed)
 	add_child(http_request)
 
+	summary_request = HTTPRequest.new()
+	summary_request.timeout = 4.0
+	summary_request.request_completed.connect(_on_summary_completed)
+	add_child(summary_request)
 
 func _check_bridge() -> void:
 	if http_request == null:
@@ -506,9 +538,172 @@ func _on_health_completed(
 
 	_set_bridge_status(
 		true,
-		"Python engine connected • API %s • read-only safe mode" % payload.get("api_version", "unknown")
+		"Python engine connected • API %s • live V2 save • read-only safe mode" % payload.get("api_version", "unknown")
 	)
 
+	_request_franchise_summary()
+
+
+func _request_franchise_summary() -> void:
+	if summary_request == null:
+		return
+
+	if summary_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		summary_request.cancel_request()
+
+	var error := summary_request.request(SUMMARY_URL)
+	if error != OK:
+		_set_live_data_error("Could not request active franchise summary.")
+
+
+func _on_summary_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		_set_live_data_error("Active V2 franchise data could not be loaded.")
+		return
+
+	var payload = JSON.parse_string(body.get_string_from_utf8())
+
+	if typeof(payload) != TYPE_DICTIONARY:
+		_set_live_data_error("Franchise summary returned invalid data.")
+		return
+
+	if payload.has("error"):
+		_set_live_data_error(str(payload.get("error")))
+		return
+
+	_apply_franchise_summary(payload)
+
+
+func _apply_franchise_summary(payload: Dictionary) -> void:
+	var team = payload.get("team", {})
+	var season = payload.get("season", {})
+	var record = payload.get("record", {})
+	var chemistry = payload.get("chemistry", {})
+	var financial = payload.get("financial", {})
+	var next_game = payload.get("next_game", {})
+	var draft = payload.get("draft", {})
+
+	var season_label := str(season.get("label", "Unknown season"))
+	var phase_label := _pretty_phase(str(season.get("phase", "")))
+	var day_index := str(season.get("day_index", "?"))
+
+	header_subtitle.text = "%s  •  LEAGUE DAY %s  •  %s" % [
+		season_label,
+		day_index,
+		phase_label
+	]
+
+	team_name_label.text = str(team.get("name", "Unknown Team")).to_upper()
+
+	team_detail_label.text = "%s • %s Division
+%s rostered • %s active" % [
+		str(team.get("conference", "Unknown")),
+		str(team.get("division", "Unknown")),
+		str(team.get("roster_size", "?")),
+		str(team.get("active_players", "?"))
+	]
+
+	record_value.text = str(record.get("display", "N/A"))
+
+	var rank_text = record.get("conference_rank_display", null)
+	var streak_text = record.get("streak", null)
+	var record_text := "Live standings"
+
+	if rank_text != null:
+		record_text = str(rank_text)
+
+	if streak_text != null:
+		if record_text == "Live standings":
+			record_text = str(streak_text)
+		else:
+			record_text += " • " + str(streak_text)
+
+	record_detail.text = record_text
+
+	var chemistry_score = chemistry.get("score", null)
+	if chemistry_score == null:
+		chemistry_value.text = "N/A"
+	else:
+		chemistry_value.text = str(chemistry_score)
+
+	chemistry_detail.text = str(chemistry.get("label", "Live chemistry"))
+
+	var cap_display = financial.get("cap_space_display", null)
+	if cap_display == null:
+		cap_value.text = "N/A"
+		cap_detail.text = "Live cap field pending"
+	else:
+		cap_value.text = str(cap_display)
+		cap_detail.text = "Available"
+
+	var draft_year = draft.get("draft_year", null)
+	if draft_year == null:
+		draft_value.text = "N/A"
+	else:
+		draft_value.text = "%s Draft" % str(draft_year)
+
+	draft_detail.text = _pretty_phase(str(draft.get("phase", "Live draft state")))
+
+	if typeof(next_game) == TYPE_DICTIONARY and next_game.size() > 0:
+		var team_abbr := str(team.get("abbreviation", "TEAM"))
+		var opponent_abbr := str(next_game.get("opponent", "OPP"))
+		var is_home: bool = bool(next_game.get("is_home", false))
+
+		next_game_matchup.text = "%s  %s  %s" % [
+			team_abbr,
+			"vs" if is_home else "at",
+			opponent_abbr
+		]
+
+		var days_away := int(next_game.get("days_away", 0))
+		var when_text := "Today"
+
+		if days_away == 1:
+			when_text = "Tomorrow"
+		elif days_away > 1:
+			when_text = "In %s days" % days_away
+
+		var venue_text := "Home" if is_home else "Away"
+		var next_game_number := int(record.get("games_played", 0)) + 1
+
+		next_game_detail.text = "%s • %s
+%s • Game %s" % [
+			when_text,
+			venue_text,
+			str(next_game.get("opponent_name", opponent_abbr)),
+			next_game_number
+		]
+	else:
+		next_game_matchup.text = "NO GAME SCHEDULED"
+		next_game_detail.text = "No future game was found in the active schedule."
+
+
+func _set_live_data_error(message: String) -> void:
+	header_subtitle.text = "V2 SAVE DATA UNAVAILABLE"
+
+	record_value.text = "N/A"
+	record_detail.text = message
+
+	chemistry_value.text = "N/A"
+	chemistry_detail.text = "Unavailable"
+
+	cap_value.text = "N/A"
+	cap_detail.text = "Unavailable"
+
+	draft_value.text = "N/A"
+	draft_detail.text = "Unavailable"
+
+	next_game_matchup.text = "DATA OFFLINE"
+	next_game_detail.text = message
+
+
+func _pretty_phase(value: String) -> String:
+	return value.replace("_", " ").to_upper()
 
 func _set_bridge_status(connected: bool, detail: String) -> void:
 	bridge_status.text = "CONNECTED" if connected else "OFFLINE"
