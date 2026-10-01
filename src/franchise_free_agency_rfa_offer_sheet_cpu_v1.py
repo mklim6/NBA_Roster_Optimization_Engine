@@ -307,16 +307,16 @@ def _atomic_save(cp: Any, checkpoint: Any, sim_candidate: Any, trade_candidate: 
         shutil.copy2(backup_path, rec_backup)
     reason = f"free-agency-day-{current_day}-with-rfa-offer-sheet-resolution"
     try:
-        cp.save_franchise_checkpoint(
+        reloaded = cp.save_franchise_checkpoint(
             sim_candidate,
             trade_candidate,
             preferences=copy.deepcopy(dict(getattr(checkpoint, "preferences", {}) or {})),
             reason=reason,
-            copy_payload=True,
+            copy_payload=False,
+            _return_verified=True,
+            _existing_checkpoint=checkpoint,
+            _expected_existing_sha256=primary_hash,
         )
-        reloaded = cp.load_franchise_checkpoint()
-        if reloaded is None:
-            raise RFAOfferSheetCPUError("Checkpoint reload returned no state after the combined Free Agency day advance.")
         if _combined_fingerprint(reloaded.simulation_state, reloaded.trade_state) != expected_fp:
             raise RFAOfferSheetCPUError("Reloaded calendar/offer-sheet state does not match the approved combined candidate.")
     except Exception as exc:

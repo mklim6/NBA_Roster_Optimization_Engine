@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import shutil
+from functools import lru_cache
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -120,6 +121,14 @@ def _sha256(path: Path) -> str:
 def _phase(state: Any) -> str:
     value = getattr(state, "phase", "")
     return _clean(getattr(value, "value", value)).lower()
+
+
+@lru_cache(maxsize=1)
+def _trade_validation_runtime() -> Any:
+    """Load the immutable Trade Machine validation package once per process."""
+    from freeform_trade_machine_engine_v3 import load_runtime_data
+
+    return load_runtime_data()
 
 
 def _preference_dict(checkpoint: Any) -> dict[str, Any]:
@@ -506,6 +515,38 @@ def _annotate_trade_fatx_rights_consumption(
             setattr(state, TRADE_FREE_AGENCY_HISTORY_ATTR, history)
 
 
+def _copy_trade_state_for_free_agency(trade_state: Any) -> Any:
+    """Clone only the Trade Machine surfaces changed by a signing.
+
+    Mature franchises can carry a large immutable trade transaction history.
+    A free-agent signing does not edit that history or draft-pick ownership, so
+    copying the entire state for every contract scaled with unrelated seasons.
+    The mutable ownership/finance surfaces and every undo/reset snapshot remain
+    independently owned by the candidate.
+    """
+    candidate = copy.copy(trade_state)
+
+    ownership = getattr(trade_state, "player_team_by_id", None)
+    financials = getattr(trade_state, "team_financials", None)
+    if not isinstance(ownership, dict) or not isinstance(financials, dict):
+        raise FreeAgencyLiveSigningError(
+            "Trade Machine state does not expose mutable ownership/financial maps."
+        )
+
+    candidate.player_team_by_id = dict(ownership)
+    candidate.team_financials = dict(financials)
+    candidate.acquired_player_ids = set(
+        getattr(trade_state, "acquired_player_ids", set()) or set()
+    )
+    candidate.undo_stack = copy.deepcopy(
+        list(getattr(trade_state, "undo_stack", []) or [])
+    )
+    candidate.initial_snapshot = copy.deepcopy(
+        getattr(trade_state, "initial_snapshot", None)
+    )
+    return candidate
+
+
 
 def build_trade_state_free_agency_candidate(
     trade_state: Any,
@@ -513,6 +554,7 @@ def build_trade_state_free_agency_candidate(
     *,
     transaction_id: str,
     validate: bool = True,
+    _copy_on_write: bool = True,
 ) -> tuple[Any, TradeStateSigningSyncResult]:
     """Synchronize ownership/aggregate finance without inventing a trade record.
 
@@ -531,7 +573,11 @@ def build_trade_state_free_agency_candidate(
             "Trade-state synchronization received an invalid offer."
         )
 
-    candidate = copy.deepcopy(trade_state)
+    candidate = (
+        _copy_trade_state_for_free_agency(trade_state)
+        if _copy_on_write
+        else copy.deepcopy(trade_state)
+    )
     ownership = getattr(candidate, "player_team_by_id", None)
     financials = getattr(candidate, "team_financials", None)
     if not isinstance(ownership, dict) or not isinstance(financials, dict):
@@ -550,6 +596,11 @@ def build_trade_state_free_agency_candidate(
         raise FreeAgencyLiveSigningError(
             "Signing team is missing from the durable Trade Machine financial map."
         )
+
+    # Only the signing team's aggregate row is mutated.  Detach it after the
+    # structural checks so every other team can remain shared read-only.
+    if _copy_on_write:
+        financials[team] = copy.deepcopy(financials[team])
 
     before_financial = financials[team]
     before_team_salary = _finite(getattr(before_financial, "team_salary", None))
@@ -643,9 +694,8 @@ def build_trade_state_free_agency_candidate(
 
     if validate:
         try:
-            from freeform_trade_machine_engine_v3 import load_runtime_data
             from mutable_league_state_v1 import validate_state
-            runtime = load_runtime_data()
+            runtime = _trade_validation_runtime()
             validate_state(candidate, runtime)
         except FreeAgencyLiveSigningError:
             raise
@@ -843,18 +893,21 @@ def commit_contract_legal_free_agency_preview_live(
     reason = f"free-agency-live-signing-{transaction_id}"
 
     try:
+        # The candidate graphs are complete local transaction candidates and
+        # the writer returns its semantically decoded verification object. Reuse
+        # the checkpoint/hash already proven above so we preserve stale-write
+        # protection without deep-copying or reloading the whole league twice.
         saved = save_franchise_checkpoint(
             simulation_candidate,
             trade_candidate,
             preferences=_preference_dict(checkpoint),
             reason=reason,
-            copy_payload=True,
+            copy_payload=False,
+            _return_verified=True,
+            _existing_checkpoint=checkpoint,
+            _expected_existing_sha256=checkpoint_hash_before,
         )
-        reloaded = load_franchise_checkpoint()
-        if reloaded is None:
-            raise FreeAgencyLiveSigningError(
-                "Checkpoint reload returned no state after live signing."
-            )
+        reloaded = saved
         observed_sim_fp = free_agency_durable_state_fingerprint(
             reloaded.simulation_state
         )

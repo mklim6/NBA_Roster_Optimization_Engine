@@ -892,6 +892,7 @@ def advance_rostered_contract_clock_v1(
 
     decremented: list[str] = []
     expired: list[str] = []
+    expired_two_way: list[str] = []
     synthetic_replacements_removed: list[str] = []
 
     for team_code in sorted(state.teams):
@@ -961,6 +962,16 @@ def advance_rostered_contract_clock_v1(
                 decremented.append(player_id)
                 continue
 
+            was_two_way = (
+                bool(getattr(player, "two_way", False))
+                or str(
+                    getattr(player, "roster_status", "") or ""
+                ).strip().lower() == "two_way"
+                or str(
+                    getattr(contract, "status", "") or ""
+                ).strip().lower() == "two_way"
+            )
+
             updated_contract = replace(
                 contract,
                 status="free_agent_pool",
@@ -973,9 +984,38 @@ def advance_rostered_contract_clock_v1(
                         attr_name,
                         copy.deepcopy(attr_value),
                     )
+
+            # A two-way designation belongs to the contract that just expired,
+            # not permanently to the player. Normalize only expired two-way
+            # contracts back into a genuine free-agent state so the franchise
+            # two-way market can consider them again in later offseasons.
+            if was_two_way:
+                updated_contract.salary = None
+                updated_contract.option_type = ""
+                updated_contract.guaranteed = None
+
             player.contract = updated_contract
             player.team_abbreviation = ""
             player.roster_status = "free_agent"
+
+            if was_two_way:
+                player.two_way = False
+                setattr(player, "live_contract_cap_hit", 0.0)
+                setattr(player, "live_contract_guaranteed_amount", 0.0)
+                setattr(player, "live_contract_total_value", None)
+                setattr(
+                    player,
+                    "live_contract_guarantee_status",
+                    "not_under_contract",
+                )
+                setattr(player, "live_contract_signing_method", "")
+                setattr(
+                    player,
+                    "live_contract_evidence_status",
+                    "expired_two_way_contract",
+                )
+                expired_two_way.append(player_id)
+
             free_agents.add(player_id)
             expired.append(player_id)
 
@@ -1011,6 +1051,8 @@ def advance_rostered_contract_clock_v1(
         "version": "multi-year-contract-clock-v1-2026-08-17",
         "decremented_player_ids": tuple(sorted(decremented)),
         "expired_player_ids": tuple(sorted(expired)),
+        "expired_two_way_player_ids": tuple(sorted(expired_two_way)),
+        "expired_two_way_count": len(expired_two_way),
         "decremented_count": len(decremented),
         "expired_count": len(expired),
         "synthetic_replacements_removed": tuple(

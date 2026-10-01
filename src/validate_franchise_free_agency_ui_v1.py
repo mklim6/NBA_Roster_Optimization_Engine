@@ -8,7 +8,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-PAGE = ROOT / "pages" / "6_Free_Agency.py"
+PAGE = ROOT / "pages" / "5_Franchise_Mode.py"
+WORKSPACE = ROOT / "src" / "franchise_free_agency_workspace_v1.py"
+UI_HELPER = ROOT / "src" / "franchise_free_agency_ui_v1.py"
 CHECKPOINT = ROOT / "outputs" / "runtime" / "franchise_mode_checkpoint_v1.pkl.gz"
 sys.path.insert(0, str(SRC))
 
@@ -29,7 +31,7 @@ EXPECTED = {
     "ui": "franchise-free-agency-ui-preview-v1-2026-08-14",
     "v1": "franchise-free-agency-transaction-v1-2026-08-13",
     "v11": "franchise-free-agency-transaction-v1.1-2026-08-14",
-    "v12": "franchise-free-agency-financial-bridge-v1.2-2026-08-14",
+    "v12": "franchise-free-agency-financial-bridge-v1.3-modeled-future-market-2026-08-18",
 }
 
 def sha(path: Path) -> str:
@@ -48,6 +50,8 @@ def main() -> int:
     controlled = controlled_teams_from_checkpoint(checkpoint, state) if checkpoint is not None else ()
     valid_teams = set(getattr(state, 'teams', {})) if state is not None else set()
     page_text = PAGE.read_text(encoding='utf-8') if PAGE.exists() else ""
+    workspace_text = WORKSPACE.read_text(encoding='utf-8') if WORKSPACE.exists() else ""
+    helper_text = UI_HELPER.read_text(encoding='utf-8') if UI_HELPER.exists() else ""
 
     isolated = isolated_offseason_preview_state(state) if state is not None else None
     isolated_phase = str(getattr(getattr(isolated, 'phase', ''), 'value', getattr(isolated, 'phase', ''))).lower() if isolated is not None else ""
@@ -58,7 +62,7 @@ def main() -> int:
         "execution_boundary_is_preview_only": FREE_AGENCY_UI_EXECUTION_BOUNDARY == 'preview_only_no_durable_commit',
         "base_transaction_v1_is_preserved": FREE_AGENCY_TRANSACTION_VERSION == EXPECTED['v1'],
         "durable_transaction_v1_1_is_preserved": FREE_AGENCY_TRANSACTION_V1_1_VERSION == EXPECTED['v11'],
-        "financial_bridge_v1_2_is_preserved": FREE_AGENCY_FINANCIAL_BRIDGE_VERSION == EXPECTED['v12'],
+        "financial_bridge_is_current": FREE_AGENCY_FINANCIAL_BRIDGE_VERSION == EXPECTED['v12'],
         "durable_checkpoint_exists": CHECKPOINT.exists(),
         "durable_checkpoint_loads": checkpoint is not None,
         "durable_state_is_valid": state is not None and bool(validate_simulation_league_state(state)),
@@ -68,19 +72,32 @@ def main() -> int:
         "hypothetical_offseason_uses_replacement_copy": isolated is not None and isolated is not state,
         "hypothetical_offseason_sets_only_copy_phase": isolated_phase == 'offseason',
         "helper_does_not_mutate_durable_source": source_fp == after_source_fp,
-        "page_exists": PAGE.exists(),
-        "page_uses_live_financial_preview": 'build_live_financial_free_agency_preview' in page_text,
-        "page_exposes_financial_details": 'Financial details' in page_text,
-        "page_exposes_structural_checks": 'Structural checks' in page_text,
-        "page_supports_hypothetical_offseason_preview": 'Evaluate as a hypothetical offseason offer' in page_text,
-        "page_warns_salary_legality_is_incomplete": 'minimum/maximum salary legality' in page_text,
-        "page_does_not_import_durable_commit": 'commit_live_financial_free_agency_preview_durably' not in page_text and 'commit_free_agency_preview_durably' not in page_text,
-        "page_has_no_live_sign_button": 'Sign player and save franchise' not in page_text,
+        "franchise_page_exists": PAGE.exists(),
+        "page_delegates_to_current_workspace": (
+            WORKSPACE.exists()
+            and 'render_free_agency_workspace' in page_text
+            and 'render_free_agency_workspace(' in page_text
+        ),
+        "workspace_uses_contract_legal_preview": 'build_contract_legal_free_agency_preview' in workspace_text,
+        "workspace_exposes_financial_details": 'Financial details' in workspace_text,
+        "workspace_exposes_structural_checks": 'Structural checks' in workspace_text,
+        "workspace_supports_hypothetical_offseason_preview": 'Evaluate as a hypothetical offseason offer' in workspace_text,
+        "workspace_exposes_current_salary_legality": 'Contract salary legality' in workspace_text,
+        "preview_helper_does_not_import_durable_commit": (
+            'commit_live_financial_free_agency_preview_durably' not in helper_text
+            and 'commit_free_agency_preview_durably' not in helper_text
+        ),
+        "workspace_live_commit_is_separate_from_preview_helper": (
+            'commit_persistent_user_winner_live(' in workspace_text
+            and 'commit_persistent_user_winner_live(' not in helper_text
+        ),
     }
     compile_ok = True
     compile_error = ''
     try:
         compile(page_text, str(PAGE), 'exec')
+        compile(workspace_text, str(WORKSPACE), 'exec')
+        compile(helper_text, str(UI_HELPER), 'exec')
     except Exception as exc:
         compile_ok = False
         compile_error = str(exc)

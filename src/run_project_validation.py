@@ -260,6 +260,9 @@ def validate_required_files(
 ) -> None:
     required = [
         HOME,
+        ROOT / "LICENSE.md",
+        ROOT / "README.md",
+        ROOT / "docs" / "FRANCHISE_V2_ROADMAP.md",
         PAGES / "3_Trade_Machine.py",
         PAGES / "4_Game_Simulator.py",
         APP_DATA / "player_positions_2026_27_v1.json",
@@ -2067,6 +2070,10 @@ def run_full() -> dict[str, Any]:
         ("franchise_game_day_calendar_sync_regression", "run_franchise_game_day_league_calendar_sync_v1_regression.py"),
         ("franchise_postgame_hotfix_v6_0_1_validation", "validate_franchise_postgame_performance_offer_hotfix_v6_0_1.py"),
         ("franchise_postgame_hotfix_v6_0_1_regression", "run_franchise_postgame_performance_offer_hotfix_v6_0_1_regression.py"),
+        (
+            "franchise_v2_cpu_fa_durable_batch_hotfix_v1_0_1_validation",
+            "validate_franchise_v2_cpu_fa_durable_batch_hotfix_v1_0_1.py",
+        ),
     )
     for name, filename in current_franchise_feature_suites:
         run_subprocess_suite(

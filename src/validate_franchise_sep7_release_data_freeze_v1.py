@@ -16,7 +16,7 @@ OUTPUTS = ROOT / "outputs"
 
 FREEZE_MANIFEST_PATH = APP_DATA / "nba_sep7_release_freeze_v1.json"
 REPORT_PATH = OUTPUTS / "franchise_sep7_release_data_freeze_v1_validation.json"
-VALIDATOR_VERSION = "franchise-sep7-release-data-freeze-validator-v1.0-2026-09-09"
+VALIDATOR_VERSION = "franchise-sep7-release-data-freeze-validator-v1.0.1-2026-09-28"
 
 
 class ReleaseDataFreezeError(RuntimeError):
@@ -29,6 +29,12 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _text_sha256_with_lf_line_endings(path: Path) -> str:
+    """Hash text content without treating Git checkout line endings as a data edit."""
+    payload = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -113,12 +119,31 @@ def main() -> int:
             expected_hash = _clean(row.get("sha256")).lower()
             path = ROOT / rel
             actual_hash = _sha256(path) if path.exists() else None
-            matched = bool(actual_hash and actual_hash.lower() == expected_hash)
+            normalized_hash = (
+                _text_sha256_with_lf_line_endings(path)
+                if path.exists() and actual_hash and actual_hash.lower() != expected_hash
+                else None
+            )
+            matched = bool(
+                actual_hash
+                and (
+                    actual_hash.lower() == expected_hash
+                    or (normalized_hash and normalized_hash.lower() == expected_hash)
+                )
+            )
             all_hashes_match = all_hashes_match and matched
             hash_results[rel] = {
                 "exists": path.exists(),
                 "expected_sha256": expected_hash,
                 "actual_sha256": actual_hash,
+                "line_ending_normalized_sha256": normalized_hash,
+                "match_mode": (
+                    "raw_bytes"
+                    if actual_hash and actual_hash.lower() == expected_hash
+                    else "normalized_text_line_endings"
+                    if matched
+                    else None
+                ),
                 "matched": matched,
             }
 

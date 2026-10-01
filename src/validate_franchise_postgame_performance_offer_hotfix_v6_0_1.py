@@ -38,7 +38,7 @@ def main() -> int:
     a_run = _function_source(a, "run_cpu_autonomous_trade_market_v1")
     b_run = _function_source(b, "run_cpu_incoming_trade_offer_tick_v1")
     sim_start = page.find("if simulate_commit_clicked:")
-    sim_end = page.find("current_preview_request =", sim_start)
+    sim_end = page.find('if active_section == "League Stories":', sim_start)
     sim = page[sim_start:sim_end]
 
     checks.update({

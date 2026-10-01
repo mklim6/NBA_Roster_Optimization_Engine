@@ -36,6 +36,7 @@ from run_franchise_protected_lifecycle_boundary_regression_v1 import (
 )
 from run_franchise_protected_multi_season_soak_v1 import (
     EXPECTED_FORFEIT_DRAFT_SIZES,
+    MAX_SUSTAINABLE_CPU_FA_ROUNDS,
     _population_metrics,
     _staff_personnel_signature,
     _trade_registry_covers_non_synthetic_players,
@@ -355,20 +356,23 @@ def run_continuation(
                 t0 = time.perf_counter()
                 cpu_fa_signings = 0
                 cpu_fa_rounds = 0
-                for round_index in range(1, 7):
+                cpu_fa_stop_reason = ""
+                for round_index in range(1, MAX_SUSTAINABLE_CPU_FA_ROUNDS + 1):
                     fa_source = _checkpoint_or_raise(
                         checkpoint_api,
                         temp_primary,
                         f"{source_season} CPU FA round {round_index}",
                     )
-                    roster_counts = [
-                        len(team.roster_player_ids)
-                        for team in fa_source.simulation_state.teams.values()
-                    ]
-                    minimum_required = int(
-                        getattr(fa_source.simulation_state.settings, "minimum_game_players", 8) or 8
+                    sustainable_deficits = (
+                        cpu_fa_api.cpu_sustainable_roster_deficits(
+                            fa_source.simulation_state,
+                            (),
+                        )
                     )
-                    if roster_counts and min(roster_counts) >= minimum_required:
+                    if not sustainable_deficits:
+                        cpu_fa_stop_reason = (
+                            "all_cpu_teams_meet_sustainable_roster_target"
+                        )
                         break
                     result = cpu_fa_api.execute_cpu_free_agency_round_durably(
                         max_signings=15,
@@ -377,7 +381,13 @@ def run_continuation(
                     )
                     cpu_fa_rounds += 1
                     cpu_fa_signings += int(result.committed_signing_count)
+                    cpu_fa_stop_reason = str(result.stop_reason or "")
                     if int(result.committed_signing_count) <= 0:
+                        break
+                    if result.stop_reason in {
+                        "all_cpu_teams_meet_sustainable_roster_target",
+                        "no_accepted_cpu_market_for_sustainable_roster_deficits",
+                    }:
                         break
 
                 fa_cp = _checkpoint_or_raise(
@@ -401,10 +411,38 @@ def run_continuation(
                     raise ProtectedOffseasonContinuationError(
                         f"{source_season} CPU Free Agency exhausted below roster floor: {underfilled}"
                     )
+                sustainable_deficits_after = (
+                    cpu_fa_api.cpu_sustainable_roster_deficits(
+                        fa_cp.simulation_state,
+                        (),
+                    )
+                )
+                srep["checks"]["cpu_free_agency_reaches_sustainable_target"] = (
+                    not sustainable_deficits_after
+                )
+                if sustainable_deficits_after:
+                    raise ProtectedOffseasonContinuationError(
+                        f"{source_season} CPU Free Agency exhausted below the "
+                        "sustainable roster target: "
+                        + ", ".join(
+                            f"{row[0]}={row[1]}/{row[2]}"
+                            for row in sustainable_deficits_after
+                        )
+                    )
                 srep["cpu_free_agency"] = {
                     "rounds": cpu_fa_rounds,
                     "new_signings_after_resume": cpu_fa_signings,
                     "minimum_roster_after": fa_pop["minimum_roster"],
+                    "sustainable_roster_target": (
+                        cpu_fa_api.CPU_FREE_AGENCY_SUSTAINABLE_ROSTER_TARGET
+                    ),
+                    "teams_below_sustainable_target_after": len(
+                        sustainable_deficits_after
+                    ),
+                    "total_sustainable_roster_deficit_after": sum(
+                        int(row[2]) for row in sustainable_deficits_after
+                    ),
+                    "stop_reason": cpu_fa_stop_reason,
                 }
                 srep["durations_seconds"]["free_agency"] = round(time.perf_counter() - t0, 3)
 
@@ -466,7 +504,8 @@ def run_continuation(
                 validate_simulation_league_state(trimmed.simulation_state)
                 validate_state(trimmed.trade_state, runtime)
                 srep["checks"]["post_draft_trim_committed_or_unneeded"] = (
-                    str(trim_result.status) in {"committed", "no_trim_required"}
+                    str(trim_result.status)
+                    in {"applied", "committed", "no_trim_required"}
                 )
                 srep["durations_seconds"]["draft_and_trim"] = round(time.perf_counter() - t0, 3)
 
@@ -638,8 +677,9 @@ def run_continuation(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Continue a protected soak from a preserved completed-postseason "
-            "offseason checkpoint without touching the active save."
+            "Continue a protected soak from a preserved open regular-season "
+            "or completed-postseason offseason checkpoint without touching "
+            "the active save."
         )
     )
     parser.add_argument("--source-checkpoint", required=True)

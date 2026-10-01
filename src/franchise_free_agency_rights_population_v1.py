@@ -9,6 +9,7 @@ import re
 import shutil
 import tempfile
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -648,12 +649,34 @@ def write_overlay_atomic(payload: Mapping[str, Any], *, path: Path | None = None
     return path, recovery
 
 
+@lru_cache(maxsize=8)
+def _cached_overlay_payload(
+    path_text: str,
+    mtime_ns: int,
+    size_bytes: int,
+) -> dict[str, Any]:
+    # File metadata is part of the key so atomic overlay replacement
+    # invalidates the cached read without returning mutable data to callers.
+    del mtime_ns, size_bytes
+    path = Path(path_text)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def load_overlay_for_state(state: Any, *, path: Path | None = None) -> dict[str, dict[str, Any]]:
     path = (path or default_overlay_path()).resolve()
     if not path.exists():
         return {}
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        stat = path.stat()
+        payload = _cached_overlay_payload(
+            str(path),
+            int(stat.st_mtime_ns),
+            int(stat.st_size),
+        )
     except Exception:
         return {}
     if _clean(payload.get("version")) != FREE_AGENCY_RIGHTS_POPULATION_VERSION:

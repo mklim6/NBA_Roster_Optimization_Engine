@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import math
+import json
+import re
+from functools import lru_cache
+from pathlib import Path
 from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
@@ -26,7 +30,7 @@ from franchise_offseason_market_season_v1 import (
 
 
 FREE_AGENCY_CONTRACT_SALARY_LEGALITY_VERSION = (
-    "franchise-free-agency-contract-salary-legality-v1.4-modeled-future-market-2026-08-18"
+    "franchise-free-agency-contract-salary-legality-v1.5-service-evidence-2026-09-24"
 )
 FREE_AGENCY_CONTRACT_SALARY_SOURCE = (
     "2023_nba_nbpa_cba_article_ii_sections_6_7_exhibit_c_article_ix_section_1"
@@ -131,6 +135,97 @@ def resolve_years_of_service(player: Any) -> tuple[int | None, str]:
         return int(value), attribute
     return None, "not_available_no_age_inference"
 
+
+
+V2_SERVICE_EVIDENCE_VERSION = (
+    "franchise-v2-free-agency-service-evidence-v1-2026-09-24"
+)
+V2_SERVICE_EVIDENCE_SOURCE = (
+    "player_ratings_2026_27_v2.career_seasons_plus_market_season_offset"
+)
+V2_SERVICE_EVIDENCE_ANCHOR_START_YEAR = 2026
+V2_SERVICE_EVIDENCE_RATINGS_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "app_data"
+    / "player_ratings_2026_27_v2.json"
+)
+
+
+def _v2_market_start_year(state: Any) -> int | None:
+    season = str(resolve_offseason_market_season(state) or "").strip()
+    if len(season) < 4 or not season[:4].isdigit():
+        return None
+    return int(season[:4])
+
+
+@lru_cache(maxsize=1)
+def _v2_baseline_career_seasons_by_player() -> dict[str, int]:
+    path = V2_SERVICE_EVIDENCE_RATINGS_PATH
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    rows = payload.get("players_by_id", {})
+    if not isinstance(rows, dict):
+        return {}
+
+    result: dict[str, int] = {}
+    for raw_player_id, row in rows.items():
+        if not isinstance(row, dict):
+            continue
+        raw = row.get("career_seasons")
+        if raw is None or isinstance(raw, bool):
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(value) or value < 0 or not value.is_integer():
+            continue
+        player_id = str(raw_player_id or "").strip()
+        if player_id:
+            result[player_id] = int(value)
+    return result
+
+
+def resolve_years_of_service_for_state(
+    state: Any,
+    player_id: Any,
+) -> tuple[int | None, str]:
+    # Resolve explicit service evidence without age inference.
+    pid = str(player_id or "").strip()
+    player = getattr(state, "players", {}).get(pid)
+    direct, direct_source = resolve_years_of_service(player)
+    if direct is not None:
+        return direct, direct_source
+
+    market_start = _v2_market_start_year(state)
+    if market_start is None:
+        return None, "market_season_unavailable"
+
+    generated = re.fullmatch(r"GEN-(\d{4})-\d+", pid, flags=re.IGNORECASE)
+    if generated:
+        draft_year = int(generated.group(1))
+        if market_start < draft_year:
+            return None, "generated_player_before_draft_year"
+        return (
+            max(0, market_start - draft_year),
+            "generated_player_id_draft_year_progression",
+        )
+
+    baseline = _v2_baseline_career_seasons_by_player().get(pid)
+    if baseline is None:
+        return None, "no_explicit_service_evidence"
+
+    offset = market_start - V2_SERVICE_EVIDENCE_ANCHOR_START_YEAR
+    if offset < 0:
+        return None, "market_precedes_service_evidence_anchor"
+    return (
+        baseline + offset,
+        V2_SERVICE_EVIDENCE_SOURCE,
+    )
 
 def _service_row_key(years_of_service: int) -> int:
     return min(max(int(years_of_service), 0), 10)
@@ -252,7 +347,10 @@ def evaluate_contract_salary_legality(
     years = int(getattr(offer, "years", 0) or 0)
     option_type = _clean(getattr(offer, "option_type", "")).lower()
     player = _player(state, getattr(offer, "player_id", ""))
-    service, service_source = resolve_years_of_service(player)
+    service, service_source = resolve_years_of_service_for_state(
+        state,
+        getattr(offer, "player_id", ""),
+    )
     contract = getattr(player, "contract", None) if player is not None else None
     prior_salary = _finite_positive(getattr(contract, "salary", None))
     if prior_salary is None:

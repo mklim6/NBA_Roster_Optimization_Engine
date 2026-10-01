@@ -79,6 +79,22 @@ def load_installed_allocation_function() -> Callable[..., dict[str, float]]:
     namespace: dict[str, Any] = {
         "math": math,
         "SingleGameSimulationError": RuntimeError,
+        # This validator isolates allocate_minutes() from the installed
+        # simulator. Medical/load-management caps are tested elsewhere, so
+        # use the function's own default maximum here and keep this validator
+        # focused on saved rotation target preservation.
+        "player_minutes_cap": (
+            lambda state, player_id, *, day_index, default_maximum:
+                float(default_maximum)
+        ),
+        # Coaching Workload Redistribution V1 is identity behavior when the
+        # saved starting five is healthy. This validator intentionally models
+        # that healthy path, so inject exact neutral multipliers rather than
+        # importing the complete coaching dependency graph.
+        "coaching_minute_weight_multipliers_v1": (
+            lambda state, team, *, rotation_ids, starter_ids:
+                {player_id: 1.0 for player_id in rotation_ids}
+        ),
     }
     exec(
         compile(
@@ -97,6 +113,7 @@ def build_state(
     targets: dict[str, float],
 ) -> Any:
     return SimpleNamespace(
+        current_day_index=0,
         settings=SimpleNamespace(
             regulation_minutes=48,
             overtime_minutes=5,

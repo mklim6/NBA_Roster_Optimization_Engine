@@ -24,6 +24,9 @@ FREE_AGENCY_DEFERRED_PREVIEW_FINGERPRINT_VERSION = (
 FREE_AGENCY_SUBFIVE_ROTATION_REPAIR_VERSION = (
     "franchise-free-agency-subfive-rotation-repair-v1.1-2026-09-11"
 )
+FREE_AGENCY_SPECULATIVE_TOUCHED_VALIDATION_VERSION = (
+    "franchise-free-agency-speculative-touched-validation-v1-2026-09-25"
+)
 SUPPORTED_OPTION_TYPES = {
     "",
     "team_option",
@@ -335,6 +338,185 @@ def _default_state_validator(state: Any) -> Any:
     return validate_simulation_league_state(state)
 
 
+def _speculative_candidate_validator(
+    state: Any,
+    offer: FreeAgencyOffer,
+    *,
+    max_roster_size: int,
+) -> dict[str, bool]:
+    """Validate only state surfaces a speculative FA signing can mutate.
+
+    Production CPU offer-board construction validates the complete source
+    league state once before speculative previews begin. A preview then clones
+    only the target player, target team and free-agent tuple. Re-running every
+    immutable league-wide invariant for every hypothetical offer is therefore
+    redundant.
+
+    This validator intentionally covers every invariant the signing itself can
+    change. Durable/winning signings still use the full league validator.
+    """
+    players = getattr(state, "players", {})
+    teams = getattr(state, "teams", {})
+    player = players.get(offer.player_id)
+    team_state = teams.get(offer.team_abbreviation)
+    free_ids = {
+        _normalize_player_id(player_id)
+        for player_id in getattr(state, "free_agent_player_ids", ())
+    }
+    roster_ids = [
+        _normalize_player_id(player_id)
+        for team in teams.values()
+        for player_id in getattr(team, "roster_player_ids", ())
+    ]
+    roster_set = set(roster_ids)
+    player_ids = {
+        _normalize_player_id(player_id)
+        for player_id in players
+    }
+
+    phase = _clean_text(
+        getattr(
+            getattr(state, "phase", ""),
+            "value",
+            getattr(state, "phase", ""),
+        )
+    ).lower()
+
+    roster_count = (
+        len(getattr(team_state, "roster_player_ids", ()))
+        if team_state is not None
+        else 0
+    )
+    rotation = (
+        getattr(team_state, "rotation", None)
+        if team_state is not None
+        else None
+    )
+    rotation_ids = {
+        _normalize_player_id(player_id)
+        for player_id in getattr(rotation, "rotation_player_ids", ())
+    }
+    starter_ids = {
+        _normalize_player_id(player_id)
+        for player_id in getattr(rotation, "starter_ids", ())
+    }
+    minute_targets = getattr(rotation, "minutes_targets", {}) or {}
+
+    contract = getattr(player, "contract", None) if player is not None else None
+
+    if phase == "offseason" and roster_count < 5:
+        expected_starters = roster_count
+        expected_minutes = 0.0
+    else:
+        expected_starters = 5
+        regulation_minutes = float(
+            getattr(getattr(state, "settings", None), "regulation_minutes", 48.0)
+            or 48.0
+        )
+        expected_minutes = regulation_minutes * 5.0
+
+    checks = {
+        "player_exists": player is not None,
+        "team_exists": team_state is not None,
+        "signed_player_removed_from_free_agent_pool": (
+            offer.player_id not in free_ids
+        ),
+        "free_agents_exist": free_ids.issubset(player_ids),
+        "free_agents_not_on_rosters": not free_ids.intersection(roster_set),
+        "all_roster_ids_exist": roster_set.issubset(player_ids),
+        "league_roster_ids_unique": len(roster_ids) == len(roster_set),
+        "signed_player_rostered_exactly_once": (
+            roster_ids.count(offer.player_id) == 1
+        ),
+        "signed_player_on_target_team": (
+            team_state is not None
+            and offer.player_id
+            in {
+                _normalize_player_id(value)
+                for value in getattr(team_state, "roster_player_ids", ())
+            }
+        ),
+        "target_roster_within_transaction_ceiling": (
+            team_state is not None
+            and roster_count <= int(max_roster_size)
+        ),
+        "player_team_assignment_matches": (
+            player is not None
+            and _normalize_team(
+                getattr(player, "team_abbreviation", "")
+            )
+            == offer.team_abbreviation
+        ),
+        "player_status_is_active_roster": (
+            player is not None
+            and _clean_text(
+                getattr(player, "roster_status", "")
+            ).lower()
+            == "active_roster"
+        ),
+        "player_remains_non_two_way": (
+            player is not None
+            and not bool(getattr(player, "two_way", False))
+        ),
+        "rotation_is_roster_subset": (
+            team_state is not None
+            and rotation_ids.issubset(
+                {
+                    _normalize_player_id(value)
+                    for value in getattr(team_state, "roster_player_ids", ())
+                }
+            )
+        ),
+        "starters_are_rotation_subset": starter_ids.issubset(rotation_ids),
+        "starter_count_is_valid": (
+            len(getattr(rotation, "starter_ids", ())) == expected_starters
+        ),
+        "rotation_minutes_reconcile": math.isclose(
+            sum(float(value) for value in minute_targets.values()),
+            expected_minutes,
+            abs_tol=0.1,
+        ),
+        "contract_exists": contract is not None,
+        "contract_status_written": (
+            contract is not None
+            and _clean_text(getattr(contract, "status", "")).lower()
+            == "under_contract"
+        ),
+        "contract_salary_matches_offer": (
+            contract is not None
+            and math.isclose(
+                float(getattr(contract, "salary", 0.0) or 0.0),
+                float(offer.annual_salary),
+                rel_tol=0.0,
+                abs_tol=0.01,
+            )
+        ),
+        "contract_years_match_offer": (
+            contract is not None
+            and int(getattr(contract, "years_remaining", -1) or -1)
+            == int(offer.years)
+        ),
+        "contract_option_matches_offer": (
+            contract is not None
+            and _clean_text(getattr(contract, "option_type", "")).lower()
+            == _clean_text(offer.option_type).lower()
+        ),
+        "contract_guarantee_matches_offer": (
+            contract is not None
+            and bool(getattr(contract, "guaranteed", False))
+            == bool(offer.guaranteed)
+        ),
+    }
+
+    failed = [name for name, passed in checks.items() if not passed]
+    if failed:
+        raise FreeAgencyTransactionError(
+            "Speculative free-agency touched-surface validation failed: "
+            + ", ".join(failed)
+        )
+    return checks
+
+
 def _rostered_player_ids(state: Any) -> set[str]:
     return {
         _normalize_player_id(player_id)
@@ -567,9 +749,20 @@ def build_free_agency_preview(
     max_roster_size: int = DEFAULT_MAX_ROSTER_SIZE,
     _source_fingerprint: str | None = None,
     _defer_candidate_fingerprint: bool = False,
+    _candidate_sink: list[Any] | None = None,
 ) -> FreeAgencyTransactionPreview:
     resolved_offer = normalized_offer(offer)
-    validator = state_validator or _default_state_validator
+    if state_validator is not None:
+        validator = state_validator
+    elif _defer_candidate_fingerprint:
+        validator = lambda candidate: _speculative_candidate_validator(
+            candidate,
+            resolved_offer,
+            max_roster_size=max_roster_size,
+        )
+    else:
+        validator = _default_state_validator
+
     source_fingerprint = (
         str(_source_fingerprint)
         if _source_fingerprint is not None
@@ -624,6 +817,8 @@ def build_free_agency_preview(
             message = f"Candidate signing state is invalid: {exc}"
         else:
             checks["candidate_state_valid"] = True
+            if _candidate_sink is not None:
+                _candidate_sink.append(candidate)
             # CPU offer-board and roster-floor discovery can validate the
             # exact candidate shape without hashing the entire mature franchise
             # graph for every speculative offer. The winning offer is rebuilt
@@ -668,6 +863,7 @@ def commit_free_agency_preview(
     state_validator: StateValidator | None = None,
     max_roster_size: int = DEFAULT_MAX_ROSTER_SIZE,
     _candidate_copy_on_write: bool = False,
+    _source_fingerprint: str | None = None,
 ) -> tuple[Any, FreeAgencyCommitResult]:
     if preview.transaction_version != FREE_AGENCY_TRANSACTION_VERSION:
         raise FreeAgencyTransactionError(
@@ -678,12 +874,19 @@ def commit_free_agency_preview(
             "Only a PASS free-agency preview can be committed."
         )
 
-    source_fingerprint = free_agency_state_fingerprint(state)
+    source_fingerprint = (
+        str(_source_fingerprint)
+        if _source_fingerprint is not None
+        else free_agency_state_fingerprint(state)
+    )
     if source_fingerprint != preview.source_fingerprint:
         raise FreeAgencyTransactionError(
             "Free-agency preview is stale because the franchise state changed."
         )
 
+    rebuilt_candidate_sink: list[Any] | None = (
+        [] if _candidate_copy_on_write else None
+    )
     rebuilt = build_free_agency_preview(
         state,
         preview.offer,
@@ -691,6 +894,7 @@ def commit_free_agency_preview(
         state_validator=state_validator,
         max_roster_size=max_roster_size,
         _source_fingerprint=source_fingerprint,
+        _candidate_sink=rebuilt_candidate_sink,
     )
     if (
         not rebuilt.can_commit
@@ -700,18 +904,22 @@ def commit_free_agency_preview(
             "The signing no longer reproduces the approved preview."
         )
 
-    validator = state_validator or _default_state_validator
-    candidate_builder = (
-        _build_preview_candidate_state
-        if _candidate_copy_on_write
-        else _build_candidate_state
-    )
-    candidate = candidate_builder(
-        state,
-        preview.offer,
-        state_validator=validator,
-    )
-    committed_fingerprint = free_agency_state_fingerprint(candidate)
+    if _candidate_copy_on_write:
+        if not rebuilt_candidate_sink or len(rebuilt_candidate_sink) != 1:
+            raise FreeAgencyTransactionError(
+                "The verified copy-on-write signing candidate was not preserved."
+            )
+        candidate = rebuilt_candidate_sink[0]
+        committed_fingerprint = rebuilt.candidate_fingerprint
+    else:
+        validator = state_validator or _default_state_validator
+        candidate = _build_candidate_state(
+            state,
+            preview.offer,
+            state_validator=validator,
+        )
+        committed_fingerprint = free_agency_state_fingerprint(candidate)
+
     if committed_fingerprint != preview.candidate_fingerprint:
         raise FreeAgencyTransactionError(
             "Committed candidate does not match the approved preview."

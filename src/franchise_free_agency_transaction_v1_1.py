@@ -240,7 +240,13 @@ def cap_space_gate(config: FreeAgencyCapSpaceGateConfig) -> Callable[[Any, FreeA
     return _gate
 
 
-def _history(state: Any) -> list[dict[str, Any]]:
+def _history_view(state: Any) -> list[dict[str, Any]]:
+    """Return the validated history list without copying it.
+
+    Callers must treat the result as read-only.  Durable fingerprinting already
+    rebuilds the complete JSON-safe payload, so deep-copying the source history
+    first only duplicated work as franchise histories grew across seasons.
+    """
     raw = getattr(state, FREE_AGENCY_HISTORY_ATTR, None)
     if raw is None:
         return []
@@ -248,20 +254,43 @@ def _history(state: Any) -> list[dict[str, Any]]:
         raise FreeAgencyDurableCommitError(
             f"{FREE_AGENCY_HISTORY_ATTR} must be a list when present."
         )
-    return copy.deepcopy(raw)
+    return raw
 
 
-def free_agency_durable_state_payload(state: Any) -> dict[str, Any]:
+def _history(state: Any) -> list[dict[str, Any]]:
+    """Return a defensive history copy for callers that may mutate rows."""
+    return copy.deepcopy(_history_view(state))
+
+
+def free_agency_durable_state_payload(
+    state: Any,
+    *,
+    _v1_state_fingerprint: str = "",
+) -> dict[str, Any]:
     return {
-        "v1_state_fingerprint": free_agency_state_fingerprint(state),
+        "v1_state_fingerprint": (
+            str(_v1_state_fingerprint)
+            if str(_v1_state_fingerprint)
+            else free_agency_state_fingerprint(state)
+        ),
         "free_agency_revision": int(getattr(state, FREE_AGENCY_REVISION_ATTR, 0) or 0),
-        "free_agency_history": _json_safe(_history(state)),
+        # _json_safe recursively builds a detached list/dict graph and never
+        # mutates its input.  Reading the validated history view avoids an
+        # otherwise redundant full deepcopy on every durable fingerprint.
+        "free_agency_history": _json_safe(_history_view(state)),
     }
 
 
-def free_agency_durable_state_fingerprint(state: Any) -> str:
+def free_agency_durable_state_fingerprint(
+    state: Any,
+    *,
+    _v1_state_fingerprint: str = "",
+) -> str:
     encoded = json.dumps(
-        free_agency_durable_state_payload(state),
+        free_agency_durable_state_payload(
+            state,
+            _v1_state_fingerprint=_v1_state_fingerprint,
+        ),
         sort_keys=True,
         separators=(",", ":"),
         default=str,
@@ -275,7 +304,11 @@ def _append_history(
     commit: FreeAgencyCommitResult,
     preview: FreeAgencyTransactionPreview,
 ) -> tuple[int, str]:
-    history = _history(state)
+    # This operation only appends a brand-new row.  Copy the list container so
+    # a copy-on-write candidate cannot modify its source state, while reusing
+    # the existing immutable history rows instead of deep-copying every prior
+    # transaction for each new signing.
+    history = list(_history_view(state))
     revision = int(getattr(state, FREE_AGENCY_REVISION_ATTR, 0) or 0) + 1
     transaction_id = f"FATX-{revision:04d}"
     history.append({
@@ -443,6 +476,7 @@ def build_free_agency_durable_candidate(
     state_validator: Callable[[Any], Any] | None = None,
     max_roster_size: int = 18,
     _candidate_copy_on_write: bool = False,
+    _source_fingerprint: str | None = None,
 ) -> tuple[Any, FreeAgencyCommitResult, int, str]:
     candidate, commit = commit_free_agency_preview(
         state,
@@ -451,6 +485,7 @@ def build_free_agency_durable_candidate(
         state_validator=state_validator,
         max_roster_size=max_roster_size,
         _candidate_copy_on_write=_candidate_copy_on_write,
+        _source_fingerprint=_source_fingerprint,
     )
     revision, transaction_id = _append_history(
         candidate,
@@ -598,11 +633,12 @@ def commit_free_agency_preview_durably(
             checkpoint.trade_state,
             preferences=copy.deepcopy(dict(preferences or checkpoint.preferences or {})),
             reason=reason,
-            copy_payload=True,
+            copy_payload=False,
+            _return_verified=True,
+            _existing_checkpoint=checkpoint,
+            _expected_existing_sha256=checkpoint_hash_before,
         )
-        reloaded = load_franchise_checkpoint()
-        if reloaded is None:
-            raise FreeAgencyDurableCommitError("Checkpoint reload returned no state after save.")
+        reloaded = saved
         observed_fingerprint = free_agency_durable_state_fingerprint(reloaded.simulation_state)
         if observed_fingerprint != expected_fingerprint:
             raise FreeAgencyDurableCommitError(

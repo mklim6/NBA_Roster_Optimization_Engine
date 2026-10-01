@@ -56,7 +56,7 @@ def main() -> int:
     commit_fn = _function_source(page_text, "commit_game_transactionally")
 
     sim_start = page_text.find("if simulate_commit_clicked:")
-    sim_end = page_text.find("current_preview_request =", sim_start)
+    sim_end = page_text.find('if active_section == "League Stories":', sim_start)
     sim = page_text[sim_start:sim_end] if sim_start >= 0 and sim_end > sim_start else ""
 
     commit_pos = sim.find("commit_game_transactionally(")

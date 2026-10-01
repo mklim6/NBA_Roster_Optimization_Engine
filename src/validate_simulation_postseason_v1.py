@@ -171,14 +171,8 @@ def run_validation() -> dict[str, Any]:
         "postseason_leaders": (
             '"Postseason Leaders"'
         ),
-        "what_if_preview": (
-            "What-if preview"
-        ),
         "committed_simulation": (
             "Simulate & commit"
-        ),
-        "what_if_is_sandbox_only": (
-            "Sandbox result only."
         ),
         "simulate_stage": (
             "Sim current stage"
@@ -311,20 +305,22 @@ def run_validation() -> dict[str, Any]:
         in page_text
     )
     checks[
-        "game_day_supports_sandbox_what_if_and_commit"
+        "game_day_uses_direct_postseason_commit_without_what_if"
     ] = (
         "render_postseason_game_day("
         in page_text
-        and "What-if preview"
-        in page_text
-        and "Sandbox result only."
-        in page_text
         and "Simulate & commit"
-        in page_text
-        and "simulate_postseason_game("
         in page_text
         and "commit_postseason_game("
         in page_text
+        and "What-if preview"
+        not in page_text
+        and "What-if next game"
+        not in page_text
+        and "Sandbox result only."
+        not in page_text
+        and "simulate_postseason_game("
+        not in page_text
     )
     checks[
         "completed_postseason_box_scores_use_stored_games"

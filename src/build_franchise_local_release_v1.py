@@ -15,6 +15,7 @@ RELEASE_VERSION = "nba-franchise-simulator-local-v1-2026-09-17"
 ROOT_FILES = (
     ".gitignore",
     "Home.py",
+    "LICENSE.md",
     "README.md",
     "requirements.txt",
 )
@@ -41,6 +42,7 @@ RELEASE_DOCS = (
     "docs/FRANCHISE_MODE_CURRENT_STATUS.md",
     "docs/FRANCHISE_MODE_MASTER_ROADMAP.md",
     "docs/FRANCHISE_MODE_RELEASE_CHECKLIST_V1.md",
+    "docs/FRANCHISE_V2_ROADMAP.md",
     "docs/FRANCHISE_GAME_DAY_BROADCAST_V1.md",
     "docs/FRANCHISE_ONBOARDING_PROGRESSION_V1.md",
     "docs/FRANCHISE_RETENTION_EXPERIENCE_V1.md",

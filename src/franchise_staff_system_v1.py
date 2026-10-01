@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+from functools import lru_cache
 from datetime import date
 from pathlib import Path
 from dataclasses import asdict, dataclass, field
@@ -139,15 +140,41 @@ def _stable_rng(*parts: Any) -> random.Random:
     return random.Random(seed)
 
 
-def _load_real_staff_reference() -> dict[str, Any]:
-    try:
-        payload = json.loads(_REAL_STAFF_REFERENCE_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if str(payload.get("version") or "") != REAL_STAFF_REFERENCE_VERSION:
+@lru_cache(maxsize=4)
+def _load_real_staff_reference_cached(
+    path_text: str,
+    reference_version: str,
+    mtime_ns: int,
+    file_size: int,
+) -> dict[str, Any]:
+    """Parse one immutable staff-reference revision.
+
+    The file signature is part of the cache key, so development-time edits
+    automatically invalidate the cached payload without weakening Streamlit
+    hot-reload behavior. Invalid or missing revisions are handled by the
+    public wrapper and therefore are not permanently cached as a successful
+    reference.
+    """
+    del mtime_ns, file_size
+    path = Path(path_text)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if str(payload.get("version") or "") != reference_version:
         return {}
     teams = payload.get("teams")
     return teams if isinstance(teams, dict) else {}
+
+
+def _load_real_staff_reference() -> dict[str, Any]:
+    try:
+        stat = _REAL_STAFF_REFERENCE_PATH.stat()
+        return _load_real_staff_reference_cached(
+            str(_REAL_STAFF_REFERENCE_PATH),
+            REAL_STAFF_REFERENCE_VERSION,
+            int(stat.st_mtime_ns),
+            int(stat.st_size),
+        )
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 
 def _age_on_reference_date(birth_date: str) -> int | None:

@@ -1,6 +1,6 @@
 # Franchise Mode Current Status
 
-Updated: September 17, 2026
+Updated: September 29, 2026
 
 ## Current milestone
 
@@ -52,12 +52,12 @@ the September 7 live-start preview:
 
 - 645 players, 320 free agents, and 30 teams with roster sizes from 8 through
   14.
-- 748 of 1,230 league games are complete; Chicago is 22-26 through 48 games.
+- 755 of 1,230 league games are complete; Chicago is 22-27 through 49 games.
 - Chicago is the only user-controlled team.
-- Current day index: 107. The saved active workspace is Game Day.
+- Current day index: 108. The saved active workspace is Game Day.
 - The latest checkpoint reason is `franchise-auto-managed-routine-events`.
 - Active checkpoint SHA-256:
-  `7722cad5934ea69e0379c738e805840039351c9429bcbb451d8c9fb3fe668d0f`.
+  `6b9cb89d78a9c143a62c9460375b96cdf215dfbf9ac713001755ac7045c8718d`.
 
 The direct recovery backup intentionally represents the previous valid state
 and does not need to be byte-identical to the active checkpoint. Both files are
@@ -99,9 +99,11 @@ The repair does not increase the rescue limit:
   latest V3.0.2 through V6.0.1 suites are also registered directly in the
   release-candidate gate so `--skip-full` cannot bypass current feature
   coverage.
-- Project quick gate passes 39/39 checks; all 703 Python files compile.
+- Project quick gate passes 39/39 checks; all 732 current source/app/page Python files compile.
 - New preseason roster-floor validator: 5/5 checks passed.
-- CPU roster-floor rescue validator: 19/19 checks passed.
+- CPU roster-floor rescue validator: 20/20 checks passed. Its execution-protocol
+  assertion now accepts compatible V1.x durability revisions while preserving
+  the original rescue behavior contract.
 - CPU Free Agency execution validator: 29/29 checks passed read-only.
 - Lifecycle authority, season-boundary snapshot rebase, owner normalization,
   and Draft V1.1.8 validators all passed.
@@ -114,8 +116,9 @@ The repair does not increase the rescue limit:
 - The running Streamlit app hot-reloaded and rendered Franchise Mode, Schedule,
   League Hub, the season journey, Offseason Headquarters, and next-season
   routing without an app exception.
-- The expanded unified full suite passes 120/120 checks after the Free Agency
-  performance repair and current UI-validator reconciliation.
+- The September 29 expanded unified full suite passes 121/121 checks in 317.795
+  seconds after the Free Agency performance and durability work. The protected
+  active checkpoint retained its exact pre-run SHA-256.
 - The final non-destructive release-candidate gate passes with the full suite
   skipped only because the same 120-check run had just completed. Its quick
   gate, release worktree audit, frozen-data audits, current feature regressions,
@@ -123,6 +126,17 @@ The repair does not increase the rescue limit:
 - A final September 17 gate rerun passes all 28 release stages after packaging,
   including quick validation, worktree classification, current feature
   regressions, and isolated live-start commit/rollback.
+- The September 29 V2 dedicated release pass clears every frozen-data,
+  live-start, staff, Free Agency, draft, morale, trade, calendar, postgame,
+  durable-batch, worktree, and isolated commit/rollback stage. The retained V2
+  tools and validators are staged for review, two superseded durability scripts
+  were removed, and no untracked production Python remains. Loose patch bundles,
+  generated checkpoints, ZIP remnants, and manual-review notes remain unstaged
+  and excluded from this release consolidation.
+- The subsequent repository cleanup moved 35 loose non-source artifacts (about
+  7.1 MB) into the recoverable external archive
+  `C:\Users\klima\Documents\Codex\2026-09-06\i-x20\nba_v2_release_artifacts_2026-09-29_1dd875a`.
+  Historical ignored ZIP backups remain intentionally preserved.
 - The standalone Free Agency page now treats an empty RFA ledger during the
   regular season as an inactive overlay instead of an invalid anchor-offseason
   ledger. The strict 64-player check remains enforced when the certified anchor
@@ -183,11 +197,33 @@ the 2034-35 league opens with 300 rostered players and 552 free agents, with all
 teams at 10 players. That is fully playable and contract-valid, but a later
 roster-ecology pass can target NBA-like 14–15-player organizations if desired.
 
+The September 27–28 V2 performance pass then profiled the same preserved
+2033-34 mature-offseason checkpoint through the complete protected path. CPU
+Free Agency improved from 39.06 seconds to 19.41 seconds, post-Draft trim
+improved from 35.28 seconds to 11.94 seconds, and the full Free Agency, Draft,
+save/reload, and trim benchmark improved from 98.04 seconds to 47.61 seconds.
+The run completed all 12 required signings, left every team at the 14-player
+sustainable target, completed all 60 draft selections, passed validation, and
+left the active checkpoint unchanged. The principal repair caches the immutable
+Trade Machine validation package once per process and avoids redundant deep
+copies of mature transaction histories while retaining identical fingerprints.
+
+The September 29 durability pass removed the remaining per-signing checkpoint
+serialization bottleneck without weakening crash recovery. CPU Free Agency now
+commits accepted transactions in atomic batches of five, verifies the expected
+pre-flush checkpoint hash, retains a recovery copy for each batch, and performs
+a final semantic reload. A protected full-season run completed in 151.70
+seconds: the 155-signing CPU market took 49.21 seconds, all 30 teams reached the
+14-player sustainable target, Draft and trim completed, and the next-season
+boundary passed. The run observed 31 durable batch saves and zero individual
+CPU-signing saves. Both the runtime trace and exact-source hotfix validator pass,
+and the active checkpoint family remains unchanged.
+
 ## Save protection
 
-The active franchise checkpoint remained unchanged throughout the September 17
-protected soak continuation and release validation at SHA-256:
-`7722cad5934ea69e0379c738e805840039351c9429bcbb451d8c9fb3fe668d0f`.
+The active franchise checkpoint remained unchanged throughout the September 28
+read-only validation and protected performance work at SHA-256:
+`6b9cb89d78a9c143a62c9460375b96cdf215dfbf9ac713001755ac7045c8718d`.
 
 The active checkpoint and its direct backup are both present and unchanged by
 read-only validation. The backup is the previous valid recovery state and is
@@ -213,8 +249,9 @@ during recovery-directory creation.
 
 ## Immediate work queue
 
-1. Review the accumulated Git diff, then create the release commit/tag when the
-   owner is ready. No commit or tag was created automatically.
+1. Review the consolidated V2 commits and create a release tag only when the
+   owner is ready. Source changes are committed locally; no tag or remote push
+   was created automatically.
 2. Optionally calibrate CPU organizations toward 14–15-player rosters and prune
    long-term free-agent population growth. This is realism polish, not a
    lifecycle or release-gate blocker.

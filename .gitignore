@@ -53,3 +53,5 @@ app_data/league_scenarios/*.json
 /CURRENT_SOURCE_SNAPSHOT/
 /*.zip
 # END NBA FRANCHISE RELEASE LOCAL ARTIFACTS V1
+/v2_phase1_service_evidence_patch_v1/
+/vscode_workspace_cleanup_v1/

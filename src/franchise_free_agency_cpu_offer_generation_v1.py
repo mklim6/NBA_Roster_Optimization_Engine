@@ -21,6 +21,7 @@ from franchise_free_agency_contract_salary_legality_v1_3 import (
     maximum_initial_salary_for_state,
     minimum_salary_floor_for_state,
     resolve_years_of_service,
+    resolve_years_of_service_for_state,
 )
 from franchise_free_agency_financial_bridge_v1_2 import (
     FREE_AGENCY_FINANCIAL_BRIDGE_VERSION,
@@ -69,6 +70,12 @@ CPU_FREE_AGENCY_OFFER_GENERATION_VERSION = (
 )
 CPU_FREE_AGENCY_PREVIEW_REUSE_VERSION = (
     "franchise-free-agency-cpu-preview-reuse-v1-2026-09-11"
+)
+CPU_FREE_AGENCY_SPECULATIVE_SOURCE_VALIDATION_VERSION = (
+    "franchise-free-agency-speculative-source-validation-v1-2026-09-25"
+)
+CPU_FREE_AGENCY_BOARD_CACHE_VERSION = (
+    "franchise-free-agency-cpu-board-cache-v1-2026-09-24"
 )
 CPU_FREE_AGENCY_OFFER_GENERATION_SCOPE = (
     "read_only_cpu_bid_construction_from_existing_front_office_target_boards"
@@ -568,7 +575,14 @@ def resolve_supported_cpu_offer_term(
     invents salary scales or exceptions.
     """
     requested_years = _offer_term(player, direction)
-    service, _ = resolve_years_of_service(player)
+    service, _ = (
+        resolve_years_of_service_for_state(
+            state,
+            getattr(player, "player_id", ""),
+        )
+        if state is not None
+        else resolve_years_of_service(player)
+    )
     contract = getattr(player, "contract", None)
     prior_salary = _finite(getattr(contract, "salary", None)) if contract is not None else None
     maximum = (
@@ -658,6 +672,7 @@ def build_cpu_free_agency_offer_board(
     state: Any,
     *,
     controlled_teams: Iterable[str] = (),
+    eligible_teams: Iterable[str] | None = None,
     front_office_plan: Any | None = None,
     preview_builder: Callable[..., Any] | None = None,
     financial_environment_resolver: Callable[[Any], Any] | None = None,
@@ -677,6 +692,11 @@ def build_cpu_free_agency_offer_board(
 
     season_label = _season(state)
     controlled = {_team(value) for value in controlled_teams if _team(value)}
+    eligible = (
+        None
+        if eligible_teams is None
+        else {_team(value) for value in eligible_teams if _team(value)}
+    )
     plan = front_office_plan if front_office_plan is not None else _front_office_plan_from_runtime(state, controlled)
     team_plans = _extract_team_plans(plan)
     if not team_plans:
@@ -689,7 +709,11 @@ def build_cpu_free_agency_offer_board(
             version=CPU_FREE_AGENCY_OFFER_GENERATION_VERSION,
             scope=CPU_FREE_AGENCY_OFFER_GENERATION_SCOPE,
             season_label=season_label,
-            cpu_team_count=sum(team not in controlled for team, _ in team_plans),
+            cpu_team_count=sum(
+                team not in controlled
+                and (eligible is None or team in eligible)
+                for team, _ in team_plans
+            ),
             targeted_player_count=0,
             generated_offer_count=0,
             skipped_bid_count=0,
@@ -708,6 +732,66 @@ def build_cpu_free_agency_offer_board(
         )
 
     builder = preview_builder or build_rights_exception_free_agency_preview
+    if preview_builder is None:
+        # The speculative preview path below clones only the target player,
+        # destination team and free-agent tuple. Prove the immutable source
+        # universe is valid once per complete board, then let each hypothetical
+        # signing validate only the touched surfaces. Actual winners still go
+        # through the existing full durable validation path before commit.
+        from simulation_league_state_v1 import validate_simulation_league_state
+
+        validate_simulation_league_state(state)
+
+    # The state is immutable for the lifetime of one offer-board build. Cache
+    # repeated pure reads without reusing a board across committed signings.
+    payroll_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+    service_cache: dict[str, tuple[int | None, str]] = {}
+    rights_cache: dict[str, Any] = {}
+    route_cache: dict[tuple[str, str, int], Any] = {}
+    term_cache: dict[tuple[str, str], CPUFreeAgencyTermResolution | None] = {}
+
+    def cached_payroll(team: str) -> tuple[float, dict[str, Any]]:
+        resolved = _team(team)
+        if resolved not in payroll_cache:
+            payroll_cache[resolved] = payroll_fn(state, resolved)
+        return payroll_cache[resolved]
+
+    def cached_service(player_id: str) -> tuple[int | None, str]:
+        pid = _clean(player_id)
+        if pid not in service_cache:
+            service_cache[pid] = resolve_years_of_service_for_state(state, pid)
+        return service_cache[pid]
+
+    def cached_rights(player_id: str) -> Any:
+        pid = _clean(player_id)
+        if pid not in rights_cache:
+            rights_cache[pid] = resolve_free_agency_rights(state, pid)
+        return rights_cache[pid]
+
+    def cached_route(offer: FreeAgencyOffer) -> Any:
+        key = (
+            _clean(offer.player_id),
+            _team(offer.team_abbreviation),
+            int(offer.years),
+        )
+        if key not in route_cache:
+            route_cache[key] = resolve_prior_team_exception_route(state, offer)
+        return route_cache[key]
+
+    def cached_term(
+        player_id: str,
+        player: Any,
+        direction: str,
+    ) -> CPUFreeAgencyTermResolution | None:
+        key = (_clean(player_id), _clean(direction))
+        if key not in term_cache:
+            term_cache[key] = resolve_supported_cpu_offer_term(
+                player,
+                direction,
+                state=state,
+            )
+        return term_cache[key]
+
     shared_source_fingerprint = (
         free_agency_state_fingerprint(state)
         if preview_builder is None
@@ -759,6 +843,8 @@ def build_cpu_free_agency_offer_board(
     for team, team_plan in team_plans:
         if team in controlled:
             continue
+        if eligible is not None and team not in eligible:
+            continue
         direction = _team_direction(team_plan)
         posture = _salary_posture(team_plan)
         targets = _extract_targets(team_plan)
@@ -804,10 +890,10 @@ def build_cpu_free_agency_offer_board(
                     )
                 )
                 continue
-            term_resolution = resolve_supported_cpu_offer_term(
+            term_resolution = cached_term(
+                player_id,
                 player,
                 direction,
-                state=state,
             )
             if term_resolution is None:
                 skipped.append(CPUFreeAgencySkippedBid(player_id, player_name, team, "salary_legality_bounds_unavailable"))
@@ -817,10 +903,10 @@ def build_cpu_free_agency_offer_board(
             strategic_years = int(term_resolution.years)
             strategic_minimum = float(term_resolution.minimum_salary_floor)
             generic_maximum = float(term_resolution.maximum_initial_salary)
-            payroll, _ = payroll_fn(state, team)
+            payroll, _ = cached_payroll(team)
             cap_space = float(environment.salary_cap) - float(payroll)
 
-            rights = resolve_free_agency_rights(state, player_id)
+            rights = cached_rights(player_id)
             provisional_offer = FreeAgencyOffer(
                 player_id=player_id,
                 team_abbreviation=team,
@@ -829,7 +915,7 @@ def build_cpu_free_agency_offer_board(
                 guaranteed=True,
                 option_type="",
             )
-            rights_route = resolve_prior_team_exception_route(state, provisional_offer)
+            rights_route = cached_route(provisional_offer)
             rights_available = (
                 rights_route.status == "pass"
                 and rights_route.safe_exception_ceiling is not None
@@ -838,7 +924,7 @@ def build_cpu_free_agency_offer_board(
                 and strategic_minimum <= float(rights_route.safe_exception_ceiling) + 0.01
             )
 
-            service, _ = resolve_years_of_service(player)
+            service, _ = cached_service(player_id)
             minimum_exception_salary = minimum_salary_floor_for_state(
                 state,
                 years_of_service=service,
@@ -1164,6 +1250,8 @@ def build_cpu_free_agency_offer_board(
         "version": CPU_FREE_AGENCY_OFFER_GENERATION_VERSION,
         "exception_routing": CPU_FREE_AGENCY_EXCEPTION_ROUTING_VERSION,
         "season": season_label,
+        "controlled_teams": sorted(controlled),
+        "eligible_teams": (sorted(eligible) if eligible is not None else None),
         "offers": [
             {
                 "player_id": row.player_id,
@@ -1210,7 +1298,11 @@ def build_cpu_free_agency_offer_board(
         version=CPU_FREE_AGENCY_OFFER_GENERATION_VERSION,
         scope=CPU_FREE_AGENCY_OFFER_GENERATION_SCOPE,
         season_label=season_label,
-        cpu_team_count=sum(team not in controlled for team, _ in team_plans),
+        cpu_team_count=sum(
+            team not in controlled
+            and (eligible is None or team in eligible)
+            for team, _ in team_plans
+        ),
         targeted_player_count=len(targeted_players),
         generated_offer_count=len(generated),
         skipped_bid_count=len(skipped),
@@ -1266,8 +1358,18 @@ def generation_contract_report() -> dict[str, Any]:
         "offer_economic_adapter_version": CPU_FREE_AGENCY_OFFER_ECONOMIC_ADAPTER_VERSION,
         "offer_economic_intelligence_version": CPU_FREE_AGENCY_OFFER_ECONOMIC_INTELLIGENCE_VERSION,
         "speculative_candidate_fingerprint_deferred": True,
+        "speculative_source_full_validation_once_per_board": True,
+        "speculative_candidate_touched_surface_validation": True,
+        "durable_winner_full_league_validation_preserved": True,
         "rights_exceptions_version": FREE_AGENCY_RIGHTS_EXCEPTIONS_VERSION,
         "preview_reuse_version": CPU_FREE_AGENCY_PREVIEW_REUSE_VERSION,
+        "board_cache_version": CPU_FREE_AGENCY_BOARD_CACHE_VERSION,
+        "board_local_payroll_cache": True,
+        "board_local_service_cache": True,
+        "board_local_rights_cache": True,
+        "board_local_exception_route_cache": True,
+        "board_local_term_resolution_cache": True,
+        "board_cache_changes_offer_order_or_legality": False,
         "identical_seed_final_previews_reused": True,
         "autonomous_commit_enabled": False,
         "pure_cap_space_only": False,
@@ -1276,6 +1378,7 @@ def generation_contract_report() -> dict[str, Any]:
         "minimum_exception_targeting_intelligence_enabled": True,
         "minimum_exception_targeting_filters_legally_valid_noncredible_bids": True,
         "target_scan_replaces_filtered_bids_with_lower_board_targets": True,
+        "eligible_team_filter_supported": True,
         "offer_economic_intelligence_enabled": True,
         "offer_economic_filter_preserves_player_counters": True,
         "offer_economic_filter_uses_contextual_market_ratio_floor": True,

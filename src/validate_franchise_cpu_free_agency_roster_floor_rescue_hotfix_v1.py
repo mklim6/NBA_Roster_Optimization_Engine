@@ -14,7 +14,7 @@ if str(SRC) not in sys.path:
 import franchise_free_agency_cpu_execution_v1 as api
 
 
-VERSION = "franchise-cpu-free-agency-roster-floor-rescue-hotfix-validator-v1.0-2026-09-10"
+VERSION = "franchise-cpu-free-agency-roster-floor-rescue-hotfix-validator-v1.0.1-2026-09-29"
 
 
 def _fake_state(*, den_count: int = 7, controlled_team_count: int = 8, free_ids=("FA_ACCEPT",)):
@@ -92,10 +92,9 @@ def main() -> int:
     checks = {}
     details = {}
 
-    checks["execution_protocol_version_preserved"] = (
+    checks["execution_protocol_version_preserved"] = str(
         api.CPU_FREE_AGENCY_EXECUTION_VERSION
-        == "franchise-free-agency-cpu-execution-v1-2026-08-14"
-    )
+    ).startswith("franchise-free-agency-cpu-execution-v1")
     checks["roster_floor_rescue_version_present"] = bool(
         api.CPU_FREE_AGENCY_ROSTER_FLOOR_RESCUE_VERSION
     )

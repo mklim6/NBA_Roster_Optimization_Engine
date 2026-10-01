@@ -9,7 +9,10 @@ from types import SimpleNamespace
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-PAGE = ROOT / "pages" / "6_Free_Agency.py"
+PAGE = ROOT / "pages" / "5_Franchise_Mode.py"
+WORKSPACE = ROOT / "src" / "franchise_free_agency_workspace_v1.py"
+PERSISTENT = ROOT / "src" / "franchise_free_agency_persistent_calendar_v1.py"
+NEGOTIATION = ROOT / "src" / "franchise_free_agency_negotiation_rounds_v1.py"
 
 from franchise_free_agency_transaction_v1 import (
     FreeAgencyFinancialGateResult,
@@ -37,7 +40,7 @@ from simulation_franchise_checkpoint_v1 import (
     load_franchise_checkpoint,
 )
 
-VALIDATOR_VERSION = "franchise-free-agency-player-decision-validator-v1-2026-08-14"
+VALIDATOR_VERSION = "franchise-free-agency-player-decision-validator-v1.0.1-2026-09-28"
 EXPECTED_LIVE_SIGNING = "franchise-free-agency-live-signing-v1-2026-08-14"
 EXPECTED_DECISION = "franchise-free-agency-player-decision-v1-2026-08-14"
 EXPECTED_UI = "franchise-free-agency-player-decision-ui-v1-2026-08-14"
@@ -197,7 +200,7 @@ def main() -> int:
     checkpoint_path = Path(DEFAULT_CHECKPOINT_PATH)
     before_hash = _sha256(checkpoint_path) if checkpoint_path.exists() else ""
 
-    checks["validator_version_is_current"] = VALIDATOR_VERSION.endswith("2026-08-14")
+    checks["validator_version_is_current"] = VALIDATOR_VERSION.endswith("v1.0.1-2026-09-28")
     checks["player_decision_version_is_current"] = FREE_AGENCY_PLAYER_DECISION_VERSION == EXPECTED_DECISION
     checks["player_decision_ui_version_is_current"] = FREE_AGENCY_PLAYER_DECISION_UI_VERSION == EXPECTED_UI
     checks["live_signing_v1_is_preserved"] = FREE_AGENCY_LIVE_SIGNING_VERSION == EXPECTED_LIVE_SIGNING
@@ -311,34 +314,62 @@ def main() -> int:
         checks["counter_or_decline_cannot_commit"] = False
 
     page_text = PAGE.read_text(encoding="utf-8") if PAGE.exists() else ""
+    workspace_text = WORKSPACE.read_text(encoding="utf-8") if WORKSPACE.exists() else ""
+    persistent_text = PERSISTENT.read_text(encoding="utf-8") if PERSISTENT.exists() else ""
+    negotiation_text = NEGOTIATION.read_text(encoding="utf-8") if NEGOTIATION.exists() else ""
     checks["page_exists"] = PAGE.exists()
-    checks["page_imports_player_decision_engine"] = "evaluate_free_agent_offer_decision" in page_text
-    checks["page_submits_offer_to_player_explicitly"] = "Submit offer to player" in page_text
-    checks["page_exposes_accept_counter_decline"] = all(
-        marker in page_text for marker in ['== "accept"', '== "counter"', '== "decline"']
+    checks["page_delegates_to_current_workspace"] = (
+        WORKSPACE.exists()
+        and "render_free_agency_workspace" in page_text
+        and "render_free_agency_workspace(" in page_text
     )
-    checks["page_exposes_player_preference_profile"] = "Player preference profile" in page_text
-    checks["page_gates_durable_signing_on_player_acceptance"] = (
-        "player_accepted" in page_text and "and player_accepted" in page_text
+    checks["workspace_imports_player_decision_engine"] = (
+        "from franchise_free_agency_player_decision_v1 import" in workspace_text
+        and "evaluate_free_agent_offer_decision(" in workspace_text
     )
-    checks["page_uses_player_accepted_commit_wrapper"] = (
-        "commit_player_accepted_free_agency_preview_live(" in page_text
+    checks["workspace_submits_offer_explicitly"] = (
+        '"Preview offer"' in workspace_text
+        and '"Open negotiation round 1"' in workspace_text
+    )
+    checks["workspace_exposes_player_response_paths"] = all(
+        marker in workspace_text
+        for marker in (
+            "Player response: READY TO SIGN",
+            "Player response: COUNTER MARKET",
+            "Player response: NO ACCEPTABLE OFFER",
+        )
+    )
+    checks["workspace_exposes_player_preference_profile"] = (
+        "Player preference profile" in workspace_text
+    )
+    checks["workspace_gates_durable_signing_on_player_acceptance"] = (
+        "player_accepted" in workspace_text and "and player_accepted" in workspace_text
+    )
+    checks["workspace_uses_persistent_commit_wrapper"] = (
+        "commit_persistent_user_winner_live(" in workspace_text
+        and "return commit_negotiated_user_winner_live(" in persistent_text
+        and "commit_competing_market_winner_live(" in negotiation_text
     )
     checks["page_does_not_call_live_signing_directly"] = (
         "commit_contract_legal_free_agency_preview_live(" not in page_text
+        and "commit_contract_legal_free_agency_preview_live(" not in workspace_text
     )
-    checks["page_preserves_explicit_confirmation"] = (
-        "fa_live_confirmation" in page_text and "I confirm this signing" in page_text
+    checks["workspace_preserves_explicit_confirmation"] = (
+        "I confirm this signing" in workspace_text
+        and 'key="fa_live_sign_button"' in workspace_text
     )
-    checks["page_preserves_live_sign_button"] = "Sign player and save franchise" in page_text
-    checks["page_preserves_hypothetical_commit_block"] = "preview_is_hypothetical" in page_text
-    checks["page_preserves_non_offseason_commit_block"] = 'phase == "offseason"' in page_text
-    checks["page_refreshes_both_live_session_states"] = (
-        'st.session_state["game_simulator_league_state"]' in page_text
-        and 'st.session_state["trade_machine_league_state"]' in page_text
+    checks["workspace_preserves_live_sign_button"] = "Confirm and sign" in workspace_text
+    checks["workspace_preserves_hypothetical_commit_block"] = "preview_is_hypothetical" in workspace_text
+    checks["workspace_preserves_non_offseason_commit_block"] = 'phase == "offseason"' in workspace_text
+    checks["workspace_refreshes_both_live_session_states"] = (
+        'st.session_state["franchise_simulation_league_state"]' in workspace_text
+        and 'st.session_state["franchise_trade_league_state"]' in workspace_text
     )
     try:
         compile(page_text, str(PAGE), "exec")
+        compile(workspace_text, str(WORKSPACE), "exec")
+        compile(persistent_text, str(PERSISTENT), "exec")
+        compile(negotiation_text, str(NEGOTIATION), "exec")
         checks["page_compiles"] = True
     except Exception:
         checks["page_compiles"] = False

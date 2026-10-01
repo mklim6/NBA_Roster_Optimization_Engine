@@ -146,7 +146,12 @@ def main() -> int:
         "offer_generation_reports_deferred_speculative_fingerprints": generation_report.get("speculative_candidate_fingerprint_deferred") is True,
         "execution_reports_carried_byte_verified_checkpoint": execution_report.get("round_carries_byte_verified_checkpoint") is True,
         "execution_reports_final_semantic_reload": execution_report.get("round_final_semantic_reload_required") is True,
-        "execution_reports_roster_floor_early_stop": execution_report.get("round_stops_when_roster_floor_complete") is True,
+        "execution_reports_sustainable_roster_target_early_stop": (
+            execution_report.get(
+                "round_stops_when_sustainable_roster_target_complete"
+            )
+            is True
+        ),
         "checkpoint_save_has_private_byte_verification_gate": "_verify_encoded_bytes_only" in save_signature.parameters,
         "checkpoint_has_current_graph_scan": callable(getattr(checkpoint, "runtime_graph_is_current", None)),
         "checkpoint_hot_reload_self_test_passes": bool(checkpoint_report.get("passed")),
@@ -158,7 +163,10 @@ def main() -> int:
             < execution_source.index("plan = build_cpu_free_agency_execution_plan(", execution_source.index("def execute_next_cpu_free_agency_signing_durably("))
         ),
         "round_source_releases_mature_graph_before_final_reload": "checkpoint = None" in execution_source and "gc.collect()" in execution_source,
-        "checkpoint_source_skips_rebind_only_after_identity_scan": "if not runtime_graph_is_current(payload_object):" in checkpoint_source,
+        "checkpoint_source_skips_rebind_only_after_identity_scan": (
+            "if not runtime_graph_is_current_for_payload(" in checkpoint_source
+            and "runtime_type_identities_are_current" in checkpoint_source
+        ),
         **deferred,
     }
     failed = [name for name, passed in checks.items() if not passed]
