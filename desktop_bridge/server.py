@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import copy
 import hashlib
 import sys
 
@@ -13,7 +14,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.5.0"
+API_VERSION = "0.6.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -36,7 +37,22 @@ from simulation_franchise_checkpoint_v1 import (
 )
 from franchise_command_center_v1 import (
     apply_rotation_plan,
+    coaching_alerts_for_game,
     rotation_plan_from_rows,
+)
+from franchise_game_day_league_calendar_sync_v1 import (
+    catch_up_cpu_schedule_v1,
+    league_calendar_sync_status_v1,
+)
+from regular_season_simulation_controller_v1 import (
+    regular_season_state_fingerprint,
+)
+from simulation_league_state_v1 import (
+    GameStatus,
+    validate_simulation_league_state,
+)
+from single_game_simulator_v1 import (
+    simulate_scheduled_game,
 )
 
 
@@ -99,6 +115,235 @@ def _rotation_rows_from_request(payload: Any) -> list[dict[str, Any]]:
         )
 
     return normalized
+
+
+def _next_controlled_scheduled_game(state: Any, team: str) -> Any | None:
+    resolved_team = str(team or "").strip().upper()
+    candidates = [
+        game
+        for game in state.schedule.values()
+        if (
+            getattr(game, "status", None) == GameStatus.SCHEDULED
+            and resolved_team
+            in {
+                str(getattr(game, "home_team", "")).upper(),
+                str(getattr(game, "away_team", "")).upper(),
+            }
+        )
+    ]
+    if not candidates:
+        return None
+    return min(
+        candidates,
+        key=lambda game: (
+            int(getattr(game, "day_index", 0)),
+            str(getattr(game, "game_id", "")),
+        ),
+    )
+
+
+def _standing_payload(state: Any, team: str) -> dict[str, Any]:
+    standing = state.standings.get(team)
+    if standing is None:
+        return {}
+    games = int(standing.games_played)
+    return {
+        "games_played": games,
+        "wins": int(standing.wins),
+        "losses": int(standing.losses),
+        "display": f"{standing.wins}-{standing.losses}",
+        "points_for": int(standing.points_for),
+        "points_against": int(standing.points_against),
+        "win_pct": (
+            round(float(standing.wins) / games, 4)
+            if games
+            else 0.0
+        ),
+    }
+
+
+def _game_day_player_line(state: Any, line: Any) -> dict[str, Any]:
+    player = state.players.get(line.player_id)
+    return {
+        "player_id": str(line.player_id),
+        "name": str(getattr(player, "player_name", line.player_id)),
+        "team": str(line.team_abbreviation),
+        "starter": bool(line.started),
+        "minutes": round(float(line.minutes), 1),
+        "points": int(line.points),
+        "rebounds": int(line.rebounds),
+        "assists": int(line.assists),
+        "steals": int(line.steals),
+        "blocks": int(line.blocks),
+        "turnovers": int(line.turnovers),
+        "field_goals_made": int(getattr(line, "field_goals_made", 0)),
+        "field_goals_attempted": int(
+            getattr(line, "field_goals_attempted", 0)
+        ),
+        "three_pointers_made": int(
+            getattr(line, "three_pointers_made", 0)
+        ),
+        "three_pointers_attempted": int(
+            getattr(line, "three_pointers_attempted", 0)
+        ),
+    }
+
+
+def _completed_game_payload(state: Any, completed: Any) -> dict[str, Any]:
+    player_lines = [
+        _game_day_player_line(state, line)
+        for line in completed.player_box_scores
+    ]
+    top_performers = sorted(
+        player_lines,
+        key=lambda row: (
+            -row["points"],
+            -row["assists"],
+            -row["rebounds"],
+            row["name"],
+        ),
+    )[:6]
+
+    scheduled = state.schedule.get(str(completed.game_id))
+    day_index = (
+        int(getattr(scheduled, "day_index", state.current_day_index))
+        if scheduled is not None
+        else int(state.current_day_index)
+    )
+
+    return {
+        "game_id": str(completed.game_id),
+        "day_index": day_index,
+        "home_team": str(completed.home_team),
+        "away_team": str(completed.away_team),
+        "home_team_name": TEAM_NAMES.get(
+            str(completed.home_team),
+            str(completed.home_team),
+        ),
+        "away_team_name": TEAM_NAMES.get(
+            str(completed.away_team),
+            str(completed.away_team),
+        ),
+        "home_score": int(completed.home_score),
+        "away_score": int(completed.away_score),
+        "overtime_periods": int(
+            getattr(completed, "overtime_periods", 0) or 0
+        ),
+        "top_performers": top_performers,
+        "player_box_scores": player_lines,
+    }
+
+
+def _game_day_payload(state: Any, active_team: str) -> dict[str, Any]:
+    game = _next_controlled_scheduled_game(state, active_team)
+    sync = league_calendar_sync_status_v1(
+        state,
+        controlled_teams=(active_team,),
+    )
+
+    if game is None:
+        return {
+            "api_version": API_VERSION,
+            "source": "v3_working_checkpoint",
+            "working_save_only": True,
+            "active_v2_read_only": True,
+            "team": active_team,
+            "team_name": TEAM_NAMES.get(active_team, active_team),
+            "season": str(state.settings.season_label),
+            "phase": _enum_value(state.phase),
+            "day_index": int(state.current_day_index),
+            "record": _standing_payload(state, active_team),
+            "next_game": None,
+            "league_sync": sync,
+        }
+
+    is_home = str(game.home_team) == active_team
+    opponent = (
+        str(game.away_team)
+        if is_home
+        else str(game.home_team)
+    )
+
+    alerts = [
+        {
+            "severity": str(alert.severity),
+            "category": str(alert.category),
+            "title": str(alert.title),
+            "detail": str(alert.detail),
+            "player_ids": list(alert.player_ids),
+        }
+        for alert in coaching_alerts_for_game(
+            state,
+            game,
+            active_team,
+        )
+    ]
+
+    team_state = state.teams[active_team]
+    rotation = team_state.rotation
+    unavailable = []
+
+    for player_id in team_state.roster_player_ids:
+        injury = state.injuries.get(player_id)
+        status = _enum_value(getattr(injury, "status", "")).lower()
+        if status in ("", "healthy"):
+            continue
+        player = state.players.get(player_id)
+        unavailable.append(
+            {
+                "player_id": str(player_id),
+                "name": str(
+                    getattr(player, "player_name", player_id)
+                ),
+                "status": status,
+                "injury_type": str(
+                    getattr(injury, "injury_type", "") or ""
+                ),
+                "games_remaining": int(
+                    getattr(injury, "games_remaining", 0) or 0
+                ),
+            }
+        )
+
+    return {
+        "api_version": API_VERSION,
+        "source": "v3_working_checkpoint",
+        "working_save_only": True,
+        "active_v2_read_only": True,
+        "team": active_team,
+        "team_name": TEAM_NAMES.get(active_team, active_team),
+        "season": str(state.settings.season_label),
+        "phase": _enum_value(state.phase),
+        "day_index": int(state.current_day_index),
+        "record": _standing_payload(state, active_team),
+        "opponent_record": _standing_payload(state, opponent),
+        "next_game": {
+            "game_id": str(game.game_id),
+            "day_index": int(game.day_index),
+            "home_team": str(game.home_team),
+            "away_team": str(game.away_team),
+            "is_home": is_home,
+            "opponent": opponent,
+            "opponent_name": TEAM_NAMES.get(opponent, opponent),
+            "matchup": (
+                f"{active_team} vs {opponent}"
+                if is_home
+                else f"{active_team} at {opponent}"
+            ),
+        },
+        "rotation": {
+            "starter_ids": list(rotation.starter_ids),
+            "rotation_player_ids": list(rotation.rotation_player_ids),
+            "minutes_targets": dict(rotation.minutes_targets),
+            "total_minutes": round(
+                sum(rotation.minutes_targets.values()),
+                1,
+            ),
+        },
+        "unavailable_players": unavailable,
+        "coaching_alerts": alerts,
+        "league_sync": sync,
+    }
 
 TEAM_NAMES = {
     "ATL": "Atlanta Hawks",
@@ -1319,6 +1564,237 @@ async def rotation_apply(request: Request) -> JSONResponse:
             status_code=400,
         )
 
+
+async def game_day_summary(_: Request) -> JSONResponse:
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse(
+                {
+                    "error": "v3_working_save_not_initialized",
+                    "hint": "POST /v3/working-save/reset first.",
+                    "active_v2_read_only": True,
+                },
+                status_code=409,
+            )
+
+        state = checkpoint.simulation_state
+        active_team = _active_team_from_checkpoint(checkpoint)
+
+        if not active_team:
+            return JSONResponse(
+                {
+                    "error": "active_franchise_not_found",
+                    "active_v2_read_only": True,
+                },
+                status_code=404,
+            )
+
+        return JSONResponse(_game_day_payload(state, active_team))
+
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "game_day_summary_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "working_save_only": True,
+                "active_v2_read_only": True,
+            },
+            status_code=500,
+        )
+
+
+async def game_day_simulate(_: Request) -> JSONResponse:
+    # Exact next controlled regular-season game only. Operates exclusively
+    # on the isolated V3 working checkpoint.
+    try:
+        active_v2_sha_before = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse(
+                {
+                    "error": "v3_working_save_not_initialized",
+                    "hint": "POST /v3/working-save/reset first.",
+                    "active_v2_read_only": True,
+                },
+                status_code=409,
+            )
+
+        state = checkpoint.simulation_state
+        active_team = _active_team_from_checkpoint(checkpoint)
+
+        if _enum_value(state.phase).lower() != "regular_season":
+            return JSONResponse(
+                {
+                    "error": "game_day_not_regular_season",
+                    "phase": _enum_value(state.phase),
+                    "working_save_only": True,
+                    "active_v2_read_only": True,
+                },
+                status_code=409,
+            )
+
+        game = _next_controlled_scheduled_game(state, active_team)
+        if game is None:
+            return JSONResponse(
+                {
+                    "error": "no_controlled_game_scheduled",
+                    "working_save_only": True,
+                    "active_v2_read_only": True,
+                },
+                status_code=409,
+            )
+
+        game_id = str(game.game_id)
+        before_record = _standing_payload(state, active_team)
+        source_fingerprint = regular_season_state_fingerprint(state)
+
+        # Mirrors V2 Franchise Mode commit_game_transactionally:
+        # deepcopy, exact single-game simulator, committed result, deferred
+        # global validation, then one authoritative validation.
+        updated = copy.deepcopy(state)
+        simulate_scheduled_game(
+            updated,
+            game_id,
+            seed=None,
+            commit=True,
+            sit_player_ids=(),
+            _defer_global_state_validation=True,
+        )
+        validate_simulation_league_state(updated)
+
+        if regular_season_state_fingerprint(state) != source_fingerprint:
+            raise RuntimeError(
+                "Controlled-game simulation mutated the source working state."
+            )
+
+        completed = updated.completed_games.get(game_id)
+        if completed is None:
+            raise RuntimeError(
+                "Controlled game was not committed after simulation."
+            )
+
+        # Reuse the existing V2 league-calendar catch-up so all CPU games
+        # before the following CHI decision are synchronized.
+        updated, sync_report = catch_up_cpu_schedule_v1(
+            updated,
+            controlled_teams=(active_team,),
+            private_transactional_state=True,
+        )
+        validate_simulation_league_state(updated)
+
+        after_record = _standing_payload(updated, active_team)
+        if (
+            int(after_record.get("games_played", 0))
+            != int(before_record.get("games_played", 0)) + 1
+        ):
+            raise RuntimeError(
+                "Controlled team's games played did not advance by exactly one."
+            )
+
+        save_franchise_checkpoint(
+            updated,
+            checkpoint.trade_state,
+            preferences=checkpoint.preferences,
+            reason=f"V3 Godot Game Day commit {game_id}",
+            path=V3_WORKING_CHECKPOINT_PATH,
+            copy_payload=False,
+            force_replace=True,
+        )
+
+        verified = _working_checkpoint()
+        if verified is None:
+            raise RuntimeError(
+                "Saved V3 Game Day checkpoint could not be reloaded."
+            )
+
+        verified_state = verified.simulation_state
+        verified_completed = verified_state.completed_games.get(game_id)
+        if verified_completed is None:
+            raise RuntimeError(
+                "Game Day result did not persist after checkpoint reload."
+            )
+
+        verified_record = _standing_payload(
+            verified_state,
+            active_team,
+        )
+        if verified_record != after_record:
+            raise RuntimeError(
+                "Team record changed across Game Day save/reload verification."
+            )
+
+        if (
+            int(verified_completed.home_score) != int(completed.home_score)
+            or int(verified_completed.away_score) != int(completed.away_score)
+        ):
+            raise RuntimeError(
+                "Game score changed across Game Day save/reload verification."
+            )
+
+        active_v2_sha_after = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+        if active_v2_sha_before != active_v2_sha_after:
+            raise RuntimeError(
+                "Protected V2 checkpoint changed during V3 Game Day simulation."
+            )
+
+        result_payload = _completed_game_payload(
+            verified_state,
+            verified_completed,
+        )
+        active_score = (
+            int(verified_completed.home_score)
+            if str(verified_completed.home_team) == active_team
+            else int(verified_completed.away_score)
+        )
+        opponent_score = (
+            int(verified_completed.away_score)
+            if str(verified_completed.home_team) == active_team
+            else int(verified_completed.home_score)
+        )
+
+        return JSONResponse(
+            {
+                "status": "applied",
+                "api_version": API_VERSION,
+                "working_save_only": True,
+                "active_v2_read_only": True,
+                "active_v2_unchanged": True,
+                "persisted_after_reload": True,
+                "game_id": game_id,
+                "result": "W" if active_score > opponent_score else "L",
+                "before_record": before_record,
+                "after_record": verified_record,
+                "game": result_payload,
+                "cpu_games_synchronized": int(
+                    sync_report.get("games_simulated", 0)
+                ),
+                "league_sync": sync_report,
+                "next_game": _game_day_payload(
+                    verified_state,
+                    active_team,
+                ).get("next_game"),
+                "active_v2_sha256": active_v2_sha_after,
+                "working_save_sha256": _file_sha256(
+                    V3_WORKING_CHECKPOINT_PATH
+                ),
+            }
+        )
+
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "game_day_simulation_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "working_save_only": True,
+                "active_v2_read_only": True,
+            },
+            status_code=400,
+        )
+
 async def not_found(_: Request, __: Exception) -> JSONResponse:
     return JSONResponse({"error": "not_found"}, status_code=404)
 
@@ -1332,6 +1808,8 @@ routes = [
     Route("/v3/working-save/reset", reset_working_save, methods=["POST"]),
     Route("/v3/rotation/preview", rotation_preview, methods=["POST"]),
     Route("/v3/rotation/apply", rotation_apply, methods=["POST"]),
+    Route("/v3/game-day", game_day_summary, methods=["GET"]),
+    Route("/v3/game-day/simulate", game_day_simulate, methods=["POST"]),
 ]
 
 
