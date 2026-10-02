@@ -51,6 +51,7 @@ var game_day_detail_label: Label
 var game_day_status_label: Label
 var game_day_simulate_button: Button
 var game_day_result_label: Label
+var game_day_active_team := ""
 var rotation_edit_rows := {}
 var rotation_edit_order := []
 var rotation_feedback: Label
@@ -821,7 +822,7 @@ func _open_game_day_overlay() -> void:
 	game_day_overlay.add_child(center)
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	var card := _card(Vector2(720, 540))
+	var card := _card(Vector2(760, 650))
 	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	center.add_child(card)
@@ -936,6 +937,7 @@ func _on_game_day_completed(
 
 	var record = payload.get("record", {})
 	var opponent_record = payload.get("opponent_record", {})
+	game_day_active_team = str(payload.get("team", ""))
 	var last_game = payload.get("last_game", null)
 	var next_game = payload.get("next_game", null)
 	var rotation = payload.get("rotation", {})
@@ -966,10 +968,21 @@ func _on_game_day_completed(
 		and last_game != null
 		and typeof(last_game) == TYPE_DICTIONARY
 	):
+		var persisted_result := ""
+		var persisted_home := str(last_game.get("home_team", ""))
+		var persisted_away := str(last_game.get("away_team", ""))
+		var persisted_home_score := int(last_game.get("home_score", 0))
+		var persisted_away_score := int(last_game.get("away_score", 0))
+
+		if game_day_active_team == persisted_home:
+			persisted_result = "W" if persisted_home_score > persisted_away_score else "L"
+		elif game_day_active_team == persisted_away:
+			persisted_result = "W" if persisted_away_score > persisted_home_score else "L"
+
 		_render_game_day_result(
 			last_game,
 			str(record.get("display", "N/A")),
-			"",
+			persisted_result,
 			-1
 		)
 
@@ -1024,23 +1037,60 @@ func _game_day_team_shooting_line(game: Dictionary, team: String) -> String:
 	]
 
 
-func _game_day_top_performer_lines(game: Dictionary) -> Array:
-	var lines: Array = []
-	var performers: Array = game.get("top_performers", [])
+func _game_day_performer_better(left: Dictionary, right: Dictionary) -> bool:
+	var left_points := int(left.get("points", 0))
+	var right_points := int(right.get("points", 0))
+	if left_points != right_points:
+		return left_points > right_points
 
-	for performer in performers:
-		if lines.size() >= 3:
-			break
-		if typeof(performer) != TYPE_DICTIONARY:
+	var left_assists := int(left.get("assists", 0))
+	var right_assists := int(right.get("assists", 0))
+	if left_assists != right_assists:
+		return left_assists > right_assists
+
+	var left_rebounds := int(left.get("rebounds", 0))
+	var right_rebounds := int(right.get("rebounds", 0))
+	if left_rebounds != right_rebounds:
+		return left_rebounds > right_rebounds
+
+	return str(left.get("name", "")) < str(right.get("name", ""))
+
+
+func _game_day_team_leader_lines(
+	game: Dictionary,
+	team: String,
+	limit: int = 3
+) -> Array:
+	var leaders: Array = []
+	var rows: Array = game.get("player_box_scores", [])
+
+	for row in rows:
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		if str(row.get("team", "")) != team:
 			continue
 
+		var candidate: Dictionary = row
+		var insert_index: int = leaders.size()
+
+		for index in range(leaders.size()):
+			var leader: Dictionary = leaders[index]
+			if _game_day_performer_better(candidate, leader):
+				insert_index = index
+				break
+
+		leaders.insert(insert_index, candidate)
+		if leaders.size() > limit:
+			leaders.pop_back()
+
+	var lines: Array = []
+	for leader in leaders:
 		lines.append(
-			"%s %s: %s PTS, %s REB, %s AST" % [
-				str(performer.get("team", "")),
-				str(performer.get("name", "Unknown")),
-				str(performer.get("points", 0)),
-				str(performer.get("rebounds", 0)),
-				str(performer.get("assists", 0))
+			"%s: %s PTS, %s REB, %s AST" % [
+				str(leader.get("name", "Unknown")),
+				str(leader.get("points", 0)),
+				str(leader.get("rebounds", 0)),
+				str(leader.get("assists", 0))
 			]
 		)
 
@@ -1079,15 +1129,36 @@ func _render_game_day_result(
 	if cpu_games >= 0:
 		result_bits.append("%s CPU game(s) synchronized" % cpu_games)
 
-	var lines: Array = [" • ".join(result_bits)]
-	lines.append(_game_day_team_shooting_line(game, away_team))
-	lines.append(_game_day_team_shooting_line(game, home_team))
+	var active_team := game_day_active_team
+	if active_team == "":
+		active_team = away_team
 
-	var performer_lines: Array = _game_day_top_performer_lines(game)
-	if performer_lines.size() > 0:
-		lines.append("TOP PERFORMERS")
-		for performer_line in performer_lines:
-			lines.append(str(performer_line))
+	var opponent_team := home_team if active_team == away_team else away_team
+
+	var active_team_name := active_team
+	var opponent_team_name := opponent_team
+	if active_team == home_team:
+		active_team_name = str(game.get("home_team_name", active_team))
+		opponent_team_name = str(game.get("away_team_name", opponent_team))
+	else:
+		active_team_name = str(game.get("away_team_name", active_team))
+		opponent_team_name = str(game.get("home_team_name", opponent_team))
+
+	var lines: Array = [" • ".join(result_bits)]
+	lines.append(_game_day_team_shooting_line(game, active_team))
+	lines.append(_game_day_team_shooting_line(game, opponent_team))
+
+	var active_leaders: Array = _game_day_team_leader_lines(game, active_team, 3)
+	if active_leaders.size() > 0:
+		lines.append("%s LEADERS" % active_team_name.to_upper())
+		for leader_line in active_leaders:
+			lines.append(str(leader_line))
+
+	var opponent_leaders: Array = _game_day_team_leader_lines(game, opponent_team, 3)
+	if opponent_leaders.size() > 0:
+		lines.append("%s LEADERS" % opponent_team_name.to_upper())
+		for leader_line in opponent_leaders:
+			lines.append(str(leader_line))
 
 	game_day_result_label.text = "\n".join(lines)
 
@@ -1191,6 +1262,7 @@ func _close_game_day_overlay() -> void:
 	game_day_status_label = null
 	game_day_simulate_button = null
 	game_day_result_label = null
+	game_day_active_team = ""
 
 
 func _friendly_value(value: String) -> String:
