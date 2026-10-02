@@ -36,7 +36,7 @@ from franchise_trade_finder_ai_v1 import (
 
 
 TRANSACTION_FOUNDATION_VERSION = (
-    "v3-transaction-foundation-batch-06-read-only-2026-10-02"
+    "v3-transaction-foundation-batch-07-graphical-workflows-2026-10-02"
 )
 
 
@@ -288,6 +288,11 @@ def build_transaction_foundation_payload(checkpoint: Any, active_team: str, *, i
         "active_v2_read_only": True,
         "write_actions_enabled": False,
         "team": team,
+        "teams": [
+            value
+            for value in sorted(getattr(state, "teams", {}))
+            if normalize_team(value) != team
+        ],
         "season": {
             "label": str(getattr(getattr(state, "settings", None), "season_label", "")),
             "phase": phase,
@@ -424,4 +429,118 @@ def build_free_agency_preview_payload(checkpoint: Any, active_team: str, request
         "player_id": player_id,
         "contract_cba_gate": _json_safe(gate),
         "transaction_preview": _json_safe(preview),
+    }
+
+def build_trade_team_assets_payload(
+    checkpoint: Any,
+    active_team: str,
+    requested_team: str,
+) -> dict[str, Any]:
+    state = getattr(checkpoint, "simulation_state", None)
+    trade_state = getattr(checkpoint, "trade_state", None)
+    if state is None:
+        raise RuntimeError("V3 working checkpoint has no simulation state.")
+    if trade_state is None:
+        raise RuntimeError("V3 working checkpoint has no durable trade state.")
+
+    active = normalize_team(active_team)
+    requested = normalize_team(requested_team)
+    if not requested:
+        raise ValueError("team query parameter is required.")
+    if requested not in getattr(state, "teams", {}):
+        raise ValueError(f"Unknown franchise team: {requested}.")
+
+    runtime = _runtime()
+    ledger = build_live_asset_ledger(runtime, state, trade_state)
+    players, picks = _team_assets(ledger, requested)
+
+    return {
+        "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+        "source": "v3_working_checkpoint",
+        "read_only": True,
+        "working_save_write_performed": False,
+        "active_v2_read_only": True,
+        "write_actions_enabled": False,
+        "active_team": active,
+        "team": requested,
+        "is_active_team": requested == active,
+        "players": players,
+        "player_count": len(players),
+        "picks": picks,
+        "pick_count": len(picks),
+        "engine_ready_pick_count": sum(
+            bool(row.get("engine_ready")) for row in picks
+        ),
+    }
+
+
+def build_free_agency_market_payload(
+    checkpoint: Any,
+    active_team: str,
+) -> dict[str, Any]:
+    state = getattr(checkpoint, "simulation_state", None)
+    trade_state = getattr(checkpoint, "trade_state", None)
+    if state is None:
+        raise RuntimeError("V3 working checkpoint has no simulation state.")
+    if trade_state is None:
+        raise RuntimeError("V3 working checkpoint has no durable trade state.")
+
+    team = normalize_team(active_team)
+    if team not in getattr(state, "teams", {}):
+        raise ValueError(f"Unknown active franchise team: {team or '<blank>'}.")
+
+    runtime = _runtime()
+    ledger = build_live_asset_ledger(runtime, state, trade_state)
+    player_map, _ = _asset_maps(ledger)
+    free_agent_ids = {
+        normalize_player_id(value)
+        for value in getattr(state, "free_agent_player_ids", ())
+        if normalize_player_id(value)
+    }
+
+    players: list[dict[str, Any]] = []
+    for player_id in free_agent_ids:
+        row = player_map.get(player_id)
+        if row is None:
+            continue
+        payload = _player_asset_payload(dict(row))
+        payload["player_id"] = player_id
+        payload["roster_status"] = str(row.get("roster_status", ""))
+        payload["market_reference_salary"] = row.get("salary")
+        players.append(payload)
+
+    players.sort(
+        key=lambda row: (
+            -float(row.get("overall") or 0.0),
+            -float(row.get("future_outlook") or 0.0),
+            float(row.get("age") or 99.0),
+            str(row.get("name", "")),
+        )
+    )
+
+    team_state = getattr(state, "teams", {}).get(team)
+    roster_count = len(
+        getattr(team_state, "roster_player_ids", ())
+    ) if team_state is not None else 0
+
+    return {
+        "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+        "source": "v3_working_checkpoint",
+        "read_only": True,
+        "working_save_write_performed": False,
+        "active_v2_read_only": True,
+        "write_actions_enabled": False,
+        "team": team,
+        "season": {
+            "label": str(
+                getattr(getattr(state, "settings", None), "season_label", "")
+            ),
+            "phase": _phase(state),
+            "day_index": int(getattr(state, "current_day_index", 0) or 0),
+        },
+        "roster_count": roster_count,
+        "total_available": len(players),
+        "players": players,
+        "preview_endpoint": "/v3/free-agency/preview",
+        "execution_phase_supported": _phase(state) == "offseason",
     }

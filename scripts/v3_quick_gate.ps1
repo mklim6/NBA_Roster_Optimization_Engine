@@ -88,11 +88,11 @@ if (Test-Path $GodotPath) {
 }
 
 # Python bridge syntax.
-python -m py_compile ".\desktop_bridge\server.py"
+python -m py_compile ".\desktop_bridge\server.py" ".\desktop_bridge\transaction_foundation.py"
 if ($LASTEXITCODE -eq 0) {
-    Pass "desktop_bridge/server.py compiles"
+    Pass "desktop_bridge server + transaction foundation compile"
 } else {
-    Fail "desktop_bridge/server.py compilation"
+    Fail "desktop_bridge Python compilation"
 }
 
 # Git whitespace check.
@@ -156,6 +156,50 @@ try {
             }
         } catch {
             Fail "Market intelligence endpoint failed: $($_.Exception.Message)"
+        }
+    }
+
+    if ($serverText -match '/v3/free-agency/market') {
+        try {
+            $faMarket = Invoke-RestMethod "http://127.0.0.1:8765/v3/free-agency/market" -TimeoutSec 30
+            if (
+                $faMarket.total_available -gt 0 -and
+                $faMarket.working_save_unchanged -eq $true -and
+                $faMarket.active_v2_unchanged -eq $true
+            ) {
+                Pass "Full free-agency market endpoint ($($faMarket.total_available) players, read-only)"
+            } else {
+                Fail "Full free-agency market endpoint failed safety/payload checks"
+            }
+        } catch {
+            Fail "Full free-agency market endpoint failed: $($_.Exception.Message)"
+        }
+    }
+
+    if ($serverText -match '/v3/trade/team-assets') {
+        try {
+            $foundation = Invoke-RestMethod "http://127.0.0.1:8765/v3/transaction-foundation?trade_finder=0" -TimeoutSec 30
+            if (
+                $foundation.team -and
+                $foundation.working_save_unchanged -eq $true -and
+                $foundation.active_v2_unchanged -eq $true
+            ) {
+                $teamCode = $foundation.team
+                $teamAssets = Invoke-RestMethod "http://127.0.0.1:8765/v3/trade/team-assets?team=$teamCode" -TimeoutSec 30
+                if (
+                    $teamAssets.team -eq $teamCode -and
+                    $teamAssets.working_save_unchanged -eq $true -and
+                    $teamAssets.active_v2_unchanged -eq $true
+                ) {
+                    Pass "Trade team-assets endpoint ($teamCode, $($teamAssets.player_count) players, read-only)"
+                } else {
+                    Fail "Trade team-assets endpoint failed safety/payload checks"
+                }
+            } else {
+                Fail "Transaction foundation read-only safety check failed"
+            }
+        } catch {
+            Fail "Batch 07 transaction endpoint check failed: $($_.Exception.Message)"
         }
     }
 } catch {

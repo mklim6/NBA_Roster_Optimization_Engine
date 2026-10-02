@@ -1,5 +1,8 @@
 extends Control
 
+const TradeCenterV3 = preload("res://scripts/trade_center_v3.gd")
+const FreeAgencyCenterV3 = preload("res://scripts/free_agency_center_v3.gd")
+
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
 const ROSTER_URL := "http://127.0.0.1:8765/v3/roster"
@@ -160,29 +163,11 @@ func _build_interface() -> void:
 	content_stack.add_child(roster_page)
 	roster_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	trades_page = _build_feature_area(
-		"TRADE CENTER",
-		"Roster construction, offer evaluation, pick inventory, and CBA-aware trade workflow.",
-		"TRADES",
-		[
-			["TRADE FINDER", "Build and evaluate multi-team concepts using the franchise trade engine."],
-			["INCOMING OFFERS", "Review CPU proposals, value context, roster fit, and legality."],
-			["DRAFT CAPITAL", "Inspect future pick inventory, protections, rights, and Stepien context."]
-		]
-	)
+	trades_page = TradeCenterV3.new()
 	content_stack.add_child(trades_page)
 	trades_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	free_agency_page = _build_feature_area(
-		"FREE AGENCY",
-		"Market intelligence, negotiations, roster needs, exceptions, and multi-season contract planning.",
-		"MARKET",
-		[
-			["MARKET BOARD", "Track available players, market tiers, roles, age curves, and demand."],
-			["NEGOTIATIONS", "Manage active talks, offer structure, cap paths, and exception usage."],
-			["ROSTER PLAN", "Balance immediate needs with development, aging, and future flexibility."]
-		]
-	)
+	free_agency_page = FreeAgencyCenterV3.new()
 	content_stack.add_child(free_agency_page)
 	free_agency_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
@@ -2452,10 +2437,11 @@ func _show_page(page_name: String) -> void:
 	elif page_name in ["SCOUTING", "LEAGUE", "FRONT OFFICE"]:
 		_request_franchise_intelligence()
 	elif page_name == "TRADES":
-		_request_market_intelligence()
-		_request_transaction_foundation(true)
+		if trades_page != null and trades_page.has_method("refresh"):
+			trades_page.call("refresh")
 	elif page_name == "FREE AGENCY":
-		_request_market_intelligence()
+		if free_agency_page != null and free_agency_page.has_method("refresh"):
+			free_agency_page.call("refresh")
 
 
 func _apply_nav_button_style(button: Button, active: bool) -> void:
