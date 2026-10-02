@@ -3,6 +3,8 @@ extends Control
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
 const ROSTER_URL := "http://127.0.0.1:8765/v3/roster"
+const ROTATION_PREVIEW_URL := "http://127.0.0.1:8765/v3/rotation/preview"
+const ROTATION_APPLY_URL := "http://127.0.0.1:8765/v3/rotation/apply"
 
 const BG := Color("07101d")
 const SIDEBAR := Color("0b1525")
@@ -22,6 +24,7 @@ var retry_button: Button
 var http_request: HTTPRequest
 var summary_request: HTTPRequest
 var roster_request: HTTPRequest
+var rotation_request: HTTPRequest
 
 var home_page: Control
 var roster_page: Control
@@ -37,6 +40,17 @@ var roster_cap_value: Label
 var roster_chemistry_value: Label
 var roster_rows: VBoxContainer
 var player_detail_overlay: Control
+var rotation_overlay: Control
+var rotation_edit_rows := {}
+var rotation_edit_order := []
+var rotation_feedback: Label
+var rotation_total_label: Label
+var rotation_preview_button: Button
+var rotation_apply_button: Button
+var rotation_request_mode := ""
+var rotation_pending_body := ""
+var rotation_validated_body := ""
+var rotation_syncing := false
 
 var header_subtitle: Label
 var team_name_label: Label
@@ -365,6 +379,10 @@ func _build_roster_area() -> Control:
 	titles.add_child(roster_subtitle)
 	header.add_child(titles)
 
+	var edit_rotation := _action_button("EDIT ROTATION", true)
+	edit_rotation.pressed.connect(_show_rotation_editor)
+	header.add_child(edit_rotation)
+
 	var refresh := _action_button("REFRESH")
 	refresh.pressed.connect(_request_roster)
 	header.add_child(refresh)
@@ -413,7 +431,7 @@ func _build_roster_area() -> Control:
 	column.add_child(roster_card)
 
 	var note := Label.new()
-	note.text = "READ-ONLY • Cap room is an active-roster contract estimate while full team financial tables are unavailable in this save."
+	note.text = "V3 WORKING SAVE • Rotation edits are isolated from the protected V2 release checkpoint. Cap room remains an active-roster contract estimate."
 	note.add_theme_color_override("font_color", MUTED)
 	note.add_theme_font_size_override("font_size", 10)
 	column.add_child(note)
@@ -878,7 +896,7 @@ func _build_quick_actions_panel() -> Control:
 	body.add_child(spacer)
 
 	var note := Label.new()
-	note.text = "Phase 1 is intentionally read-only.\nNo V2 franchise save can be mutated by this prototype."
+	note.text = "V3 edits use an isolated working save.\nThe validated V2 release checkpoint remains protected."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	note.add_theme_color_override("font_color", MUTED)
 	note.add_theme_font_size_override("font_size", 11)
@@ -1057,6 +1075,11 @@ func _build_http_client() -> void:
 	roster_request.request_completed.connect(_on_roster_completed)
 	add_child(roster_request)
 
+	rotation_request = HTTPRequest.new()
+	rotation_request.timeout = 8.0
+	rotation_request.request_completed.connect(_on_rotation_request_completed)
+	add_child(rotation_request)
+
 func _check_bridge() -> void:
 	if http_request == null:
 		return
@@ -1090,7 +1113,7 @@ func _on_health_completed(
 
 	_set_bridge_status(
 		true,
-		"Python engine connected • API %s • live V2 save • read-only safe mode" % payload.get("api_version", "unknown")
+		"Python engine connected • API %s • V3 working save enabled • V2 release protected" % payload.get("api_version", "unknown")
 	)
 
 	_request_franchise_summary()
@@ -1105,7 +1128,7 @@ func _request_roster() -> void:
 		roster_request.cancel_request()
 
 	if roster_status != null:
-		roster_status.text = "Refreshing live V2 roster..."
+		roster_status.text = "Refreshing V3 working roster..."
 
 	var error := roster_request.request(ROSTER_URL)
 	if error != OK:
@@ -1119,7 +1142,7 @@ func _on_roster_completed(
 	body: PackedByteArray
 ) -> void:
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
-		_set_roster_error("Active V2 roster could not be loaded.")
+		_set_roster_error("V3 working roster could not be loaded.")
 		return
 
 	var payload = JSON.parse_string(body.get_string_from_utf8())
@@ -1144,10 +1167,13 @@ func _apply_roster_payload(payload: Dictionary) -> void:
 	var chemistry = payload.get("chemistry", {})
 	var players = payload.get("players", [])
 
-	roster_subtitle.text = "%s • %s • LEAGUE DAY %s • LIVE V2 SAVE" % [
+	var source_label := "V3 WORKING SAVE" if str(payload.get("source", "")) == "v3_working_checkpoint" else "PROTECTED V2 SAVE"
+
+	roster_subtitle.text = "%s • %s • LEAGUE DAY %s • %s" % [
 		str(team.get("name", "Active Franchise")).to_upper(),
 		str(season.get("label", "")),
-		str(season.get("day_index", "?"))
+		str(season.get("day_index", "?")),
+		source_label
 	]
 
 	roster_count_value.text = "%s rostered" % str(team.get("roster_size", "?"))
@@ -1172,9 +1198,504 @@ func _apply_roster_payload(payload: Dictionary) -> void:
 			roster_rows.add_child(_roster_row(player))
 
 
+
+func _show_rotation_editor() -> void:
+	if roster_payload.is_empty():
+		if roster_status != null:
+			roster_status.text = "Load the roster before editing the rotation."
+		return
+
+	if not bool(roster_payload.get("editable", false)):
+		if roster_status != null:
+			roster_status.text = "Initialize the V3 working save before editing the rotation."
+		return
+
+	_close_rotation_editor()
+
+	rotation_overlay = Control.new()
+	rotation_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	rotation_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(rotation_overlay)
+	rotation_overlay.move_to_front()
+
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.76)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	rotation_overlay.add_child(dim)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var center := CenterContainer.new()
+	center.mouse_filter = Control.MOUSE_FILTER_PASS
+	rotation_overlay.add_child(center)
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var card := _card(Vector2(1040, 680))
+	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	center.add_child(card)
+
+	var body := _card_body(card, 20)
+	body.add_theme_constant_override("separation", 12)
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 12)
+	body.add_child(header)
+
+	var titles := VBoxContainer.new()
+	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	titles.add_theme_constant_override("separation", 3)
+	header.add_child(titles)
+
+	var title := Label.new()
+	title.text = "EDIT ROTATION"
+	title.add_theme_color_override("font_color", TEXT)
+	title.add_theme_font_size_override("font_size", 26)
+	titles.add_child(title)
+
+	var subtitle := Label.new()
+	subtitle.text = "V3 WORKING SAVE • Changes are validated by the existing V2 rotation engine before they can be applied."
+	subtitle.add_theme_color_override("font_color", MUTED)
+	subtitle.add_theme_font_size_override("font_size", 11)
+	titles.add_child(subtitle)
+
+	var close_button := _action_button("CANCEL")
+	close_button.pressed.connect(_close_rotation_editor)
+	header.add_child(close_button)
+
+	var summary_row := HBoxContainer.new()
+	summary_row.add_theme_constant_override("separation", 12)
+	body.add_child(summary_row)
+
+	rotation_total_label = Label.new()
+	rotation_total_label.custom_minimum_size = Vector2(170, 38)
+	rotation_total_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	rotation_total_label.add_theme_font_size_override("font_size", 18)
+	summary_row.add_child(rotation_total_label)
+
+	rotation_feedback = Label.new()
+	rotation_feedback.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rotation_feedback.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	rotation_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	rotation_feedback.add_theme_font_size_override("font_size", 11)
+	summary_row.add_child(rotation_feedback)
+
+	rotation_preview_button = _action_button("PREVIEW VALIDATION")
+	rotation_preview_button.pressed.connect(_preview_rotation)
+	summary_row.add_child(rotation_preview_button)
+
+	rotation_apply_button = _action_button("APPLY ROTATION", true)
+	rotation_apply_button.disabled = true
+	rotation_apply_button.pressed.connect(_apply_rotation)
+	summary_row.add_child(rotation_apply_button)
+
+	var table_header := HBoxContainer.new()
+	table_header.add_theme_constant_override("separation", 8)
+	table_header.add_child(_roster_cell("PLAYER", 220, MUTED))
+	table_header.add_child(_roster_cell("POS", 60, MUTED))
+	table_header.add_child(_roster_cell("HEALTH", 180, MUTED))
+	table_header.add_child(_roster_cell("START", 70, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	table_header.add_child(_roster_cell("ROTATION", 86, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	table_header.add_child(_roster_cell("MINUTES", 100, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	body.add_child(table_header)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(scroll)
+
+	var rows_box := VBoxContainer.new()
+	rows_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rows_box.add_theme_constant_override("separation", 5)
+	scroll.add_child(rows_box)
+
+	rotation_edit_rows.clear()
+	rotation_edit_order.clear()
+	rotation_validated_body = ""
+
+	var players = roster_payload.get("players", [])
+	for player in players:
+		if typeof(player) == TYPE_DICTIONARY:
+			rows_box.add_child(_rotation_editor_row(player))
+
+	_refresh_rotation_editor_state()
+
+
+func _rotation_editor_row(player: Dictionary) -> Control:
+	var panel := PanelContainer.new()
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.add_theme_stylebox_override("panel", _box(PANEL_ALT, 7, BORDER))
+
+	var margin := MarginContainer.new()
+	_set_margins(margin, 10, 7, 10, 7)
+	panel.add_child(margin)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	margin.add_child(row)
+
+	var player_id := str(player.get("player_id", ""))
+	rotation_edit_order.append(player_id)
+
+	row.add_child(_roster_cell(str(player.get("name", "Unknown")), 220, TEXT))
+	row.add_child(_roster_cell(str(player.get("position", "")), 60, MUTED))
+
+	var health = player.get("health", {})
+	var health_status := str(health.get("status", "unknown"))
+	var health_color := GOOD if health_status == "healthy" else BAD
+	row.add_child(_roster_cell(str(health.get("display", "Unknown")), 180, health_color))
+
+	var starter_box := CheckBox.new()
+	starter_box.custom_minimum_size = Vector2(70, 32)
+	starter_box.button_pressed = bool(player.get("is_starter", false))
+	starter_box.tooltip_text = "Starter"
+	row.add_child(starter_box)
+
+	var rotation_box := CheckBox.new()
+	rotation_box.custom_minimum_size = Vector2(86, 32)
+	rotation_box.button_pressed = bool(player.get("in_rotation", false))
+	rotation_box.tooltip_text = "In rotation"
+	row.add_child(rotation_box)
+
+	var minutes_spin := SpinBox.new()
+	minutes_spin.custom_minimum_size = Vector2(100, 32)
+	minutes_spin.min_value = 0.0
+	minutes_spin.max_value = 48.0
+	minutes_spin.step = 1.0
+	minutes_spin.value = float(player.get("target_minutes", 0.0))
+	minutes_spin.editable = rotation_box.button_pressed
+	minutes_spin.suffix = " min"
+	row.add_child(minutes_spin)
+
+	rotation_edit_rows[player_id] = {
+		"player": player,
+		"starter": starter_box,
+		"rotation": rotation_box,
+		"minutes": minutes_spin,
+	}
+
+	starter_box.toggled.connect(_on_rotation_starter_toggled.bind(player_id))
+	rotation_box.toggled.connect(_on_rotation_member_toggled.bind(player_id))
+	minutes_spin.value_changed.connect(_on_rotation_minutes_changed.bind(player_id))
+
+	return panel
+
+
+func _on_rotation_starter_toggled(pressed: bool, player_id: String) -> void:
+	if rotation_syncing:
+		return
+
+	var entry = rotation_edit_rows.get(player_id, {})
+	if entry.is_empty():
+		return
+
+	if pressed and not entry["rotation"].button_pressed:
+		rotation_syncing = true
+		entry["rotation"].button_pressed = true
+		entry["minutes"].editable = true
+		rotation_syncing = false
+
+	_rotation_editor_dirty()
+
+
+func _on_rotation_member_toggled(pressed: bool, player_id: String) -> void:
+	if rotation_syncing:
+		return
+
+	var entry = rotation_edit_rows.get(player_id, {})
+	if entry.is_empty():
+		return
+
+	rotation_syncing = true
+	entry["minutes"].editable = pressed
+
+	if not pressed:
+		if entry["starter"].button_pressed:
+			entry["starter"].button_pressed = false
+		entry["minutes"].value = 0.0
+
+	rotation_syncing = false
+	_rotation_editor_dirty()
+
+
+func _on_rotation_minutes_changed(_value: float, _player_id: String) -> void:
+	if rotation_syncing:
+		return
+	_rotation_editor_dirty()
+
+
+func _rotation_editor_dirty() -> void:
+	rotation_validated_body = ""
+	if rotation_apply_button != null:
+		rotation_apply_button.disabled = true
+	_refresh_rotation_editor_state()
+
+
+func _rotation_rows_payload() -> Array:
+	var rows := []
+
+	for player_id in rotation_edit_order:
+		var entry = rotation_edit_rows.get(player_id, {})
+		if entry.is_empty():
+			continue
+
+		rows.append(
+			{
+				"player_id": player_id,
+				"starter": bool(entry["starter"].button_pressed),
+				"in_rotation": bool(entry["rotation"].button_pressed),
+				"minutes": float(entry["minutes"].value),
+			}
+		)
+
+	return rows
+
+
+func _rotation_body_json() -> String:
+	return JSON.stringify({"rows": _rotation_rows_payload()})
+
+
+func _rotation_local_validation() -> Dictionary:
+	var rules = roster_payload.get("rotation_rules", {})
+	var required_starters := int(rules.get("required_starters", 5))
+	var minimum_players := int(rules.get("minimum_game_players", 8))
+	var maximum_players := int(rules.get("maximum_rotation_players", 15))
+	var required_minutes := float(rules.get("required_total_minutes", 240.0))
+	var maximum_minutes := float(rules.get("maximum_player_minutes", 48.0))
+
+	var starters := 0
+	var rotation_players := 0
+	var total_minutes := 0.0
+	var bad_minutes := false
+	var unavailable_names := []
+
+	for player_id in rotation_edit_order:
+		var entry = rotation_edit_rows.get(player_id, {})
+		if entry.is_empty():
+			continue
+
+		var is_starter := bool(entry["starter"].button_pressed)
+		var in_rotation := bool(entry["rotation"].button_pressed)
+		var minutes := float(entry["minutes"].value)
+		var player = entry["player"]
+
+		if is_starter:
+			starters += 1
+
+		if in_rotation:
+			rotation_players += 1
+			total_minutes += minutes
+
+			if minutes <= 0.0 or minutes > maximum_minutes:
+				bad_minutes = true
+
+			var health = player.get("health", {})
+			var health_status := str(health.get("status", "unknown"))
+			if health_status not in ["", "healthy", "unknown"]:
+				unavailable_names.append(str(player.get("name", player_id)))
+
+	var issues := []
+
+	if starters != required_starters:
+		issues.append("Need exactly %s starters" % required_starters)
+
+	if rotation_players < minimum_players or rotation_players > maximum_players:
+		issues.append(
+			"Rotation must contain %s-%s players" % [
+				minimum_players,
+				maximum_players
+			]
+		)
+
+	if bad_minutes:
+		issues.append("Every rotation player needs 1-%s minutes" % int(maximum_minutes))
+
+	if abs(total_minutes - required_minutes) > 0.1:
+		issues.append("Minutes must total %.0f" % required_minutes)
+
+	if unavailable_names.size() > 0:
+		issues.append("Unavailable: %s" % ", ".join(unavailable_names))
+
+	return {
+		"valid": issues.is_empty(),
+		"issues": issues,
+		"starters": starters,
+		"rotation_players": rotation_players,
+		"total_minutes": total_minutes,
+		"required_minutes": required_minutes,
+	}
+
+
+func _refresh_rotation_editor_state() -> void:
+	if rotation_total_label == null or rotation_feedback == null:
+		return
+
+	var check := _rotation_local_validation()
+	var total := float(check.get("total_minutes", 0.0))
+	var required := float(check.get("required_minutes", 240.0))
+	var valid := bool(check.get("valid", false))
+
+	rotation_total_label.text = "%.0f / %.0f MIN" % [total, required]
+	rotation_total_label.add_theme_color_override(
+		"font_color",
+		GOOD if abs(total - required) <= 0.1 else BAD
+	)
+
+	if valid:
+		rotation_feedback.text = "%s starters • %s rotation players • Ready for server validation." % [
+			str(check.get("starters", 0)),
+			str(check.get("rotation_players", 0))
+		]
+		rotation_feedback.add_theme_color_override("font_color", GOOD)
+	else:
+		var issues: Array = check.get("issues", [])
+		rotation_feedback.text = " • ".join(issues)
+		rotation_feedback.add_theme_color_override("font_color", BAD)
+
+	if rotation_preview_button != null:
+		rotation_preview_button.disabled = not valid
+
+
+func _preview_rotation() -> void:
+	_send_rotation_request("preview")
+
+
+func _apply_rotation() -> void:
+	var current_body := _rotation_body_json()
+
+	if rotation_validated_body == "" or current_body != rotation_validated_body:
+		rotation_feedback.text = "Preview validation is required again before applying."
+		rotation_feedback.add_theme_color_override("font_color", BAD)
+		rotation_apply_button.disabled = true
+		return
+
+	_send_rotation_request("apply")
+
+
+func _send_rotation_request(mode: String) -> void:
+	if rotation_request == null:
+		return
+
+	var check := _rotation_local_validation()
+	if not bool(check.get("valid", false)):
+		_refresh_rotation_editor_state()
+		return
+
+	if rotation_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		rotation_request.cancel_request()
+
+	var body := _rotation_body_json()
+	var url := ROTATION_PREVIEW_URL if mode == "preview" else ROTATION_APPLY_URL
+	var headers := PackedStringArray(["Content-Type: application/json"])
+
+	rotation_request_mode = mode
+	rotation_pending_body = body
+	rotation_preview_button.disabled = true
+	rotation_apply_button.disabled = true
+
+	rotation_feedback.text = (
+		"Validating rotation with the Python engine..."
+		if mode == "preview"
+		else "Applying rotation to the isolated V3 working save..."
+	)
+	rotation_feedback.add_theme_color_override("font_color", MUTED)
+
+	var error := rotation_request.request(
+		url,
+		headers,
+		HTTPClient.METHOD_POST,
+		body
+	)
+
+	if error != OK:
+		rotation_feedback.text = "Could not start the rotation request (error %s)." % error
+		rotation_feedback.add_theme_color_override("font_color", BAD)
+		_refresh_rotation_editor_state()
+
+
+func _on_rotation_request_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	if result != HTTPRequest.RESULT_SUCCESS:
+		if rotation_feedback != null:
+			rotation_feedback.text = "Rotation request failed before the server responded."
+			rotation_feedback.add_theme_color_override("font_color", BAD)
+		rotation_validated_body = ""
+		_refresh_rotation_editor_state()
+		return
+
+	var payload = JSON.parse_string(body.get_string_from_utf8())
+
+	if typeof(payload) != TYPE_DICTIONARY:
+		if rotation_feedback != null:
+			rotation_feedback.text = "Rotation endpoint returned invalid data."
+			rotation_feedback.add_theme_color_override("font_color", BAD)
+		rotation_validated_body = ""
+		_refresh_rotation_editor_state()
+		return
+
+	if response_code != 200:
+		if rotation_feedback != null:
+			rotation_feedback.text = str(payload.get("detail", payload.get("error", "Rotation validation failed.")))
+			rotation_feedback.add_theme_color_override("font_color", BAD)
+		rotation_validated_body = ""
+		_refresh_rotation_editor_state()
+		return
+
+	if rotation_request_mode == "preview":
+		if str(payload.get("status", "")) == "valid":
+			rotation_validated_body = rotation_pending_body
+			rotation_feedback.text = "ENGINE VALIDATION PASSED • Ready to apply to the V3 working save."
+			rotation_feedback.add_theme_color_override("font_color", GOOD)
+			rotation_preview_button.disabled = false
+			rotation_apply_button.disabled = false
+		else:
+			rotation_validated_body = ""
+			rotation_feedback.text = "Rotation preview did not validate."
+			rotation_feedback.add_theme_color_override("font_color", BAD)
+			_refresh_rotation_editor_state()
+
+	elif rotation_request_mode == "apply":
+		var applied := str(payload.get("status", "")) == "applied"
+		var persisted := bool(payload.get("persisted_after_reload", false))
+		var v2_unchanged := bool(payload.get("active_v2_unchanged", false))
+
+		if applied and persisted and v2_unchanged:
+			rotation_feedback.text = "ROTATION SAVED • Reload verified • V2 release checkpoint unchanged."
+			rotation_feedback.add_theme_color_override("font_color", GOOD)
+			_close_rotation_editor()
+			_request_roster()
+		else:
+			rotation_feedback.text = "Rotation write did not pass persistence and safety verification."
+			rotation_feedback.add_theme_color_override("font_color", BAD)
+			rotation_validated_body = ""
+			_refresh_rotation_editor_state()
+
+
+func _close_rotation_editor() -> void:
+	if rotation_request != null and rotation_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		rotation_request.cancel_request()
+
+	if rotation_overlay != null and is_instance_valid(rotation_overlay):
+		rotation_overlay.queue_free()
+
+	rotation_overlay = null
+	rotation_edit_rows.clear()
+	rotation_edit_order.clear()
+	rotation_feedback = null
+	rotation_total_label = null
+	rotation_preview_button = null
+	rotation_apply_button = null
+	rotation_request_mode = ""
+	rotation_pending_body = ""
+	rotation_validated_body = ""
+
+
 func _set_roster_error(message: String) -> void:
 	if roster_subtitle != null:
-		roster_subtitle.text = "V2 ROSTER DATA UNAVAILABLE"
+		roster_subtitle.text = "V3 ROSTER DATA UNAVAILABLE"
 
 	if roster_status != null:
 		roster_status.text = message

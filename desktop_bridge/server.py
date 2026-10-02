@@ -13,7 +13,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.4.0"
+API_VERSION = "0.5.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -600,7 +600,13 @@ def _roster_player_payload(
     }
 
 
-def _roster_payload(state: Any, team_abbreviation: str) -> dict[str, Any]:
+def _roster_payload(
+    state: Any,
+    team_abbreviation: str,
+    *,
+    source: str = "active_v2_franchise_checkpoint",
+    editable: bool = False,
+) -> dict[str, Any]:
     team_state = state.teams.get(team_abbreviation)
     if team_state is None:
         return {}
@@ -646,8 +652,10 @@ def _roster_payload(state: Any, team_abbreviation: str) -> dict[str, Any]:
     )
 
     return {
-        "read_only": True,
-        "source": "active_v2_franchise_checkpoint",
+        "read_only": not editable,
+        "editable": editable,
+        "active_v2_read_only": True,
+        "source": source,
         "api_version": API_VERSION,
         "team": {
             "abbreviation": team_abbreviation,
@@ -676,6 +684,16 @@ def _roster_payload(state: Any, team_abbreviation: str) -> dict[str, Any]:
             "trade_pressure_players": _safe_int(
                 team_morale.get("trade_pressure_players", 0)
             ),
+        },
+        "rotation_rules": {
+            "required_starters": 5,
+            "minimum_game_players": _safe_int(
+                getattr(state.settings, "minimum_game_players", 8),
+                8,
+            ),
+            "maximum_rotation_players": 15,
+            "required_total_minutes": 240.0,
+            "maximum_player_minutes": 48.0,
         },
         "players": rows,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -948,29 +966,52 @@ async def franchise_summary(_: Request) -> JSONResponse:
 
 
 async def roster_summary(_: Request) -> JSONResponse:
-    # Read-only roster endpoint for the V3 Godot client.
+    # Prefer the isolated V3 working save. Fall back to protected V2 only
+    # before a working save has been initialized.
     try:
-        checkpoint = load_franchise_checkpoint()
+        checkpoint = _working_checkpoint()
+        source = "v3_working_checkpoint"
+        editable = True
+
+        if checkpoint is None:
+            checkpoint = load_franchise_checkpoint()
+            source = "active_v2_franchise_checkpoint"
+            editable = False
+
+        if checkpoint is None:
+            return JSONResponse(
+                {
+                    "error": "franchise_checkpoint_not_found",
+                    "active_v2_read_only": True,
+                },
+                status_code=404,
+            )
+
         state = checkpoint.simulation_state
-        active_team = checkpoint.preferences.get("franchise_pref_active_team")
+        active_team = _active_team_from_checkpoint(checkpoint)
 
         if not active_team:
             return JSONResponse(
                 {
                     "error": "active_franchise_not_found",
-                    "read_only": True,
+                    "active_v2_read_only": True,
                 },
                 status_code=404,
             )
 
-        payload = _roster_payload(state, active_team)
+        payload = _roster_payload(
+            state,
+            active_team,
+            source=source,
+            editable=editable,
+        )
 
         if not payload:
             return JSONResponse(
                 {
                     "error": "active_team_roster_not_found",
                     "team": active_team,
-                    "read_only": True,
+                    "active_v2_read_only": True,
                 },
                 status_code=404,
             )
@@ -983,11 +1024,10 @@ async def roster_summary(_: Request) -> JSONResponse:
                 "error": "roster_summary_failed",
                 "exception_type": type(exc).__name__,
                 "detail": str(exc),
-                "read_only": True,
+                "active_v2_read_only": True,
             },
             status_code=500,
         )
-
 
 
 async def working_save_status(_: Request) -> JSONResponse:
