@@ -8,17 +8,21 @@ const ROTATION_APPLY_URL := "http://127.0.0.1:8765/v3/rotation/apply"
 const GAME_DAY_URL := "http://127.0.0.1:8765/v3/game-day"
 const GAME_DAY_SIMULATE_URL := "http://127.0.0.1:8765/v3/game-day/simulate"
 
-const BG := Color("07101d")
-const SIDEBAR := Color("0b1525")
-const PANEL := Color("101d30")
-const PANEL_ALT := Color("14243a")
-const PANEL_HOVER := Color("1a2d47")
-const TEXT := Color("f5f7fb")
-const MUTED := Color("91a3bd")
-const ACCENT := Color("64d2ff")
-const GOOD := Color("65d68d")
-const BAD := Color("ff7383")
-const BORDER := Color("223552")
+const BG := Color("080b12")
+const SIDEBAR := Color("0d111a")
+const PANEL := Color("121824")
+const PANEL_ALT := Color("171f2d")
+const PANEL_HOVER := Color("202b3d")
+const TEXT := Color("f7f8fb")
+const MUTED := Color("8d99aa")
+const ACCENT := Color("8ed8ff")
+const GOOD := Color("61d69b")
+const BAD := Color("ff6577")
+const BORDER := Color("263247")
+const SOFT_BORDER := Color("1d2737")
+const TEAM_PRIMARY := Color("d9273c")
+const TEAM_PRIMARY_HOVER := Color("ef4055")
+const GOLD := Color("f3c96b")
 
 var bridge_status: Label
 var bridge_detail: Label
@@ -66,6 +70,7 @@ var rotation_syncing := false
 var header_subtitle: Label
 var team_name_label: Label
 var team_detail_label: Label
+var team_abbr_badge: Label
 var next_game_matchup: Label
 var next_game_detail: Label
 
@@ -91,6 +96,20 @@ func _build_background() -> void:
 	background.color = BG
 	add_child(background)
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var top_band := ColorRect.new()
+	top_band.color = Color(TEAM_PRIMARY, 0.055)
+	top_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(top_band)
+	top_band.anchor_right = 1.0
+	top_band.offset_bottom = 185.0
+
+	var accent_line := ColorRect.new()
+	accent_line.color = TEAM_PRIMARY
+	accent_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(accent_line)
+	accent_line.anchor_right = 1.0
+	accent_line.offset_bottom = 3.0
 
 
 func _build_interface() -> void:
@@ -118,27 +137,44 @@ func _build_interface() -> void:
 
 func _build_sidebar() -> Control:
 	var sidebar_panel := PanelContainer.new()
-	sidebar_panel.custom_minimum_size = Vector2(250, 0)
-	sidebar_panel.add_theme_stylebox_override("panel", _box(SIDEBAR, 0))
+	sidebar_panel.custom_minimum_size = Vector2(228, 0)
+	sidebar_panel.add_theme_stylebox_override("panel", _box(SIDEBAR, 0, SOFT_BORDER))
 
 	var margin := MarginContainer.new()
-	_set_margins(margin, 22, 24, 22, 24)
+	_set_margins(margin, 18, 22, 18, 22)
 	sidebar_panel.add_child(margin)
 
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 10)
 	margin.add_child(column)
 
+	var brand_row := HBoxContainer.new()
+	brand_row.add_theme_constant_override("separation", 11)
+	column.add_child(brand_row)
+
+	var mark := PanelContainer.new()
+	mark.custom_minimum_size = Vector2(44, 44)
+	mark.add_theme_stylebox_override("panel", _box(TEAM_PRIMARY, 10, TEAM_PRIMARY))
+	brand_row.add_child(mark)
+
+	var mark_label := Label.new()
+	mark_label.text = "FS"
+	mark_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mark_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	mark_label.add_theme_color_override("font_color", TEXT)
+	mark_label.add_theme_font_size_override("font_size", 16)
+	mark.add_child(mark_label)
+
 	var brand := Label.new()
 	brand.text = "FRANCHISE\nSIMULATOR"
 	brand.add_theme_color_override("font_color", TEXT)
-	brand.add_theme_font_size_override("font_size", 24)
-	column.add_child(brand)
+	brand.add_theme_font_size_override("font_size", 19)
+	brand_row.add_child(brand)
 
 	var version := Label.new()
-	version.text = "V3 • DESKTOP ALPHA"
-	version.add_theme_color_override("font_color", ACCENT)
-	version.add_theme_font_size_override("font_size", 11)
+	version.text = "V3 DESKTOP • FRANCHISE ENGINE"
+	version.add_theme_color_override("font_color", MUTED)
+	version.add_theme_font_size_override("font_size", 10)
 	column.add_child(version)
 
 	var brand_spacer := Control.new()
@@ -175,10 +211,10 @@ func _build_main_area() -> Control:
 	var outer := MarginContainer.new()
 	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	outer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_set_margins(outer, 32, 26, 32, 28)
+	_set_margins(outer, 34, 28, 34, 30)
 
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 18)
+	column.add_theme_constant_override("separation", 20)
 	outer.add_child(column)
 
 	column.add_child(_build_header())
@@ -218,65 +254,102 @@ func _build_header() -> Control:
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	titles.add_theme_constant_override("separation", 3)
 
+	var eyebrow := Label.new()
+	eyebrow.text = "NBA FRANCHISE OPERATIONS"
+	eyebrow.add_theme_color_override("font_color", TEAM_PRIMARY_HOVER)
+	eyebrow.add_theme_font_size_override("font_size", 10)
+	titles.add_child(eyebrow)
+
 	var title := Label.new()
-	title.text = "FRANCHISE COMMAND CENTER"
+	title.text = "FRANCHISE HQ"
 	title.add_theme_color_override("font_color", TEXT)
-	title.add_theme_font_size_override("font_size", 28)
+	title.add_theme_font_size_override("font_size", 34)
 	titles.add_child(title)
 
 	header_subtitle = Label.new()
-	header_subtitle.text = "LOADING ACTIVE V2 FRANCHISE..."
+	header_subtitle.text = "LOADING V3 WORKING FRANCHISE..."
 	header_subtitle.add_theme_color_override("font_color", MUTED)
 	header_subtitle.add_theme_font_size_override("font_size", 12)
 	titles.add_child(header_subtitle)
 	row.add_child(titles)
 
-	var alpha := Label.new()
-	alpha.text = "PHASE 1"
-	alpha.add_theme_color_override("font_color", ACCENT)
-	alpha.add_theme_font_size_override("font_size", 12)
+	var alpha := _pill("V3 DESKTOP ALPHA", TEAM_PRIMARY_HOVER)
 	alpha.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(alpha)
 
 	return row
 
 func _build_team_card() -> Control:
-	var card := _card(Vector2(250, 190))
+	var card := _card(Vector2(330, 220))
+	card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(TEAM_PRIMARY, 0.72)))
 	var body := _card_body(card, 20)
+	body.add_theme_constant_override("separation", 12)
 
-	var kicker := _small_label("YOUR FRANCHISE", ACCENT)
-	body.add_child(kicker)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 10)
+	top.add_child(_small_label("YOUR FRANCHISE", TEAM_PRIMARY_HOVER))
+	var top_spacer := Control.new()
+	top_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(top_spacer)
+	top.add_child(_pill("V3 WORKING SAVE", GOOD))
+	body.add_child(top)
+
+	var identity := HBoxContainer.new()
+	identity.add_theme_constant_override("separation", 15)
+	body.add_child(identity)
+
+	var badge := PanelContainer.new()
+	badge.custom_minimum_size = Vector2(72, 72)
+	badge.add_theme_stylebox_override("panel", _box(TEAM_PRIMARY, 16, TEAM_PRIMARY_HOVER))
+	identity.add_child(badge)
+
+	team_abbr_badge = Label.new()
+	team_abbr_badge.text = "CHI"
+	team_abbr_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	team_abbr_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	team_abbr_badge.add_theme_color_override("font_color", TEXT)
+	team_abbr_badge.add_theme_font_size_override("font_size", 22)
+	badge.add_child(team_abbr_badge)
+
+	var identity_text := VBoxContainer.new()
+	identity_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	identity_text.add_theme_constant_override("separation", 3)
+	identity.add_child(identity_text)
 
 	team_name_label = Label.new()
 	team_name_label.text = "LOADING..."
 	team_name_label.add_theme_color_override("font_color", TEXT)
-	team_name_label.add_theme_font_size_override("font_size", 30)
-	body.add_child(team_name_label)
+	team_name_label.add_theme_font_size_override("font_size", 25)
+	team_name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	identity_text.add_child(team_name_label)
 
 	team_detail_label = Label.new()
-	team_detail_label.text = "Reading active franchise checkpoint..."
+	team_detail_label.text = "Reading V3 working franchise..."
 	team_detail_label.add_theme_color_override("font_color", MUTED)
-	team_detail_label.add_theme_font_size_override("font_size", 13)
-	body.add_child(team_detail_label)
+	team_detail_label.add_theme_font_size_override("font_size", 12)
+	identity_text.add_child(team_detail_label)
 
-	var spacer := Control.new()
-	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_child(spacer)
-
-	body.add_child(_pill("LIVE V2 SAVE", GOOD))
 	return card
 
 func _build_next_game_card() -> Control:
-	var card := _card(Vector2(360, 190))
+	var card := _card(Vector2(410, 220))
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.add_theme_stylebox_override("panel", _box(PANEL, 16, BORDER))
 	var body := _card_body(card, 20)
+	body.add_theme_constant_override("separation", 10)
 
-	body.add_child(_small_label("NEXT GAME", ACCENT))
+	var top := HBoxContainer.new()
+	top.add_child(_small_label("NEXT GAME", GOLD))
+	var top_spacer := Control.new()
+	top_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(top_spacer)
+	top.add_child(_pill("REGULAR SEASON", MUTED))
+	body.add_child(top)
 
 	next_game_matchup = Label.new()
 	next_game_matchup.text = "LOADING..."
 	next_game_matchup.add_theme_color_override("font_color", TEXT)
-	next_game_matchup.add_theme_font_size_override("font_size", 24)
+	next_game_matchup.add_theme_font_size_override("font_size", 34)
 	body.add_child(next_game_matchup)
 
 	next_game_detail = Label.new()
@@ -292,12 +365,14 @@ func _build_next_game_card() -> Control:
 	var actions := HBoxContainer.new()
 	actions.add_theme_constant_override("separation", 8)
 	actions.add_child(_action_button("GAME PLAN"))
-	actions.add_child(_action_button("PLAY / SIM", true))
+	var open_game_day := _action_button("OPEN GAME DAY", true)
+	open_game_day.pressed.connect(_open_game_day_overlay)
+	actions.add_child(open_game_day)
 	body.add_child(actions)
 	return card
 
 func _build_engine_card() -> Control:
-	var card := _card(Vector2(300, 190))
+	var card := _card(Vector2(285, 220))
 	var body := _card_body(card, 20)
 
 	body.add_child(_small_label("DESKTOP ENGINE", ACCENT))
@@ -326,16 +401,18 @@ func _build_engine_card() -> Control:
 
 
 func _metric_card(label_text: String, value_text: String, detail_text: String) -> Control:
-	var card := _card(Vector2(0, 105))
+	var card := _card(Vector2(0, 118))
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 14, SOFT_BORDER))
 	var body := _card_body(card, 16)
+	body.add_theme_constant_override("separation", 6)
 
-	body.add_child(_small_label(label_text, MUTED))
+	body.add_child(_small_label(label_text, TEAM_PRIMARY_HOVER if label_text == "RECORD" else MUTED))
 
 	var value := Label.new()
 	value.text = value_text
 	value.add_theme_color_override("font_color", TEXT)
-	value.add_theme_font_size_override("font_size", 23)
+	value.add_theme_font_size_override("font_size", 27)
 	body.add_child(value)
 
 	var detail := Label.new()
@@ -1162,12 +1239,7 @@ func _render_game_day_result(
 
 	game_day_result_label.text = "\n".join(lines)
 
-	if result_code == "W":
-		game_day_result_label.add_theme_color_override("font_color", GOOD)
-	elif result_code == "L":
-		game_day_result_label.add_theme_color_override("font_color", BAD)
-	else:
-		game_day_result_label.add_theme_color_override("font_color", MUTED)
+	game_day_result_label.add_theme_color_override("font_color", TEXT)
 
 
 func _simulate_game_day_overlay() -> void:
@@ -1446,16 +1518,16 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 
 func _action_button(text_value: String, primary: bool = false) -> Button:
 	var button := Button.new()
-	button.custom_minimum_size = Vector2(120, 36)
+	button.custom_minimum_size = Vector2(124, 38)
 	button.text = text_value
 	button.add_theme_font_size_override("font_size", 11)
-	button.add_theme_color_override("font_color", BG if primary else TEXT)
-	button.add_theme_color_override("font_hover_color", BG if primary else TEXT)
-	var normal_color := ACCENT if primary else PANEL_ALT
-	var hover_color := Color("8be0ff") if primary else PANEL_HOVER
-	button.add_theme_stylebox_override("normal", _box(normal_color, 8, normal_color if primary else BORDER))
-	button.add_theme_stylebox_override("hover", _box(hover_color, 8, hover_color if primary else ACCENT))
-	button.add_theme_stylebox_override("pressed", _box(hover_color, 8, hover_color))
+	button.add_theme_color_override("font_color", TEXT)
+	button.add_theme_color_override("font_hover_color", TEXT)
+	var normal_color := TEAM_PRIMARY if primary else PANEL_ALT
+	var hover_color := TEAM_PRIMARY_HOVER if primary else PANEL_HOVER
+	button.add_theme_stylebox_override("normal", _box(normal_color, 10, normal_color if primary else BORDER))
+	button.add_theme_stylebox_override("hover", _box(hover_color, 10, hover_color if primary else ACCENT))
+	button.add_theme_stylebox_override("pressed", _box(hover_color, 10, hover_color))
 	return button
 
 
@@ -1494,7 +1566,7 @@ func _divider() -> HSeparator:
 func _card(minimum: Vector2) -> PanelContainer:
 	var card := PanelContainer.new()
 	card.custom_minimum_size = minimum
-	card.add_theme_stylebox_override("panel", _box(PANEL, 12, BORDER))
+	card.add_theme_stylebox_override("panel", _box(PANEL, 16, BORDER))
 	return card
 
 
@@ -2252,6 +2324,8 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 	]
 
 	team_name_label.text = str(team.get("name", "Unknown Team")).to_upper()
+	if team_abbr_badge != null:
+		team_abbr_badge.text = str(team.get("abbreviation", "TEAM")).to_upper()
 
 	team_detail_label.text = "%s • %s Division
 %s rostered • %s active" % [
