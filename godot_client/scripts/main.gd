@@ -56,6 +56,12 @@ var game_day_status_label: Label
 var game_day_simulate_button: Button
 var game_day_result_label: Label
 var game_day_active_team := ""
+var game_day_team_badge: Label
+var game_day_opponent_badge: Label
+var game_day_team_record_label: Label
+var game_day_opponent_record_label: Label
+var game_day_meta_label: Label
+var game_day_alerts_label: Label
 var rotation_edit_rows := {}
 var rotation_edit_order := []
 var rotation_feedback: Label
@@ -889,7 +895,7 @@ func _open_game_day_overlay() -> void:
 	game_day_overlay.move_to_front()
 
 	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.76)
+	dim.color = Color(0, 0, 0, 0.82)
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	game_day_overlay.add_child(dim)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -899,9 +905,10 @@ func _open_game_day_overlay() -> void:
 	game_day_overlay.add_child(center)
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	var card := _card(Vector2(760, 650))
+	var card := _card(Vector2(980, 720))
 	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	card.add_theme_stylebox_override("panel", _box(PANEL, 18, Color(TEAM_PRIMARY, 0.55)))
 	center.add_child(card)
 
 	var body := _card_body(card, 22)
@@ -913,16 +920,23 @@ func _open_game_day_overlay() -> void:
 
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	titles.add_theme_constant_override("separation", 2)
 	header.add_child(titles)
+
+	var eyebrow := Label.new()
+	eyebrow.text = "FRANCHISE GAME DAY"
+	eyebrow.add_theme_color_override("font_color", TEAM_PRIMARY_HOVER)
+	eyebrow.add_theme_font_size_override("font_size", 10)
+	titles.add_child(eyebrow)
 
 	var title := Label.new()
 	title.text = "GAME DAY"
 	title.add_theme_color_override("font_color", TEXT)
-	title.add_theme_font_size_override("font_size", 26)
+	title.add_theme_font_size_override("font_size", 28)
 	titles.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "V3 WORKING SAVE • LIVE GAME DAY"
+	subtitle.text = "V3 WORKING SAVE • LIVE SIMULATION"
 	subtitle.add_theme_color_override("font_color", MUTED)
 	subtitle.add_theme_font_size_override("font_size", 11)
 	titles.add_child(subtitle)
@@ -931,51 +945,159 @@ func _open_game_day_overlay() -> void:
 	close_button.pressed.connect(_close_game_day_overlay)
 	header.add_child(close_button)
 
-	body.add_child(_divider())
+	var matchup_panel := PanelContainer.new()
+	matchup_panel.custom_minimum_size = Vector2(0, 190)
+	matchup_panel.add_theme_stylebox_override("panel", _box(PANEL_ALT, 16, SOFT_BORDER))
+	body.add_child(matchup_panel)
+
+	var matchup_margin := MarginContainer.new()
+	_set_margins(matchup_margin, 20, 18, 20, 18)
+	matchup_panel.add_child(matchup_margin)
+
+	var matchup_row := HBoxContainer.new()
+	matchup_row.add_theme_constant_override("separation", 18)
+	matchup_margin.add_child(matchup_row)
+
+	var left_team := VBoxContainer.new()
+	left_team.custom_minimum_size = Vector2(220, 0)
+	left_team.add_theme_constant_override("separation", 6)
+	matchup_row.add_child(left_team)
+
+	left_team.add_child(_small_label("YOUR TEAM", TEAM_PRIMARY_HOVER))
+
+	var left_badge_panel := PanelContainer.new()
+	left_badge_panel.custom_minimum_size = Vector2(100, 82)
+	left_badge_panel.add_theme_stylebox_override("panel", _box(TEAM_PRIMARY, 14, TEAM_PRIMARY_HOVER))
+	left_team.add_child(left_badge_panel)
+
+	game_day_team_badge = Label.new()
+	game_day_team_badge.text = "CHI"
+	game_day_team_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	game_day_team_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	game_day_team_badge.add_theme_color_override("font_color", TEXT)
+	game_day_team_badge.add_theme_font_size_override("font_size", 30)
+	left_badge_panel.add_child(game_day_team_badge)
+
+	game_day_team_record_label = Label.new()
+	game_day_team_record_label.text = "Record --"
+	game_day_team_record_label.add_theme_color_override("font_color", MUTED)
+	game_day_team_record_label.add_theme_font_size_override("font_size", 12)
+	left_team.add_child(game_day_team_record_label)
+
+	var center_matchup := VBoxContainer.new()
+	center_matchup.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center_matchup.alignment = BoxContainer.ALIGNMENT_CENTER
+	center_matchup.add_theme_constant_override("separation", 7)
+	matchup_row.add_child(center_matchup)
 
 	game_day_matchup_label = Label.new()
-	game_day_matchup_label.text = "LOADING NEXT MATCHUP..."
+	game_day_matchup_label.text = "LOADING..."
+	game_day_matchup_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	game_day_matchup_label.add_theme_color_override("font_color", TEXT)
-	game_day_matchup_label.add_theme_font_size_override("font_size", 30)
-	body.add_child(game_day_matchup_label)
+	game_day_matchup_label.add_theme_font_size_override("font_size", 32)
+	center_matchup.add_child(game_day_matchup_label)
+
+	game_day_meta_label = Label.new()
+	game_day_meta_label.text = "Reading schedule..."
+	game_day_meta_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	game_day_meta_label.add_theme_color_override("font_color", GOLD)
+	game_day_meta_label.add_theme_font_size_override("font_size", 12)
+	center_matchup.add_child(game_day_meta_label)
 
 	game_day_detail_label = Label.new()
 	game_day_detail_label.text = "Reading V3 Game Day endpoint..."
+	game_day_detail_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	game_day_detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	game_day_detail_label.add_theme_color_override("font_color", MUTED)
-	game_day_detail_label.add_theme_font_size_override("font_size", 13)
-	body.add_child(game_day_detail_label)
+	game_day_detail_label.add_theme_font_size_override("font_size", 11)
+	center_matchup.add_child(game_day_detail_label)
 
-	var spacer := Control.new()
-	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_child(spacer)
+	var right_team := VBoxContainer.new()
+	right_team.custom_minimum_size = Vector2(220, 0)
+	right_team.add_theme_constant_override("separation", 6)
+	matchup_row.add_child(right_team)
+
+	right_team.add_child(_small_label("OPPONENT", MUTED))
+
+	var right_badge_panel := PanelContainer.new()
+	right_badge_panel.custom_minimum_size = Vector2(100, 82)
+	right_badge_panel.add_theme_stylebox_override("panel", _box(Color("222b3b"), 14, BORDER))
+	right_team.add_child(right_badge_panel)
+
+	game_day_opponent_badge = Label.new()
+	game_day_opponent_badge.text = "OPP"
+	game_day_opponent_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	game_day_opponent_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	game_day_opponent_badge.add_theme_color_override("font_color", TEXT)
+	game_day_opponent_badge.add_theme_font_size_override("font_size", 30)
+	right_badge_panel.add_child(game_day_opponent_badge)
+
+	game_day_opponent_record_label = Label.new()
+	game_day_opponent_record_label.text = "Record --"
+	game_day_opponent_record_label.add_theme_color_override("font_color", MUTED)
+	game_day_opponent_record_label.add_theme_font_size_override("font_size", 12)
+	right_team.add_child(game_day_opponent_record_label)
+
+	var readiness := HBoxContainer.new()
+	readiness.add_theme_constant_override("separation", 12)
+	body.add_child(readiness)
 
 	game_day_status_label = Label.new()
+	game_day_status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	game_day_status_label.text = "Connecting to Game Day state..."
 	game_day_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	game_day_status_label.add_theme_color_override("font_color", MUTED)
 	game_day_status_label.add_theme_font_size_override("font_size", 12)
-	body.add_child(game_day_status_label)
-
-	var action_row := HBoxContainer.new()
-	action_row.add_theme_constant_override("separation", 10)
-	body.add_child(action_row)
-
-	var action_spacer := Control.new()
-	action_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	action_row.add_child(action_spacer)
+	readiness.add_child(game_day_status_label)
 
 	game_day_simulate_button = _action_button("SIMULATE GAME", true)
+	game_day_simulate_button.custom_minimum_size = Vector2(160, 44)
 	game_day_simulate_button.disabled = true
 	game_day_simulate_button.pressed.connect(_simulate_game_day_overlay)
-	action_row.add_child(game_day_simulate_button)
+	readiness.add_child(game_day_simulate_button)
+
+	var alert_panel := PanelContainer.new()
+	alert_panel.add_theme_stylebox_override("panel", _box(Color("101722"), 12, SOFT_BORDER))
+	body.add_child(alert_panel)
+
+	var alert_margin := MarginContainer.new()
+	_set_margins(alert_margin, 14, 10, 14, 10)
+	alert_panel.add_child(alert_margin)
+
+	game_day_alerts_label = Label.new()
+	game_day_alerts_label.text = "GAME PLAN CHECK • Loading coaching, medical, and workload alerts..."
+	game_day_alerts_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	game_day_alerts_label.add_theme_color_override("font_color", MUTED)
+	game_day_alerts_label.add_theme_font_size_override("font_size", 11)
+	alert_margin.add_child(game_day_alerts_label)
+
+	var result_panel := PanelContainer.new()
+	result_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	result_panel.add_theme_stylebox_override("panel", _box(Color("0f151f"), 14, SOFT_BORDER))
+	body.add_child(result_panel)
+
+	var result_margin := MarginContainer.new()
+	_set_margins(result_margin, 16, 14, 16, 14)
+	result_panel.add_child(result_margin)
+
+	var result_box := VBoxContainer.new()
+	result_box.add_theme_constant_override("separation", 8)
+	result_margin.add_child(result_box)
+
+	var last_game_header := HBoxContainer.new()
+	result_box.add_child(last_game_header)
+	last_game_header.add_child(_small_label("LAST GAME", GOLD))
+	var last_game_spacer := Control.new()
+	last_game_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	last_game_header.add_child(last_game_spacer)
+	last_game_header.add_child(_pill("POSTGAME", MUTED))
 
 	game_day_result_label = Label.new()
-	game_day_result_label.text = "No game simulated in this session."
+	game_day_result_label.text = "No completed game is available yet."
 	game_day_result_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	game_day_result_label.add_theme_color_override("font_color", MUTED)
-	game_day_result_label.add_theme_font_size_override("font_size", 12)
-	body.add_child(game_day_result_label)
+	game_day_result_label.add_theme_color_override("font_color", TEXT)
+	game_day_result_label.add_theme_font_size_override("font_size", 11)
+	result_box.add_child(game_day_result_label)
 
 	_request_game_day_overlay()
 
@@ -1027,13 +1149,32 @@ func _on_game_day_completed(
 		game_day_status_label.text = "No controlled-team game is currently scheduled."
 		return
 
-	game_day_matchup_label.text = str(next_game.get("matchup", "NEXT GAME")).to_upper()
-	game_day_detail_label.text = (
-		"Your record %s • Opponent %s\nDAY %s • %s rotation players • %.0f minutes • %s unavailable"
-	) % [
-		str(record.get("display", "N/A")),
-		str(opponent_record.get("display", "N/A")),
-		str(next_game.get("day_index", "?")),
+	var active_team := str(payload.get("team", "TEAM")).to_upper()
+	var opponent_team := str(next_game.get("opponent", "OPP")).to_upper()
+	var is_home := bool(next_game.get("is_home", false))
+
+	if game_day_team_badge != null:
+		game_day_team_badge.text = active_team
+	if game_day_opponent_badge != null:
+		game_day_opponent_badge.text = opponent_team
+	if game_day_team_record_label != null:
+		game_day_team_record_label.text = "Record %s" % str(record.get("display", "N/A"))
+	if game_day_opponent_record_label != null:
+		game_day_opponent_record_label.text = "Record %s" % str(opponent_record.get("display", "N/A"))
+
+	game_day_matchup_label.text = "%s  %s  %s" % [
+		active_team,
+		"VS" if is_home else "@",
+		opponent_team
+	]
+
+	if game_day_meta_label != null:
+		game_day_meta_label.text = "DAY %s • %s" % [
+			str(next_game.get("day_index", "?")),
+			"HOME" if is_home else "AWAY"
+		]
+
+	game_day_detail_label.text = "%s rotation players • %.0f minutes • %s unavailable" % [
 		str(rotation.get("rotation_player_ids", []).size()),
 		float(rotation.get("total_minutes", 0.0)),
 		str(unavailable.size())
@@ -1041,7 +1182,7 @@ func _on_game_day_completed(
 
 	if (
 		game_day_result_label != null
-		and game_day_result_label.text == "No game simulated in this session."
+		and game_day_result_label.text in ["No game simulated in this session.", "No completed game is available yet."]
 		and last_game != null
 		and typeof(last_game) == TYPE_DICTIONARY
 	):
@@ -1062,6 +1203,24 @@ func _on_game_day_completed(
 			persisted_result,
 			-1
 		)
+
+	var alerts: Array = payload.get("coaching_alerts", [])
+	var alert_lines: Array = []
+	for raw_alert in alerts:
+		if typeof(raw_alert) != TYPE_DICTIONARY:
+			continue
+		var alert: Dictionary = raw_alert
+		var title_text := str(alert.get("title", "Alert"))
+		var severity := str(alert.get("severity", "info")).to_upper()
+		alert_lines.append("%s • %s" % [severity, title_text])
+		if alert_lines.size() >= 4:
+			break
+
+	if game_day_alerts_label != null:
+		if alert_lines.size() > 0:
+			game_day_alerts_label.text = "GAME PLAN CHECK • " + "   |   ".join(alert_lines)
+		else:
+			game_day_alerts_label.text = "GAME PLAN CHECK • No major coaching or medical alerts."
 
 	var ready := bool(sync.get("ready_for_next_controlled_game", false))
 	var pending := int(sync.get("cpu_games_before_next_controlled", 0))
@@ -1335,6 +1494,12 @@ func _close_game_day_overlay() -> void:
 	game_day_simulate_button = null
 	game_day_result_label = null
 	game_day_active_team = ""
+	game_day_team_badge = null
+	game_day_opponent_badge = null
+	game_day_team_record_label = null
+	game_day_opponent_record_label = null
+	game_day_meta_label = null
+	game_day_alerts_label = null
 
 
 func _friendly_value(value: String) -> String:
