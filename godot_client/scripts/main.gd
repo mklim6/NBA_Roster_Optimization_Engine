@@ -7,6 +7,8 @@ const ROTATION_PREVIEW_URL := "http://127.0.0.1:8765/v3/rotation/preview"
 const ROTATION_APPLY_URL := "http://127.0.0.1:8765/v3/rotation/apply"
 const GAME_DAY_URL := "http://127.0.0.1:8765/v3/game-day"
 const GAME_DAY_SIMULATE_URL := "http://127.0.0.1:8765/v3/game-day/simulate"
+const INTELLIGENCE_URL := "http://127.0.0.1:8765/v3/franchise-intelligence"
+const MARKET_INTELLIGENCE_URL := "http://127.0.0.1:8765/v3/market-intelligence"
 
 const BG := Color("080b12")
 const SIDEBAR := Color("0d111a")
@@ -33,6 +35,8 @@ var roster_request: HTTPRequest
 var rotation_request: HTTPRequest
 var game_day_request: HTTPRequest
 var game_day_simulate_request: HTTPRequest
+var intelligence_request: HTTPRequest
+var market_intelligence_request: HTTPRequest
 
 var home_page: Control
 var roster_page: Control
@@ -44,6 +48,8 @@ var front_office_page: Control
 var current_page := "HOME"
 var nav_buttons := {}
 var roster_payload := {}
+var feature_status_labels := {}
+var feature_module_labels := {}
 
 var roster_subtitle: Label
 var roster_status: Label
@@ -605,11 +611,12 @@ func _build_feature_area(
 	hero_text.add_child(hero_title)
 
 	var hero_detail := Label.new()
-	hero_detail.text = "Visual shell is active. Existing V2 simulation systems remain preserved while V3 desktop endpoints are wired in batches."
+	hero_detail.text = "Loading live V3 franchise intelligence..."
 	hero_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hero_detail.add_theme_color_override("font_color", MUTED)
 	hero_detail.add_theme_font_size_override("font_size", 11)
 	hero_text.add_child(hero_detail)
+	feature_status_labels[section_tag] = hero_detail
 
 	hero_row.add_child(_pill("ENGINE READY", GOOD))
 
@@ -647,12 +654,19 @@ func _build_feature_area(
 		module_description.add_theme_color_override("font_color", MUTED)
 		module_description.add_theme_font_size_override("font_size", 11)
 		module_body.add_child(module_description)
+		feature_module_labels["%s:%s" % [section_tag, module_title]] = module_description
 
 		var module_spacer := Control.new()
 		module_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		module_body.add_child(module_spacer)
 
-		module_body.add_child(_pill("V3 WIRING NEXT", ACCENT))
+		var live_section := section_tag in ["TRADES", "MARKET", "SCOUTING", "LEAGUE", "OPERATIONS"]
+		module_body.add_child(
+			_pill(
+				"LIVE DATA" if live_section else "V3 WIRING NEXT",
+				GOOD if live_section else ACCENT
+			)
+		)
 
 	var workflow := PanelContainer.new()
 	workflow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1920,6 +1934,364 @@ func _number_text(value, decimals: int = 1) -> String:
 	return "%.1f" % number
 
 
+func _feature_label(key: String) -> Label:
+	var value = feature_module_labels.get(key)
+	return value as Label if value is Label else null
+
+
+func _set_feature_text(key: String, text_value: String) -> void:
+	var label := _feature_label(key)
+	if label != null:
+		label.text = text_value
+
+
+func _market_player_lines(rows: Array, limit: int = 5) -> String:
+	var lines: Array = []
+	var count: int = 0
+	for raw_row in rows:
+		if typeof(raw_row) != TYPE_DICTIONARY:
+			continue
+		var row: Dictionary = raw_row
+		lines.append(
+			"%s • %s • OVR %s • Age %s" % [
+				str(row.get("name", "")),
+				str(row.get("position", "")),
+				str(row.get("overall", "N/A")),
+				str(row.get("age", "N/A"))
+			]
+		)
+		count += 1
+		if count >= limit:
+			break
+	return "\n".join(lines)
+
+
+func _trade_asset_lines(rows: Array, limit: int = 5) -> String:
+	var lines: Array = []
+	var count: int = 0
+	for raw_row in rows:
+		if typeof(raw_row) != TYPE_DICTIONARY:
+			continue
+		var row: Dictionary = raw_row
+		lines.append(
+			"%s • OVR %s • %s • %s PPG" % [
+				str(row.get("name", "")),
+				str(row.get("overall", "N/A")),
+				str(row.get("salary_display", "N/A")),
+				str(row.get("ppg", 0.0))
+			]
+		)
+		count += 1
+		if count >= limit:
+			break
+	return "\n".join(lines)
+
+
+func _request_market_intelligence() -> void:
+	if market_intelligence_request == null:
+		return
+	if market_intelligence_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		market_intelligence_request.cancel_request()
+
+	var error := market_intelligence_request.request(MARKET_INTELLIGENCE_URL)
+	if error != OK:
+		for section in ["TRADES", "MARKET"]:
+			var label = feature_status_labels.get(section)
+			if label is Label:
+				label.text = "Live market intelligence request could not be started."
+
+
+func _on_market_intelligence_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		var body_text: String = body.get_string_from_utf8()
+		var failure_detail: String = "HTTP %s • request result %s" % [
+			str(response_code),
+			str(result)
+		]
+		if body_text != "":
+			failure_detail += " • " + body_text.left(180).replace("\n", " ")
+		print("MARKET INTELLIGENCE FAILURE: ", failure_detail)
+		for section in ["TRADES", "MARKET"]:
+			var failed_label = feature_status_labels.get(section)
+			if failed_label is Label:
+				failed_label.text = "Market intelligence unavailable • %s" % failure_detail
+		return
+
+	var payload = JSON.parse_string(body.get_string_from_utf8())
+	if typeof(payload) != TYPE_DICTIONARY:
+		return
+
+	var season = payload.get("season", {})
+	var context_text := "%s • League Day %s • %s" % [
+		str(season.get("label", "")),
+		str(season.get("day_index", "?")),
+		str(season.get("phase", "")).replace("_", " ").capitalize()
+	]
+
+	for section in ["TRADES", "MARKET"]:
+		var status_label = feature_status_labels.get(section)
+		if status_label is Label:
+			status_label.text = "LIVE V3 DATA • %s" % context_text
+
+	var trade = payload.get("trade", {})
+	var assets: Array = trade.get("assets", [])
+	var financial = trade.get("financial", {})
+	var draft = trade.get("draft", {})
+
+	_set_feature_text(
+		"TRADES:TRADE FINDER",
+		"ACTIVE ROSTER ASSET SNAPSHOT\n%s" % _trade_asset_lines(assets, 5)
+	)
+
+	_set_feature_text(
+		"TRADES:INCOMING OFFERS",
+		"Incoming-offer queue is not exposed in V3 yet.\n\nPayroll %s • Cap room %s\nTax room %s • 1st apron room %s" % [
+			str(financial.get("payroll_display", "N/A")),
+			str(financial.get("cap_room_estimate_display", "N/A")),
+			str(financial.get("tax_room_display", "N/A")),
+			str(financial.get("first_apron_room_display", "N/A"))
+		]
+	)
+
+	if typeof(draft) == TYPE_DICTIONARY and not draft.is_empty():
+		_set_feature_text(
+			"TRADES:DRAFT CAPITAL",
+			"%s Draft • %s\nTarget season %s\nExact owned-pick / rights inventory will use the dedicated trade-state endpoint next." % [
+				str(draft.get("draft_year", "Next")),
+				str(draft.get("phase", "")).replace("_", " ").capitalize(),
+				str(draft.get("target_season", ""))
+			]
+		)
+
+	var free_agency = payload.get("free_agency", {})
+	var free_agents: Array = free_agency.get("top_available", [])
+	_set_feature_text(
+		"MARKET:MARKET BOARD",
+		"%s FREE AGENTS AVAILABLE\n%s" % [
+			str(free_agency.get("total_available", 0)),
+			_market_player_lines(free_agents, 5)
+		]
+	)
+
+	_set_feature_text(
+		"MARKET:NEGOTIATIONS",
+		"READ-ONLY CAP CONTEXT\nPayroll %s\nCap room %s\nTax room %s\n2nd apron room %s" % [
+			str(financial.get("payroll_display", "N/A")),
+			str(financial.get("cap_room_estimate_display", "N/A")),
+			str(financial.get("tax_room_display", "N/A")),
+			str(financial.get("second_apron_room_display", "N/A"))
+		]
+	)
+
+	var depth = payload.get("roster_depth", {})
+	var counts = depth.get("position_counts", {})
+	var thin: Array = depth.get("thinnest_positions", [])
+	_set_feature_text(
+		"MARKET:ROSTER PLAN",
+		"POSITION DEPTH\nPG %s • SG %s • SF %s • PF %s • C %s\nThinnest current groups: %s" % [
+			str(counts.get("PG", 0)),
+			str(counts.get("SG", 0)),
+			str(counts.get("SF", 0)),
+			str(counts.get("PF", 0)),
+			str(counts.get("C", 0)),
+			" / ".join(thin)
+		]
+	)
+
+
+func _request_franchise_intelligence() -> void:
+	if intelligence_request == null:
+		return
+	if intelligence_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		intelligence_request.cancel_request()
+
+	var error := intelligence_request.request(INTELLIGENCE_URL)
+	if error != OK:
+		for section in ["SCOUTING", "LEAGUE", "OPERATIONS"]:
+			var label = feature_status_labels.get(section)
+			if label is Label:
+				label.text = "Live franchise intelligence request could not be started."
+
+
+func _standings_lines(rows: Array) -> String:
+	var lines: Array = []
+	for row in rows:
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		lines.append(
+			"%s  %s  %s  %s" % [
+				str(row.get("rank", "")),
+				str(row.get("team", "")),
+				str(row.get("record", "")),
+				str(row.get("streak", ""))
+			]
+		)
+	return "\n".join(lines)
+
+
+func _leader_lines(rows: Array, metric: String) -> String:
+	var lines: Array = []
+	for row in rows:
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		lines.append(
+			"%s  %s  %s" % [
+				str(row.get("name", "")),
+				str(row.get("team", "")),
+				str(row.get(metric, 0.0))
+			]
+		)
+	return "\n".join(lines)
+
+
+func _on_intelligence_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		for section in ["SCOUTING", "LEAGUE", "OPERATIONS"]:
+			var failed_label = feature_status_labels.get(section)
+			if failed_label is Label:
+				failed_label.text = "Live franchise intelligence unavailable. Bridge restart may be required."
+		return
+
+	var payload = JSON.parse_string(body.get_string_from_utf8())
+	if typeof(payload) != TYPE_DICTIONARY:
+		return
+
+	var season = payload.get("season", {})
+	var season_text := "%s • League Day %s • %s" % [
+		str(season.get("label", "")),
+		str(season.get("day_index", "?")),
+		str(season.get("phase", "")).replace("_", " ").capitalize()
+	]
+
+	for section in ["SCOUTING", "LEAGUE", "OPERATIONS"]:
+		var status_label = feature_status_labels.get(section)
+		if status_label is Label:
+			status_label.text = "LIVE V3 DATA • %s" % season_text
+
+	var league = payload.get("league", {})
+	var east: Array = league.get("east", [])
+	var west: Array = league.get("west", [])
+	_set_feature_text(
+		"LEAGUE:STANDINGS",
+		"EAST\n%s\n\nWEST\n%s" % [
+			_standings_lines(east.slice(0, 3)),
+			_standings_lines(west.slice(0, 3))
+		]
+	)
+
+	var leaders = league.get("leaders", {})
+	_set_feature_text(
+		"LEAGUE:AWARDS",
+		"SCORING\n%s\n\nASSISTS\n%s" % [
+			_leader_lines(leaders.get("scoring", []), "ppg"),
+			_leader_lines(leaders.get("assists", []), "apg")
+		]
+	)
+
+	var result_lines: Array = []
+	for recent in league.get("recent_results", []):
+		if typeof(recent) == TYPE_DICTIONARY:
+			result_lines.append(
+				"Day %s • %s" % [
+					str(recent.get("day_index", "")),
+					str(recent.get("display", ""))
+				]
+			)
+	_set_feature_text(
+		"LEAGUE:TRANSACTIONS",
+		"RECENT LEAGUE RESULTS\n%s" % "\n".join(result_lines)
+	)
+
+	var scouting = payload.get("scouting", {})
+	var draft = scouting.get("draft", {})
+	if typeof(draft) == TYPE_DICTIONARY and not draft.is_empty():
+		_set_feature_text(
+			"SCOUTING:DRAFT BOARD",
+			"%s Draft • %s\nTarget season %s\nCurrent pick index %s" % [
+				str(draft.get("draft_year", "Next")),
+				str(draft.get("phase", "scouting")).replace("_", " ").capitalize(),
+				str(draft.get("target_season", "")),
+				str(draft.get("current_pick_index", 0))
+			]
+		)
+		var counts = scouting.get("collection_counts", {})
+		var count_bits: Array = []
+		if typeof(counts) == TYPE_DICTIONARY:
+			for key in counts.keys():
+				count_bits.append("%s %s" % [str(counts[key]), str(key).replace("_", " ")])
+		_set_feature_text(
+			"SCOUTING:REPORTS",
+			"Live draft metadata loaded.\n%s" % (
+				" • ".join(count_bits)
+				if count_bits.size() > 0
+				else "Detailed prospect-report collection wiring is next."
+			)
+		)
+		_set_feature_text(
+			"SCOUTING:STAFF",
+			"Scouting phase: %s\nDesktop scout assignments remain protected until a dedicated write-safe endpoint is added." % str(
+				draft.get("phase", "")
+			).replace("_", " ").capitalize()
+		)
+
+	var front = payload.get("front_office", {})
+	var chemistry = front.get("chemistry", {})
+	var financial = front.get("financial", {})
+	var competitive = front.get("competitive", {})
+	var injured: Array = front.get("injured_players", [])
+	var morale_watch: Array = front.get("morale_watch", [])
+	var rotation = front.get("rotation", {})
+
+	var health_lines: Array = [
+		"Chemistry %s • %s rotation players • %.0f minutes" % [
+			str(chemistry.get("score", "N/A")),
+			str(rotation.get("rotation_players", "?")),
+			float(rotation.get("total_minutes", 0.0))
+		],
+		"%s injured • %s morale watch" % [
+			str(injured.size()),
+			str(morale_watch.size())
+		]
+	]
+	for player in injured.slice(0, 2):
+		if typeof(player) == TYPE_DICTIONARY:
+			health_lines.append(
+				"%s • %s" % [
+					str(player.get("name", "")),
+					str(player.get("status", ""))
+				]
+			)
+	_set_feature_text("OPERATIONS:TEAM HEALTH", "\n".join(health_lines))
+
+	_set_feature_text(
+		"OPERATIONS:FRANCHISE PLAN",
+		"Record %s • %s in %s\nPayroll %s • Cap room %s\nWorking save stays isolated from V2." % [
+			str(competitive.get("record", "")),
+			str(competitive.get("conference_rank", "?")),
+			str(competitive.get("conference", "")),
+			str(financial.get("payroll_display", "N/A")),
+			str(financial.get("cap_room_estimate_display", "N/A"))
+		]
+	)
+
+	_set_feature_text(
+		"OPERATIONS:STAFF ROOM",
+		"Live team state loaded for %s.\nStaff personnel controls will use a dedicated write-safe endpoint before edits are enabled." % str(
+			payload.get("team_name", "Active Franchise")
+		)
+	)
+
+
 func _show_page(page_name: String) -> void:
 	current_page = page_name
 
@@ -1947,6 +2319,10 @@ func _show_page(page_name: String) -> void:
 		_request_roster()
 	elif page_name == "HOME":
 		_request_franchise_summary()
+	elif page_name in ["SCOUTING", "LEAGUE", "FRONT OFFICE"]:
+		_request_franchise_intelligence()
+	elif page_name in ["TRADES", "FREE AGENCY"]:
+		_request_market_intelligence()
 
 
 func _apply_nav_button_style(button: Button, active: bool) -> void:
@@ -2201,6 +2577,16 @@ func _build_http_client() -> void:
 	game_day_simulate_request.timeout = 60.0
 	game_day_simulate_request.request_completed.connect(_on_game_day_simulate_completed)
 	add_child(game_day_simulate_request)
+
+	intelligence_request = HTTPRequest.new()
+	intelligence_request.timeout = 6.0
+	intelligence_request.request_completed.connect(_on_intelligence_completed)
+	add_child(intelligence_request)
+
+	market_intelligence_request = HTTPRequest.new()
+	market_intelligence_request.timeout = 30.0
+	market_intelligence_request.request_completed.connect(_on_market_intelligence_completed)
+	add_child(market_intelligence_request)
 
 func _check_bridge() -> void:
 	if http_request == null:

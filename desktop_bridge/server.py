@@ -14,7 +14,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.6.1"
+API_VERSION = "0.8.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -1090,6 +1090,549 @@ def _draft_summary(state: Any) -> dict[str, Any] | None:
     }
 
 
+def _ranked_standings_payload(
+    state: Any,
+    conference: str,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    teams = [
+        abbreviation
+        for abbreviation, team_state in state.teams.items()
+        if str(getattr(team_state, "conference", "")) == conference
+    ]
+
+    def sort_key(abbreviation: str) -> tuple[float, int, int]:
+        standing = state.standings.get(abbreviation)
+        if standing is None:
+            return (0.0, 0, 0)
+        games = max(int(standing.games_played), 1)
+        return (
+            float(standing.wins) / games,
+            int(standing.wins),
+            int(standing.points_for) - int(standing.points_against),
+        )
+
+    ordered = sorted(teams, key=sort_key, reverse=True)
+    rows: list[dict[str, Any]] = []
+
+    for rank, abbreviation in enumerate(ordered[:limit], start=1):
+        standing = state.standings.get(abbreviation)
+        if standing is None:
+            continue
+        rows.append(
+            {
+                "rank": rank,
+                "team": abbreviation,
+                "name": TEAM_NAMES.get(abbreviation, abbreviation),
+                "record": f"{standing.wins}-{standing.losses}",
+                "wins": int(standing.wins),
+                "losses": int(standing.losses),
+                "point_diff": int(standing.points_for)
+                - int(standing.points_against),
+                "streak": (
+                    f"{standing.streak_type}{standing.streak_length}"
+                    if standing.streak_type
+                    else ""
+                ),
+            }
+        )
+    return rows
+
+
+def _league_leaders_payload(
+    state: Any,
+    *,
+    limit: int = 3,
+    minimum_games: int = 10,
+) -> dict[str, list[dict[str, Any]]]:
+    rows: list[dict[str, Any]] = []
+
+    for player_id, totals in state.player_season_totals.items():
+        games = int(getattr(totals, "games_played", 0) or 0)
+        if games < minimum_games:
+            continue
+
+        player = state.players.get(player_id)
+        if player is None:
+            continue
+
+        rows.append(
+            {
+                "player_id": str(player_id),
+                "name": str(getattr(player, "player_name", player_id)),
+                "team": str(getattr(player, "team_abbreviation", "")),
+                "games": games,
+                "ppg": _per_game(getattr(totals, "points", 0), games),
+                "rpg": _per_game(getattr(totals, "rebounds", 0), games),
+                "apg": _per_game(getattr(totals, "assists", 0), games),
+            }
+        )
+
+    def top(metric: str) -> list[dict[str, Any]]:
+        return sorted(
+            rows,
+            key=lambda row: (
+                -float(row.get(metric, 0.0)),
+                str(row.get("name", "")),
+            ),
+        )[:limit]
+
+    return {
+        "scoring": top("ppg"),
+        "rebounds": top("rpg"),
+        "assists": top("apg"),
+    }
+
+
+def _recent_results_payload(
+    state: Any,
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    rows: list[tuple[int, str, Any]] = []
+
+    for game_id, completed in state.completed_games.items():
+        scheduled = state.schedule.get(str(game_id))
+        day_index = int(
+            getattr(scheduled, "day_index", state.current_day_index)
+            if scheduled is not None
+            else state.current_day_index
+        )
+        rows.append((day_index, str(game_id), completed))
+
+    rows.sort(key=lambda row: (row[0], row[1]), reverse=True)
+
+    results: list[dict[str, Any]] = []
+    for day_index, game_id, completed in rows[:limit]:
+        results.append(
+            {
+                "game_id": game_id,
+                "day_index": day_index,
+                "away_team": str(completed.away_team),
+                "away_score": int(completed.away_score),
+                "home_team": str(completed.home_team),
+                "home_score": int(completed.home_score),
+                "display": (
+                    f"{completed.away_team} {completed.away_score}  "
+                    f"{completed.home_team} {completed.home_score}"
+                ),
+            }
+        )
+    return results
+
+
+def _draft_collection_counts(state: Any) -> dict[str, int]:
+    draft = _obj_dict(getattr(state, "franchise_draft_state_v1", {}))
+    if not draft:
+        return {}
+
+    counts: dict[str, int] = {}
+    candidate_keys = (
+        "prospects",
+        "draft_class",
+        "board",
+        "scouting_board",
+        "reports",
+        "scouting_reports",
+        "scouts",
+        "staff",
+    )
+
+    for key in candidate_keys:
+        value = draft.get(key)
+        if isinstance(value, (dict, list, tuple, set)):
+            counts[key] = len(value)
+
+    return counts
+
+
+def _front_office_payload(state: Any, active_team: str) -> dict[str, Any]:
+    roster = _roster_payload(
+        state,
+        active_team,
+        source="v3_working_checkpoint",
+        editable=True,
+    )
+    players = list(roster.get("players", []))
+
+    injured = [
+        {
+            "name": row.get("name"),
+            "status": row.get("health", {}).get("display"),
+            "games_remaining": row.get("health", {}).get("games_remaining", 0),
+        }
+        for row in players
+        if row.get("health", {}).get("status")
+        not in ("", "healthy", "unknown")
+    ]
+
+    morale_watch = [
+        {
+            "name": row.get("name"),
+            "status": row.get("morale", {}).get("status"),
+            "role": row.get("role"),
+        }
+        for row in players
+        if str(row.get("morale", {}).get("status", ""))
+        in ("Uneasy", "Frustrated", "Angry", "Demanding Trade")
+    ][:5]
+
+    team_state = state.teams.get(active_team)
+    rotation = getattr(team_state, "rotation", None) if team_state else None
+    rotation_ids = list(getattr(rotation, "rotation_player_ids", ())) if rotation else []
+    starter_ids = list(getattr(rotation, "starter_ids", ())) if rotation else []
+    minute_targets = dict(getattr(rotation, "minutes_targets", {})) if rotation else {}
+
+    rank, conference = _conference_rank(state, active_team)
+    standing = state.standings.get(active_team)
+
+    return {
+        "team": roster.get("team", {}),
+        "chemistry": roster.get("chemistry", {}),
+        "financial": roster.get("financial", {}),
+        "injured_players": injured,
+        "morale_watch": morale_watch,
+        "rotation": {
+            "starters": len(starter_ids),
+            "rotation_players": len(rotation_ids),
+            "total_minutes": round(sum(float(v) for v in minute_targets.values()), 1),
+        },
+        "competitive": {
+            "record": (
+                f"{standing.wins}-{standing.losses}"
+                if standing is not None
+                else ""
+            ),
+            "conference_rank": rank,
+            "conference": conference,
+        },
+    }
+
+
+def _franchise_intelligence_payload(
+    state: Any,
+    active_team: str,
+) -> dict[str, Any]:
+    draft = _draft_summary(state)
+    return {
+        "api_version": API_VERSION,
+        "source": "v3_working_checkpoint",
+        "read_only": True,
+        "active_v2_read_only": True,
+        "team": active_team,
+        "team_name": TEAM_NAMES.get(active_team, active_team),
+        "season": {
+            "label": str(state.settings.season_label),
+            "phase": _enum_value(state.phase),
+            "day_index": int(state.current_day_index),
+        },
+        "league": {
+            "east": _ranked_standings_payload(state, "East", 5),
+            "west": _ranked_standings_payload(state, "West", 5),
+            "leaders": _league_leaders_payload(state),
+            "recent_results": _recent_results_payload(state),
+        },
+        "scouting": {
+            "draft": draft,
+            "collection_counts": _draft_collection_counts(state),
+        },
+        "front_office": _front_office_payload(state, active_team),
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _primary_position(position: Any) -> str:
+    raw = str(position or "").upper().strip()
+    if not raw:
+        return "UNK"
+    return raw.split("/")[0].strip() or "UNK"
+
+
+def _market_player_payload(player: Any) -> dict[str, Any]:
+    contract = getattr(player, "contract", None)
+    salary = _number(getattr(contract, "salary", None))
+    overall = _number(getattr(player, "overall_rating", None))
+    potential = _number(getattr(player, "potential_rating", None))
+    future = _number(getattr(player, "future_outlook_rating", None))
+    age = _number(getattr(player, "age", None))
+
+    return {
+        "player_id": str(getattr(player, "player_id", "")),
+        "name": str(
+            getattr(
+                player,
+                "player_name",
+                getattr(player, "player_id", "Unknown"),
+            )
+        ),
+        "position": str(getattr(player, "position", "") or ""),
+        "primary_position": _primary_position(
+            getattr(player, "position", "")
+        ),
+        "age": round(age, 1) if age is not None else None,
+        "overall": round(overall, 1) if overall is not None else None,
+        "potential": (
+            round(potential, 1) if potential is not None else None
+        ),
+        "future_outlook": (
+            round(future, 1) if future is not None else None
+        ),
+        "contract_status": str(
+            getattr(contract, "status", "") or ""
+        ),
+        "salary": salary,
+        "salary_display": _money_display(salary),
+        "years_remaining": _safe_int(
+            getattr(contract, "years_remaining", 0)
+        ),
+    }
+
+
+def _free_agent_market_payload(
+    state: Any,
+    limit: int = 12,
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+
+    for player_id in state.free_agent_player_ids:
+        player = state.players.get(player_id)
+        if player is None:
+            continue
+
+        row = _market_player_payload(player)
+        rows.append(row)
+
+        position = str(row.get("primary_position", "UNK"))
+        counts[position] = counts.get(position, 0) + 1
+
+    rows.sort(
+        key=lambda row: (
+            -float(row.get("overall") or 0.0),
+            float(row.get("age") or 99.0),
+            str(row.get("name", "")),
+        )
+    )
+
+    return {
+        "total_available": len(rows),
+        "position_counts": counts,
+        "top_available": rows[:limit],
+    }
+
+
+def _roster_depth_payload(
+    state: Any,
+    active_team: str,
+) -> dict[str, Any]:
+    team = state.teams.get(active_team)
+    if team is None:
+        return {}
+
+    counts: dict[str, int] = {
+        "PG": 0,
+        "SG": 0,
+        "SF": 0,
+        "PF": 0,
+        "C": 0,
+        "OTHER": 0,
+    }
+
+    for player_id in team.roster_player_ids:
+        player = state.players.get(player_id)
+        if player is None:
+            continue
+
+        position = _primary_position(
+            getattr(player, "position", "")
+        )
+        if position in counts:
+            counts[position] += 1
+        else:
+            counts["OTHER"] += 1
+
+    core = ["PG", "SG", "SF", "PF", "C"]
+    thinnest = sorted(
+        core,
+        key=lambda pos: (counts[pos], pos),
+    )
+
+    return {
+        "position_counts": counts,
+        "thinnest_positions": thinnest[:2],
+        "roster_size": len(team.roster_player_ids),
+    }
+
+
+def _trade_asset_payload(
+    state: Any,
+    active_team: str,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    roster = _roster_payload(
+        state,
+        active_team,
+        source="v3_working_checkpoint",
+        editable=True,
+    )
+
+    assets: list[dict[str, Any]] = []
+    for row in roster.get("players", []):
+        contract = row.get("contract", {})
+        stats = row.get("season_stats", {})
+
+        assets.append(
+            {
+                "player_id": str(row.get("player_id", "")),
+                "name": str(row.get("name", "")),
+                "position": str(row.get("position", "")),
+                "age": row.get("age"),
+                "overall": row.get("overall"),
+                "potential": row.get("potential"),
+                "future_outlook": row.get("future_outlook"),
+                "role": str(row.get("role", "")),
+                "salary_display": contract.get(
+                    "salary_display"
+                ),
+                "years_remaining": contract.get(
+                    "years_remaining"
+                ),
+                "ppg": stats.get("ppg", 0.0),
+            }
+        )
+
+    assets.sort(
+        key=lambda row: (
+            -float(row.get("future_outlook") or 0.0),
+            -float(row.get("overall") or 0.0),
+            float(row.get("age") or 99.0),
+        )
+    )
+    return assets[:limit]
+
+
+def _market_intelligence_payload(
+    state: Any,
+    active_team: str,
+) -> dict[str, Any]:
+    roster_financial = _roster_financial_summary(
+        state,
+        active_team,
+    )
+
+    return {
+        "api_version": API_VERSION,
+        "source": "v3_working_checkpoint",
+        "read_only": True,
+        "active_v2_read_only": True,
+        "team": active_team,
+        "team_name": TEAM_NAMES.get(active_team, active_team),
+        "season": {
+            "label": str(state.settings.season_label),
+            "phase": _enum_value(state.phase),
+            "day_index": int(state.current_day_index),
+        },
+        "free_agency": _free_agent_market_payload(state),
+        "roster_depth": _roster_depth_payload(
+            state,
+            active_team,
+        ),
+        "trade": {
+            "assets": _trade_asset_payload(
+                state,
+                active_team,
+            ),
+            "financial": roster_financial,
+            "draft": _draft_summary(state),
+            "incoming_offer_queue_exposed": False,
+            "write_actions_enabled": False,
+        },
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def market_intelligence(_: Request) -> JSONResponse:
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse(
+                {
+                    "error": "v3_working_save_not_initialized",
+                    "active_v2_read_only": True,
+                },
+                status_code=409,
+            )
+
+        state = checkpoint.simulation_state
+        active_team = _active_team_from_checkpoint(checkpoint)
+        if not active_team:
+            return JSONResponse(
+                {
+                    "error": "active_franchise_not_found",
+                    "active_v2_read_only": True,
+                },
+                status_code=404,
+            )
+
+        return JSONResponse(
+            _market_intelligence_payload(
+                state,
+                active_team,
+            )
+        )
+
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "market_intelligence_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "read_only": True,
+                "active_v2_read_only": True,
+            },
+            status_code=500,
+        )
+
+
+async def franchise_intelligence(_: Request) -> JSONResponse:
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse(
+                {
+                    "error": "v3_working_save_not_initialized",
+                    "active_v2_read_only": True,
+                },
+                status_code=409,
+            )
+
+        state = checkpoint.simulation_state
+        active_team = _active_team_from_checkpoint(checkpoint)
+        if not active_team:
+            return JSONResponse(
+                {
+                    "error": "active_franchise_not_found",
+                    "active_v2_read_only": True,
+                },
+                status_code=404,
+            )
+
+        return JSONResponse(
+            _franchise_intelligence_payload(state, active_team)
+        )
+
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "franchise_intelligence_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "read_only": True,
+                "active_v2_read_only": True,
+            },
+            status_code=500,
+        )
+
+
 async def health(_: Request) -> JSONResponse:
     return JSONResponse(
         {
@@ -1849,6 +2392,8 @@ routes = [
     Route("/health", health, methods=["GET"]),
     Route("/v3/meta", project_meta, methods=["GET"]),
     Route("/v3/franchise-summary", franchise_summary, methods=["GET"]),
+    Route("/v3/franchise-intelligence", franchise_intelligence, methods=["GET"]),
+    Route("/v3/market-intelligence", market_intelligence, methods=["GET"]),
     Route("/v3/roster", roster_summary, methods=["GET"]),
     Route("/v3/working-save/status", working_save_status, methods=["GET"]),
     Route("/v3/working-save/reset", reset_working_save, methods=["POST"]),
