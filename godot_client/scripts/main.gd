@@ -36,6 +36,11 @@ var game_day_simulate_request: HTTPRequest
 
 var home_page: Control
 var roster_page: Control
+var trades_page: Control
+var free_agency_page: Control
+var scouting_page: Control
+var league_page: Control
+var front_office_page: Control
 var current_page := "HOME"
 var nav_buttons := {}
 var roster_payload := {}
@@ -146,6 +151,71 @@ func _build_interface() -> void:
 	roster_page = _build_roster_area()
 	content_stack.add_child(roster_page)
 	roster_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	trades_page = _build_feature_area(
+		"TRADE CENTER",
+		"Roster construction, offer evaluation, pick inventory, and CBA-aware trade workflow.",
+		"TRADES",
+		[
+			["TRADE FINDER", "Build and evaluate multi-team concepts using the franchise trade engine."],
+			["INCOMING OFFERS", "Review CPU proposals, value context, roster fit, and legality."],
+			["DRAFT CAPITAL", "Inspect future pick inventory, protections, rights, and Stepien context."]
+		]
+	)
+	content_stack.add_child(trades_page)
+	trades_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	free_agency_page = _build_feature_area(
+		"FREE AGENCY",
+		"Market intelligence, negotiations, roster needs, exceptions, and multi-season contract planning.",
+		"MARKET",
+		[
+			["MARKET BOARD", "Track available players, market tiers, roles, age curves, and demand."],
+			["NEGOTIATIONS", "Manage active talks, offer structure, cap paths, and exception usage."],
+			["ROSTER PLAN", "Balance immediate needs with development, aging, and future flexibility."]
+		]
+	)
+	content_stack.add_child(free_agency_page)
+	free_agency_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	scouting_page = _build_feature_area(
+		"SCOUTING CENTER",
+		"Draft-board management, prospect evaluation, staff intelligence, and long-range planning.",
+		"SCOUTING",
+		[
+			["DRAFT BOARD", "Organize prospects, tiers, team fits, and long-term upside."],
+			["REPORTS", "Review scouting evaluations, confidence, strengths, weaknesses, and risk."],
+			["STAFF", "Coordinate scout coverage, assignments, specialties, and information quality."]
+		]
+	)
+	content_stack.add_child(scouting_page)
+	scouting_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	league_page = _build_feature_area(
+		"LEAGUE HUB",
+		"Standings, awards races, transactions, schedule context, and league-wide franchise intelligence.",
+		"LEAGUE",
+		[
+			["STANDINGS", "Conference positioning, playoff race, streaks, and team performance."],
+			["AWARDS", "Track MVP, rookie, defensive, and other season award races."],
+			["TRANSACTIONS", "Follow trades, signings, waivers, injuries, and league movement."]
+		]
+	)
+	content_stack.add_child(league_page)
+	league_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	front_office_page = _build_feature_area(
+		"FRONT OFFICE",
+		"Staff, chemistry, development priorities, organizational direction, and franchise health.",
+		"OPERATIONS",
+		[
+			["STAFF ROOM", "Manage coaching, scouting, development, and front-office personnel."],
+			["TEAM HEALTH", "Review morale, chemistry, workload, injuries, and rotation stability."],
+			["FRANCHISE PLAN", "Set roster priorities, competitive timeline, and development focus."]
+		]
+	)
+	content_stack.add_child(front_office_page)
+	front_office_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	_show_page("HOME")
 
@@ -462,6 +532,152 @@ func _metric_card(label_text: String, value_text: String, detail_text: String) -
 			draft_detail = detail
 
 	return card
+
+func _build_feature_area(
+	title_text: String,
+	subtitle_text: String,
+	section_tag: String,
+	modules: Array
+) -> Control:
+	var outer := MarginContainer.new()
+	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_set_margins(outer, 34, 28, 34, 30)
+
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 20)
+	outer.add_child(column)
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 14)
+	column.add_child(header)
+
+	var titles := VBoxContainer.new()
+	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	titles.add_theme_constant_override("separation", 4)
+	header.add_child(titles)
+
+	var eyebrow := Label.new()
+	eyebrow.text = "FRANCHISE OPERATIONS • %s" % section_tag
+	eyebrow.add_theme_color_override("font_color", TEAM_PRIMARY_HOVER)
+	eyebrow.add_theme_font_size_override("font_size", 10)
+	titles.add_child(eyebrow)
+
+	var title := Label.new()
+	title.text = title_text
+	title.add_theme_color_override("font_color", TEXT)
+	title.add_theme_font_size_override("font_size", 32)
+	titles.add_child(title)
+
+	var subtitle := Label.new()
+	subtitle.text = subtitle_text
+	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	subtitle.add_theme_color_override("font_color", MUTED)
+	subtitle.add_theme_font_size_override("font_size", 12)
+	titles.add_child(subtitle)
+
+	header.add_child(_pill("V3 DESKTOP", TEAM_PRIMARY_HOVER))
+
+	var hero := PanelContainer.new()
+	hero.custom_minimum_size = Vector2(0, 132)
+	hero.add_theme_stylebox_override("panel", _box(Color("151923"), 16, Color(TEAM_PRIMARY, 0.45)))
+	column.add_child(hero)
+
+	var hero_margin := MarginContainer.new()
+	_set_margins(hero_margin, 22, 18, 22, 18)
+	hero.add_child(hero_margin)
+
+	var hero_row := HBoxContainer.new()
+	hero_row.add_theme_constant_override("separation", 16)
+	hero_margin.add_child(hero_row)
+
+	var hero_text := VBoxContainer.new()
+	hero_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hero_text.add_theme_constant_override("separation", 6)
+	hero_row.add_child(hero_text)
+
+	hero_text.add_child(_small_label("DESKTOP MODULE", GOLD))
+
+	var hero_title := Label.new()
+	hero_title.text = "%s COMMAND CENTER" % section_tag
+	hero_title.add_theme_color_override("font_color", TEXT)
+	hero_title.add_theme_font_size_override("font_size", 22)
+	hero_text.add_child(hero_title)
+
+	var hero_detail := Label.new()
+	hero_detail.text = "Visual shell is active. Existing V2 simulation systems remain preserved while V3 desktop endpoints are wired in batches."
+	hero_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hero_detail.add_theme_color_override("font_color", MUTED)
+	hero_detail.add_theme_font_size_override("font_size", 11)
+	hero_text.add_child(hero_detail)
+
+	hero_row.add_child(_pill("ENGINE READY", GOOD))
+
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", 14)
+	grid.add_theme_constant_override("v_separation", 14)
+	column.add_child(grid)
+
+	for raw_module in modules:
+		if typeof(raw_module) != TYPE_ARRAY or raw_module.size() < 2:
+			continue
+		var module_title := str(raw_module[0])
+		var module_detail := str(raw_module[1])
+
+		var module_card := _card(Vector2(0, 190))
+		module_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		module_card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 14, SOFT_BORDER))
+		grid.add_child(module_card)
+
+		var module_body := _card_body(module_card, 18)
+		module_body.add_theme_constant_override("separation", 9)
+		module_body.add_child(_small_label(section_tag, MUTED))
+
+		var module_name := Label.new()
+		module_name.text = module_title
+		module_name.add_theme_color_override("font_color", TEXT)
+		module_name.add_theme_font_size_override("font_size", 18)
+		module_body.add_child(module_name)
+
+		var module_description := Label.new()
+		module_description.text = module_detail
+		module_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		module_description.add_theme_color_override("font_color", MUTED)
+		module_description.add_theme_font_size_override("font_size", 11)
+		module_body.add_child(module_description)
+
+		var module_spacer := Control.new()
+		module_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		module_body.add_child(module_spacer)
+
+		module_body.add_child(_pill("V3 WIRING NEXT", ACCENT))
+
+	var workflow := PanelContainer.new()
+	workflow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	workflow.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	workflow.add_theme_stylebox_override("panel", _box(Color("0f151f"), 14, SOFT_BORDER))
+	column.add_child(workflow)
+
+	var workflow_margin := MarginContainer.new()
+	_set_margins(workflow_margin, 20, 16, 20, 16)
+	workflow.add_child(workflow_margin)
+
+	var workflow_box := VBoxContainer.new()
+	workflow_box.add_theme_constant_override("separation", 8)
+	workflow_margin.add_child(workflow_box)
+
+	workflow_box.add_child(_section_title("V3 DESKTOP ROADMAP"))
+
+	var workflow_text := Label.new()
+	workflow_text.text = "1  Visual shell\n2  Read-only live data\n3  Safe working-save actions\n4  Full feature parity validation"
+	workflow_text.add_theme_color_override("font_color", MUTED)
+	workflow_text.add_theme_font_size_override("font_size", 12)
+	workflow_box.add_child(workflow_text)
+
+	return outer
+
 
 func _build_roster_area() -> Control:
 	var outer := MarginContainer.new()
@@ -1712,6 +1928,16 @@ func _show_page(page_name: String) -> void:
 
 	if roster_page != null:
 		roster_page.visible = page_name == "ROSTER"
+	if trades_page != null:
+		trades_page.visible = page_name == "TRADES"
+	if free_agency_page != null:
+		free_agency_page.visible = page_name == "FREE AGENCY"
+	if scouting_page != null:
+		scouting_page.visible = page_name == "SCOUTING"
+	if league_page != null:
+		league_page.visible = page_name == "LEAGUE"
+	if front_office_page != null:
+		front_office_page.visible = page_name == "FRONT OFFICE"
 
 	for key in nav_buttons.keys():
 		var button: Button = nav_buttons[key]
@@ -1811,8 +2037,15 @@ func _wide_action(title_text: String, subtitle_text: String) -> Control:
 	button.add_theme_stylebox_override("hover", _box(PANEL_HOVER, 9, ACCENT))
 	button.add_theme_stylebox_override("pressed", _box(PANEL_HOVER, 9, ACCENT))
 
-	if title_text == "OPEN ROSTER":
-		button.pressed.connect(_show_page.bind("ROSTER"))
+	match title_text:
+		"OPEN ROSTER":
+			button.pressed.connect(_show_page.bind("ROSTER"))
+		"TRADE CENTER":
+			button.pressed.connect(_show_page.bind("TRADES"))
+		"SCOUTING BOARD":
+			button.pressed.connect(_show_page.bind("SCOUTING"))
+		"LEAGUE HUB":
+			button.pressed.connect(_show_page.bind("LEAGUE"))
 
 	return button
 
@@ -1829,7 +2062,15 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 	button.add_theme_stylebox_override("disabled", _box(SIDEBAR, 8))
 	_apply_nav_button_style(button, active)
 
-	if text_value == "HOME" or text_value == "ROSTER":
+	if text_value in [
+		"HOME",
+		"ROSTER",
+		"TRADES",
+		"FREE AGENCY",
+		"SCOUTING",
+		"LEAGUE",
+		"FRONT OFFICE"
+	]:
 		nav_buttons[text_value] = button
 		button.pressed.connect(_show_page.bind(text_value))
 	elif text_value == "GAME DAY":
