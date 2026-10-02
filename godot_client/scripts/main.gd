@@ -936,6 +936,7 @@ func _on_game_day_completed(
 
 	var record = payload.get("record", {})
 	var opponent_record = payload.get("opponent_record", {})
+	var last_game = payload.get("last_game", null)
 	var next_game = payload.get("next_game", null)
 	var rotation = payload.get("rotation", {})
 	var unavailable = payload.get("unavailable_players", [])
@@ -959,6 +960,19 @@ func _on_game_day_completed(
 		str(unavailable.size())
 	]
 
+	if (
+		game_day_result_label != null
+		and game_day_result_label.text == "No game simulated in this session."
+		and last_game != null
+		and typeof(last_game) == TYPE_DICTIONARY
+	):
+		_render_game_day_result(
+			last_game,
+			str(record.get("display", "N/A")),
+			"",
+			-1
+		)
+
 	var ready := bool(sync.get("ready_for_next_controlled_game", false))
 	var pending := int(sync.get("cpu_games_before_next_controlled", 0))
 	if ready:
@@ -971,6 +985,118 @@ func _on_game_day_completed(
 		game_day_status_label.add_theme_color_override("font_color", BAD)
 		if game_day_simulate_button != null:
 			game_day_simulate_button.disabled = true
+
+
+func _game_day_team_shooting_line(game: Dictionary, team: String) -> String:
+	var fgm := 0
+	var fga := 0
+	var tpm := 0
+	var tpa := 0
+
+	var rows: Array = game.get("player_box_scores", [])
+	for row in rows:
+		if typeof(row) != TYPE_DICTIONARY:
+			continue
+		if str(row.get("team", "")) != team:
+			continue
+
+		fgm += int(row.get("field_goals_made", 0))
+		fga += int(row.get("field_goals_attempted", 0))
+		tpm += int(row.get("three_pointers_made", 0))
+		tpa += int(row.get("three_pointers_attempted", 0))
+
+	var fg_pct := 0.0
+	if fga > 0:
+		fg_pct = 100.0 * float(fgm) / float(fga)
+
+	var tp_pct := 0.0
+	if tpa > 0:
+		tp_pct = 100.0 * float(tpm) / float(tpa)
+
+	return "%s  FG %s/%s (%.1f%%)  •  3PT %s/%s (%.1f%%)" % [
+		team,
+		fgm,
+		fga,
+		fg_pct,
+		tpm,
+		tpa,
+		tp_pct
+	]
+
+
+func _game_day_top_performer_lines(game: Dictionary) -> Array:
+	var lines: Array = []
+	var performers: Array = game.get("top_performers", [])
+
+	for performer in performers:
+		if lines.size() >= 3:
+			break
+		if typeof(performer) != TYPE_DICTIONARY:
+			continue
+
+		lines.append(
+			"%s %s: %s PTS, %s REB, %s AST" % [
+				str(performer.get("team", "")),
+				str(performer.get("name", "Unknown")),
+				str(performer.get("points", 0)),
+				str(performer.get("rebounds", 0)),
+				str(performer.get("assists", 0))
+			]
+		)
+
+	return lines
+
+
+func _render_game_day_result(
+	game: Dictionary,
+	record_display: String,
+	result_code: String,
+	cpu_games: int
+) -> void:
+	if game_day_result_label == null:
+		return
+
+	var home_team := str(game.get("home_team", "HOME"))
+	var away_team := str(game.get("away_team", "AWAY"))
+	var home_score := int(game.get("home_score", 0))
+	var away_score := int(game.get("away_score", 0))
+
+	var result_bits: Array = [
+		"FINAL • %s %s, %s %s" % [
+			away_team,
+			away_score,
+			home_team,
+			home_score
+		]
+	]
+
+	if result_code != "":
+		result_bits.append("WIN" if result_code == "W" else "LOSS")
+
+	if record_display != "":
+		result_bits.append("Record %s" % record_display)
+
+	if cpu_games >= 0:
+		result_bits.append("%s CPU game(s) synchronized" % cpu_games)
+
+	var lines: Array = [" • ".join(result_bits)]
+	lines.append(_game_day_team_shooting_line(game, away_team))
+	lines.append(_game_day_team_shooting_line(game, home_team))
+
+	var performer_lines: Array = _game_day_top_performer_lines(game)
+	if performer_lines.size() > 0:
+		lines.append("TOP PERFORMERS")
+		for performer_line in performer_lines:
+			lines.append(str(performer_line))
+
+	game_day_result_label.text = "\n".join(lines)
+
+	if result_code == "W":
+		game_day_result_label.add_theme_color_override("font_color", GOOD)
+	elif result_code == "L":
+		game_day_result_label.add_theme_color_override("font_color", BAD)
+	else:
+		game_day_result_label.add_theme_color_override("font_color", MUTED)
 
 
 func _simulate_game_day_overlay() -> void:
@@ -1037,51 +1163,16 @@ func _on_game_day_simulate_completed(
 
 	var game = payload.get("game", {})
 	var result_code := str(payload.get("result", ""))
-	var home_team := str(game.get("home_team", "HOME"))
-	var away_team := str(game.get("away_team", "AWAY"))
-	var home_score := int(game.get("home_score", 0))
-	var away_score := int(game.get("away_score", 0))
 	var after_record = payload.get("after_record", {})
 	var cpu_games := int(payload.get("cpu_games_synchronized", 0))
 
-	var performer_lines := []
-	var performers: Array = game.get("top_performers", [])
-	var performer_limit: int = min(3, performers.size())
-	for index in range(performer_limit):
-		var performer = performers[index]
-		if typeof(performer) == TYPE_DICTIONARY:
-			performer_lines.append(
-				"%s %s: %s PTS, %s REB, %s AST" % [
-					str(performer.get("team", "")),
-					str(performer.get("name", "Unknown")),
-					str(performer.get("points", 0)),
-					str(performer.get("rebounds", 0)),
-					str(performer.get("assists", 0))
-				]
-			)
-
-	game_day_result_label.text = (
-		"FINAL • %s %s, %s %s • %s • Record %s • %s CPU game(s) synchronized"
-		% [
-			away_team,
-			away_score,
-			home_team,
-			home_score,
-			"WIN" if result_code == "W" else "LOSS",
+	if typeof(game) == TYPE_DICTIONARY:
+		_render_game_day_result(
+			game,
 			str(after_record.get("display", "N/A")),
+			result_code,
 			cpu_games
-		]
-	)
-
-	if performer_lines.size() > 0:
-		game_day_result_label.text += "
-" + "
-".join(performer_lines)
-
-	game_day_result_label.add_theme_color_override(
-		"font_color",
-		GOOD if result_code == "W" else BAD
-	)
+		)
 
 	# Refresh the overlay and the existing live V3 surfaces after the durable save.
 	_request_game_day_overlay()

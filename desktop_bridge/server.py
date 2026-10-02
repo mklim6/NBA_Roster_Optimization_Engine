@@ -14,7 +14,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.6.0"
+API_VERSION = "0.6.1"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -234,7 +234,38 @@ def _completed_game_payload(state: Any, completed: Any) -> dict[str, Any]:
     }
 
 
+def _latest_completed_game_for_team(state: Any, active_team: str) -> Any | None:
+    candidates: list[tuple[int, str, Any]] = []
+
+    for completed in state.completed_games.values():
+        home_team = str(getattr(completed, "home_team", ""))
+        away_team = str(getattr(completed, "away_team", ""))
+        if active_team not in (home_team, away_team):
+            continue
+
+        scheduled = state.schedule.get(str(completed.game_id))
+        day_index = int(
+            getattr(scheduled, "day_index", state.current_day_index)
+            if scheduled is not None
+            else state.current_day_index
+        )
+        candidates.append((day_index, str(completed.game_id), completed))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    return candidates[0][2]
+
+
 def _game_day_payload(state: Any, active_team: str) -> dict[str, Any]:
+    last_completed = _latest_completed_game_for_team(state, active_team)
+    last_game = (
+        _completed_game_payload(state, last_completed)
+        if last_completed is not None
+        else None
+    )
+
     game = _next_controlled_scheduled_game(state, active_team)
     sync = league_calendar_sync_status_v1(
         state,
@@ -253,6 +284,7 @@ def _game_day_payload(state: Any, active_team: str) -> dict[str, Any]:
             "phase": _enum_value(state.phase),
             "day_index": int(state.current_day_index),
             "record": _standing_payload(state, active_team),
+            "last_game": last_game,
             "next_game": None,
             "league_sync": sync,
         }
@@ -317,6 +349,7 @@ def _game_day_payload(state: Any, active_team: str) -> dict[str, Any]:
         "day_index": int(state.current_day_index),
         "record": _standing_payload(state, active_team),
         "opponent_record": _standing_payload(state, opponent),
+        "last_game": last_game,
         "next_game": {
             "game_id": str(game.game_id),
             "day_index": int(game.day_index),
