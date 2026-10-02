@@ -621,6 +621,29 @@ def _side_eval(
                 checks.append(FranchiseFinancialTradeCheck("pass", "future_existing_standard_roster_overflow_not_worsened", f"{resolved} enters with {standard_before} modeled standard contracts; the trade does not worsen the inherited simulator overflow ({standard_before} -> {standard_after}).", resolved))
             else:
                 checks.append(FranchiseFinancialTradeCheck("blocked", "future_existing_standard_roster_overflow_worsened", f"{resolved} would worsen an inherited standard-roster overflow ({standard_before} -> {standard_after}).", resolved))
+        elif standard_before < REGULAR_SEASON_STANDARD_MIN:
+            # Mature franchise saves can legitimately inherit a simulator roster
+            # below the NBA regular-season standard-contract minimum. Treat that
+            # pre-existing condition symmetrically with inherited overflow:
+            # a trade may preserve or improve the count, but may not worsen it.
+            #
+            # This does not declare the inherited roster CBA-compliant. It only
+            # prevents an unrelated pre-existing roster-size condition from
+            # vetoing every otherwise valid trade in future simulated seasons.
+            if standard_after >= standard_before:
+                checks.append(FranchiseFinancialTradeCheck(
+                    "pass",
+                    "future_existing_standard_roster_underflow_not_worsened",
+                    f"{resolved} enters with {standard_before} modeled standard contracts; the trade preserves or improves the inherited simulator underflow ({standard_before} -> {standard_after}).",
+                    resolved,
+                ))
+            else:
+                checks.append(FranchiseFinancialTradeCheck(
+                    "blocked",
+                    "future_existing_standard_roster_underflow_worsened",
+                    f"{resolved} would worsen an inherited standard-roster underflow ({standard_before} -> {standard_after}).",
+                    resolved,
+                ))
         elif standard_after > max_standard:
             checks.append(FranchiseFinancialTradeCheck("blocked", "future_standard_roster_limit_failed", f"{resolved} would have {standard_after} standard contracts; maximum is {max_standard}.", resolved))
         elif standard_after < REGULAR_SEASON_STANDARD_MIN:

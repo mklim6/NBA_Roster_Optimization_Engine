@@ -9,6 +9,7 @@ const GAME_DAY_URL := "http://127.0.0.1:8765/v3/game-day"
 const GAME_DAY_SIMULATE_URL := "http://127.0.0.1:8765/v3/game-day/simulate"
 const INTELLIGENCE_URL := "http://127.0.0.1:8765/v3/franchise-intelligence"
 const MARKET_INTELLIGENCE_URL := "http://127.0.0.1:8765/v3/market-intelligence"
+const TRANSACTION_FOUNDATION_URL := "http://127.0.0.1:8765/v3/transaction-foundation"
 
 const BG := Color("080b12")
 const SIDEBAR := Color("0d111a")
@@ -37,6 +38,7 @@ var game_day_request: HTTPRequest
 var game_day_simulate_request: HTTPRequest
 var intelligence_request: HTTPRequest
 var market_intelligence_request: HTTPRequest
+var transaction_foundation_request: HTTPRequest
 
 var home_page: Control
 var roster_page: Control
@@ -1987,6 +1989,134 @@ func _trade_asset_lines(rows: Array, limit: int = 5) -> String:
 	return "\n".join(lines)
 
 
+func _asset_name_list(values: Array) -> String:
+	var names: Array = []
+	for value in values:
+		names.append(str(value))
+	return " + ".join(names) if not names.is_empty() else "None"
+
+
+func _trade_proposal_lines(rows: Array, limit: int = 5) -> String:
+	var lines: Array = []
+	var count: int = 0
+	for raw_row in rows:
+		if typeof(raw_row) != TYPE_DICTIONARY:
+			continue
+		var row: Dictionary = raw_row
+		var incoming: Array = row.get("incoming", [])
+		var outgoing: Array = row.get("outgoing", [])
+		lines.append(
+			"%s • %s • %s\nGET  %s\nSEND %s" % [
+				str(row.get("partner_team", "")),
+				str(row.get("response_label", row.get("cpu_response", ""))).replace("_", " ").capitalize(),
+				str(row.get("deal_type", "")),
+				_asset_name_list(incoming),
+				_asset_name_list(outgoing)
+			]
+		)
+		count += 1
+		if count >= limit:
+			break
+	return "\n\n".join(lines)
+
+
+func _draft_asset_lines(rows: Array, limit: int = 7) -> String:
+	var lines: Array = []
+	var count: int = 0
+	for raw_row in rows:
+		if typeof(raw_row) != TYPE_DICTIONARY:
+			continue
+		var row: Dictionary = raw_row
+		var readiness := "ENGINE READY" if bool(row.get("engine_ready", false)) else "REVIEW"
+		lines.append(
+			"%s R%s • %s • %s" % [
+				str(row.get("draft_year", "")),
+				str(row.get("round", "")),
+				str(row.get("origin_team", "")),
+				readiness
+			]
+		)
+		count += 1
+		if count >= limit:
+			break
+	return "\n".join(lines)
+
+
+func _request_transaction_foundation(include_trade_finder: bool = true) -> void:
+	if transaction_foundation_request == null:
+		return
+	if transaction_foundation_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		transaction_foundation_request.cancel_request()
+
+	var url: String = TRANSACTION_FOUNDATION_URL
+	url += "?trade_finder=1" if include_trade_finder else "?trade_finder=0"
+	var error: int = transaction_foundation_request.request(url)
+	if error != OK:
+		var label = feature_status_labels.get("TRADES")
+		if label is Label:
+			label.text = "Transaction foundation request could not be started."
+
+
+func _on_transaction_foundation_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		var failure_label = feature_status_labels.get("TRADES")
+		if failure_label is Label:
+			failure_label.text = "Transaction foundation unavailable • HTTP %s" % str(response_code)
+		return
+
+	var payload = JSON.parse_string(body.get_string_from_utf8())
+	if typeof(payload) != TYPE_DICTIONARY:
+		return
+
+	var working_safe: bool = bool(payload.get("working_save_unchanged", false))
+	var v2_safe: bool = bool(payload.get("active_v2_unchanged", false))
+	if not working_safe or not v2_safe:
+		var unsafe_label = feature_status_labels.get("TRADES")
+		if unsafe_label is Label:
+			unsafe_label.text = "TRANSACTION SAFETY CHECK FAILED"
+		return
+
+	var status_label = feature_status_labels.get("TRADES")
+	if status_label is Label:
+		status_label.text = "LIVE TRANSACTION FOUNDATION • READ-ONLY PREVIEWS • V2 PROTECTED"
+
+	var finder: Dictionary = payload.get("trade_finder", {})
+	var proposals: Array = finder.get("proposals", [])
+	if str(finder.get("status", "")) == "ok":
+		var proposal_text := _trade_proposal_lines(proposals, 5)
+		if proposal_text == "":
+			proposal_text = "No production Trade Finder proposals cleared this search window."
+		_set_feature_text(
+			"TRADES:TRADE FINDER",
+			"PRODUCTION TRADE FINDER • %s TEAMS SCANNED • %s LEGAL PACKAGES\n%s" % [
+				str(finder.get("teams_scanned", 0)),
+				str(finder.get("legal_packages", 0)),
+				proposal_text
+			]
+		)
+	else:
+		_set_feature_text(
+			"TRADES:TRADE FINDER",
+			"Production Trade Finder unavailable for this refresh.\n%s" % str(finder.get("detail", "No detail returned."))
+		)
+
+	var draft_assets: Dictionary = payload.get("draft_assets", {})
+	var owned: Array = draft_assets.get("owned", [])
+	_set_feature_text(
+		"TRADES:DRAFT CAPITAL",
+		"EXACT LIVE OWNERSHIP • %s ASSETS • %s ENGINE READY\n%s" % [
+			str(draft_assets.get("owned_count", owned.size())),
+			str(draft_assets.get("engine_ready_count", 0)),
+			_draft_asset_lines(owned, 7)
+		]
+	)
+
+
 func _request_market_intelligence() -> void:
 	if market_intelligence_request == null:
 		return
@@ -2080,7 +2210,7 @@ func _on_market_intelligence_completed(
 
 	_set_feature_text(
 		"MARKET:NEGOTIATIONS",
-		"READ-ONLY CAP CONTEXT\nPayroll %s\nCap room %s\nTax room %s\n2nd apron room %s" % [
+		"READ-ONLY CAP + CONTRACT PREVIEW\nPayroll %s\nCap room %s\nTax room %s\n2nd apron room %s\nContract/CBA preview API online • transaction writes disabled" % [
 			str(financial.get("payroll_display", "N/A")),
 			str(financial.get("cap_room_estimate_display", "N/A")),
 			str(financial.get("tax_room_display", "N/A")),
@@ -2321,7 +2451,10 @@ func _show_page(page_name: String) -> void:
 		_request_franchise_summary()
 	elif page_name in ["SCOUTING", "LEAGUE", "FRONT OFFICE"]:
 		_request_franchise_intelligence()
-	elif page_name in ["TRADES", "FREE AGENCY"]:
+	elif page_name == "TRADES":
+		_request_market_intelligence()
+		_request_transaction_foundation(true)
+	elif page_name == "FREE AGENCY":
 		_request_market_intelligence()
 
 
@@ -2587,6 +2720,11 @@ func _build_http_client() -> void:
 	market_intelligence_request.timeout = 30.0
 	market_intelligence_request.request_completed.connect(_on_market_intelligence_completed)
 	add_child(market_intelligence_request)
+
+	transaction_foundation_request = HTTPRequest.new()
+	transaction_foundation_request.timeout = 60.0
+	transaction_foundation_request.request_completed.connect(_on_transaction_foundation_completed)
+	add_child(transaction_foundation_request)
 
 func _check_bridge() -> void:
 	if http_request == null:

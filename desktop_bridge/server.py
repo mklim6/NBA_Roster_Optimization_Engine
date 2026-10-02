@@ -14,7 +14,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.8.0"
+API_VERSION = "0.9.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -53,6 +53,11 @@ from simulation_league_state_v1 import (
 )
 from single_game_simulator_v1 import (
     simulate_scheduled_game,
+)
+from desktop_bridge.transaction_foundation import (
+    build_free_agency_preview_payload,
+    build_trade_preview_payload,
+    build_transaction_foundation_payload,
 )
 
 
@@ -1550,6 +1555,129 @@ def _market_intelligence_payload(
     }
 
 
+async def transaction_foundation(request: Request) -> JSONResponse:
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized", "read_only": True, "active_v2_read_only": True}, status_code=409)
+        active_team = _active_team_from_checkpoint(checkpoint)
+        if not active_team:
+            return JSONResponse({"error": "active_franchise_not_found", "read_only": True, "active_v2_read_only": True}, status_code=404)
+
+        include_trade_finder = str(request.query_params.get("trade_finder", "1")).strip().lower() not in {"0", "false", "no"}
+        payload = build_transaction_foundation_payload(checkpoint, active_team, include_trade_finder=include_trade_finder)
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_after = _file_sha256(v2_path)
+        working_unchanged = bool(working_before is not None and working_before == working_after)
+        v2_unchanged = bool(v2_before is not None and v2_before == v2_after)
+        payload.update({
+            "api_version": API_VERSION,
+            "working_save_sha256": working_after,
+            "working_save_unchanged": working_unchanged,
+            "active_v2_sha256": v2_after,
+            "active_v2_unchanged": v2_unchanged,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        })
+        if not working_unchanged or not v2_unchanged:
+            return JSONResponse({"error": "read_only_transaction_foundation_changed_checkpoint", **payload}, status_code=500)
+        return JSONResponse(payload)
+    except Exception as exc:
+        return JSONResponse({
+            "error": "transaction_foundation_failed",
+            "exception_type": type(exc).__name__,
+            "detail": str(exc),
+            "read_only": True,
+            "active_v2_read_only": True,
+            "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+            "active_v2_unchanged": v2_before == _file_sha256(v2_path),
+        }, status_code=500)
+
+
+async def trade_preview(request: Request) -> JSONResponse:
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Trade preview request body must be a JSON object.")
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized"}, status_code=409)
+        active_team = _active_team_from_checkpoint(checkpoint)
+        payload = build_trade_preview_payload(checkpoint, active_team, body)
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_after = _file_sha256(v2_path)
+        payload.update({
+            "api_version": API_VERSION,
+            "working_save_unchanged": working_before is not None and working_before == working_after,
+            "active_v2_unchanged": v2_before is not None and v2_before == v2_after,
+            "working_save_write_performed": False,
+        })
+        if not payload["working_save_unchanged"] or not payload["active_v2_unchanged"]:
+            return JSONResponse({"error": "trade_preview_changed_checkpoint", **payload}, status_code=500)
+        return JSONResponse(payload)
+    except ValueError as exc:
+        return JSONResponse({
+            "error": "invalid_trade_preview_request",
+            "detail": str(exc),
+            "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+            "active_v2_unchanged": v2_before == _file_sha256(v2_path),
+        }, status_code=400)
+    except Exception as exc:
+        return JSONResponse({
+            "error": "trade_preview_failed",
+            "exception_type": type(exc).__name__,
+            "detail": str(exc),
+            "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+            "active_v2_unchanged": v2_before == _file_sha256(v2_path),
+        }, status_code=500)
+
+
+async def free_agency_preview(request: Request) -> JSONResponse:
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Free-agency preview request body must be a JSON object.")
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized"}, status_code=409)
+        active_team = _active_team_from_checkpoint(checkpoint)
+        payload = build_free_agency_preview_payload(checkpoint, active_team, body)
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_after = _file_sha256(v2_path)
+        payload.update({
+            "api_version": API_VERSION,
+            "working_save_unchanged": working_before is not None and working_before == working_after,
+            "active_v2_unchanged": v2_before is not None and v2_before == v2_after,
+            "working_save_write_performed": False,
+        })
+        if not payload["working_save_unchanged"] or not payload["active_v2_unchanged"]:
+            return JSONResponse({"error": "free_agency_preview_changed_checkpoint", **payload}, status_code=500)
+        return JSONResponse(payload)
+    except ValueError as exc:
+        return JSONResponse({
+            "error": "invalid_free_agency_preview_request",
+            "detail": str(exc),
+            "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+            "active_v2_unchanged": v2_before == _file_sha256(v2_path),
+        }, status_code=400)
+    except Exception as exc:
+        return JSONResponse({
+            "error": "free_agency_preview_failed",
+            "exception_type": type(exc).__name__,
+            "detail": str(exc),
+            "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+            "active_v2_unchanged": v2_before == _file_sha256(v2_path),
+        }, status_code=500)
+
+
 async def market_intelligence(_: Request) -> JSONResponse:
     try:
         checkpoint = _working_checkpoint()
@@ -2394,6 +2522,9 @@ routes = [
     Route("/v3/franchise-summary", franchise_summary, methods=["GET"]),
     Route("/v3/franchise-intelligence", franchise_intelligence, methods=["GET"]),
     Route("/v3/market-intelligence", market_intelligence, methods=["GET"]),
+    Route("/v3/transaction-foundation", transaction_foundation, methods=["GET"]),
+    Route("/v3/trade/preview", trade_preview, methods=["POST"]),
+    Route("/v3/free-agency/preview", free_agency_preview, methods=["POST"]),
     Route("/v3/roster", roster_summary, methods=["GET"]),
     Route("/v3/working-save/status", working_save_status, methods=["GET"]),
     Route("/v3/working-save/reset", reset_working_save, methods=["POST"]),
