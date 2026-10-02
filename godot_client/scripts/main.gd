@@ -135,7 +135,7 @@ func _build_sidebar() -> Control:
 	column.add_child(brand)
 
 	var version := Label.new()
-	version.text = "V3 â€¢ DESKTOP ALPHA"
+	version.text = "V3 • DESKTOP ALPHA"
 	version.add_theme_color_override("font_color", ACCENT)
 	version.add_theme_font_size_override("font_size", 11)
 	column.add_child(version)
@@ -157,7 +157,7 @@ func _build_sidebar() -> Control:
 	expanding_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(expanding_spacer)
 
-	var eras := _nav_button("ERAS  â€¢  COMING IN V3")
+	var eras := _nav_button("ERAS  •  COMING IN V3")
 	eras.disabled = true
 	column.add_child(eras)
 
@@ -441,7 +441,7 @@ func _build_roster_area() -> Control:
 	column.add_child(roster_card)
 
 	var note := Label.new()
-	note.text = "V3 WORKING SAVE â€¢ Rotation edits are isolated from the protected V2 release checkpoint. Cap room remains an active-roster contract estimate."
+	note.text = "V3 WORKING SAVE • Rotation edits are isolated from the protected V2 release checkpoint. Cap room remains an active-roster contract estimate."
 	note.add_theme_color_override("font_color", MUTED)
 	note.add_theme_font_size_override("font_size", 10)
 	column.add_child(note)
@@ -597,7 +597,7 @@ func _show_player_detail(player: Dictionary) -> void:
 	title_box.add_child(player_name)
 
 	var subtitle := Label.new()
-	subtitle.text = "%s  â€¢  Age %s  â€¢  OVR %s  â€¢  POT %s  â€¢  %s" % [
+	subtitle.text = "%s  •  Age %s  •  OVR %s  •  POT %s  •  %s" % [
 		str(player.get("position", "")),
 		_number_text(player.get("age", null), 1),
 		_number_text(player.get("overall", null), 1),
@@ -696,7 +696,7 @@ func _show_player_detail(player: Dictionary) -> void:
 	for reason in morale.get("reasons", []):
 		if morale_reasons != "":
 			morale_reasons += "\n"
-		morale_reasons += "â€¢ " + str(reason)
+		morale_reasons += "• " + str(reason)
 
 	if morale_reasons == "":
 		morale_reasons = "No active morale concerns."
@@ -771,7 +771,7 @@ func _show_player_detail(player: Dictionary) -> void:
 	)
 
 	var footer := Label.new()
-	footer.text = "READ-ONLY PLAYER PROFILE â€¢ Data comes from the active V2 franchise checkpoint."
+	footer.text = "READ-ONLY PLAYER PROFILE • Data comes from the active V2 franchise checkpoint."
 	footer.add_theme_color_override("font_color", MUTED)
 	footer.add_theme_font_size_override("font_size", 10)
 	content.add_child(footer)
@@ -844,7 +844,7 @@ func _open_game_day_overlay() -> void:
 	titles.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "V3 WORKING SAVE â€¢ READ-ONLY UI PROBE"
+	subtitle.text = "V3 WORKING SAVE • LIVE GAME DAY"
 	subtitle.add_theme_color_override("font_color", MUTED)
 	subtitle.add_theme_font_size_override("font_size", 11)
 	titles.add_child(subtitle)
@@ -949,7 +949,7 @@ func _on_game_day_completed(
 
 	game_day_matchup_label.text = str(next_game.get("matchup", "NEXT GAME")).to_upper()
 	game_day_detail_label.text = (
-		"Your record %s â€¢ Opponent %s\nDAY %s â€¢ %s rotation players â€¢ %.0f minutes â€¢ %s unavailable"
+		"Your record %s • Opponent %s\nDAY %s • %s rotation players • %.0f minutes • %s unavailable"
 	) % [
 		str(record.get("display", "N/A")),
 		str(opponent_record.get("display", "N/A")),
@@ -962,12 +962,12 @@ func _on_game_day_completed(
 	var ready := bool(sync.get("ready_for_next_controlled_game", false))
 	var pending := int(sync.get("cpu_games_before_next_controlled", 0))
 	if ready:
-		game_day_status_label.text = "READY â€¢ League synchronized â€¢ V2 release checkpoint protected"
+		game_day_status_label.text = "READY • League synchronized • V2 release checkpoint protected"
 		game_day_status_label.add_theme_color_override("font_color", GOOD)
 		if game_day_simulate_button != null:
 			game_day_simulate_button.disabled = false
 	else:
-		game_day_status_label.text = "WAITING â€¢ %s CPU game(s) remain before this matchup" % pending
+		game_day_status_label.text = "WAITING • %s CPU game(s) remain before this matchup" % pending
 		game_day_status_label.add_theme_color_override("font_color", BAD)
 		if game_day_simulate_button != null:
 			game_day_simulate_button.disabled = true
@@ -983,7 +983,7 @@ func _simulate_game_day_overlay() -> void:
 		game_day_simulate_button.disabled = true
 
 	if game_day_status_label != null:
-		game_day_status_label.text = "SIMULATING â€¢ Committing game, synchronizing league, saving V3, and verifying V2 protection..."
+		game_day_status_label.text = "SIMULATING • Committing game, synchronizing league, saving V3, and verifying V2 protection..."
 		game_day_status_label.add_theme_color_override("font_color", ACCENT)
 
 	var error := game_day_simulate_request.request(
@@ -1061,7 +1061,7 @@ func _on_game_day_simulate_completed(
 			)
 
 	game_day_result_label.text = (
-		"FINAL â€¢ %s %s, %s %s â€¢ %s â€¢ Record %s â€¢ %s CPU game(s) synchronized"
+		"FINAL • %s %s, %s %s • %s • Record %s • %s CPU game(s) synchronized"
 		% [
 			away_team,
 			away_score,
@@ -1437,7 +1437,7 @@ func _on_health_completed(
 
 	_set_bridge_status(
 		true,
-		"Python engine connected â€¢ API %s â€¢ V3 working save enabled â€¢ V2 release protected" % payload.get("api_version", "unknown")
+		"Python engine connected • API %s • V3 working save enabled • V2 release protected" % payload.get("api_version", "unknown")
 	)
 
 	_request_franchise_summary()
@@ -1493,7 +1493,7 @@ func _apply_roster_payload(payload: Dictionary) -> void:
 
 	var source_label := "V3 WORKING SAVE" if str(payload.get("source", "")) == "v3_working_checkpoint" else "PROTECTED V2 SAVE"
 
-	roster_subtitle.text = "%s â€¢ %s â€¢ LEAGUE DAY %s â€¢ %s" % [
+	roster_subtitle.text = "%s • %s • LEAGUE DAY %s • %s" % [
 		str(team.get("name", "Active Franchise")).to_upper(),
 		str(season.get("label", "")),
 		str(season.get("day_index", "?")),
@@ -1505,7 +1505,7 @@ func _apply_roster_payload(payload: Dictionary) -> void:
 	roster_cap_value.text = str(financial.get("cap_room_estimate_display", "N/A"))
 	roster_chemistry_value.text = _number_text(chemistry.get("score", null), 1)
 
-	roster_status.text = "%s active â€¢ %s inactive â€¢ %s starters â€¢ %s rotation â€¢ %s injured â€¢ Click a player for full profile" % [
+	roster_status.text = "%s active • %s inactive • %s starters • %s rotation • %s injured • Click a player for full profile" % [
 		str(team.get("active_players", "?")),
 		str(team.get("inactive_players", "?")),
 		str(team.get("starters", "?")),
@@ -1577,7 +1577,7 @@ func _show_rotation_editor() -> void:
 	titles.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "V3 WORKING SAVE â€¢ Changes are validated by the existing V2 rotation engine before they can be applied."
+	subtitle.text = "V3 WORKING SAVE • Changes are validated by the existing V2 rotation engine before they can be applied."
 	subtitle.add_theme_color_override("font_color", MUTED)
 	subtitle.add_theme_font_size_override("font_size", 11)
 	titles.add_child(subtitle)
@@ -1865,14 +1865,14 @@ func _refresh_rotation_editor_state() -> void:
 	)
 
 	if valid:
-		rotation_feedback.text = "%s starters â€¢ %s rotation players â€¢ Ready for server validation." % [
+		rotation_feedback.text = "%s starters • %s rotation players • Ready for server validation." % [
 			str(check.get("starters", 0)),
 			str(check.get("rotation_players", 0))
 		]
 		rotation_feedback.add_theme_color_override("font_color", GOOD)
 	else:
 		var issues: Array = check.get("issues", [])
-		rotation_feedback.text = " â€¢ ".join(issues)
+		rotation_feedback.text = " • ".join(issues)
 		rotation_feedback.add_theme_color_override("font_color", BAD)
 
 	if rotation_preview_button != null:
@@ -1971,7 +1971,7 @@ func _on_rotation_request_completed(
 	if rotation_request_mode == "preview":
 		if str(payload.get("status", "")) == "valid":
 			rotation_validated_body = rotation_pending_body
-			rotation_feedback.text = "ENGINE VALIDATION PASSED â€¢ Ready to apply to the V3 working save."
+			rotation_feedback.text = "ENGINE VALIDATION PASSED • Ready to apply to the V3 working save."
 			rotation_feedback.add_theme_color_override("font_color", GOOD)
 			rotation_preview_button.disabled = false
 			rotation_apply_button.disabled = false
@@ -1987,7 +1987,7 @@ func _on_rotation_request_completed(
 		var v2_unchanged := bool(payload.get("active_v2_unchanged", false))
 
 		if applied and persisted and v2_unchanged:
-			rotation_feedback.text = "ROTATION SAVED â€¢ Reload verified â€¢ V2 release checkpoint unchanged."
+			rotation_feedback.text = "ROTATION SAVED • Reload verified • V2 release checkpoint unchanged."
 			rotation_feedback.add_theme_color_override("font_color", GOOD)
 			_close_rotation_editor()
 			_request_roster()
@@ -2082,7 +2082,7 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 	var phase_label := _pretty_phase(str(season.get("phase", "")))
 	var day_index := str(season.get("day_index", "?"))
 
-	header_subtitle.text = "%s  â€¢  LEAGUE DAY %s  â€¢  %s" % [
+	header_subtitle.text = "%s  •  LEAGUE DAY %s  •  %s" % [
 		season_label,
 		day_index,
 		phase_label
@@ -2090,8 +2090,8 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 
 	team_name_label.text = str(team.get("name", "Unknown Team")).to_upper()
 
-	team_detail_label.text = "%s â€¢ %s Division
-%s rostered â€¢ %s active" % [
+	team_detail_label.text = "%s • %s Division
+%s rostered • %s active" % [
 		str(team.get("conference", "Unknown")),
 		str(team.get("division", "Unknown")),
 		str(team.get("roster_size", "?")),
@@ -2111,7 +2111,7 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 		if record_text == "Live standings":
 			record_text = str(streak_text)
 		else:
-			record_text += " â€¢ " + str(streak_text)
+			record_text += " • " + str(streak_text)
 
 	record_detail.text = record_text
 
@@ -2164,8 +2164,8 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 		var venue_text := "Home" if is_home else "Away"
 		var next_game_number := int(record.get("games_played", 0)) + 1
 
-		next_game_detail.text = "%s â€¢ %s
-%s â€¢ Game %s" % [
+		next_game_detail.text = "%s • %s
+%s • Game %s" % [
 			when_text,
 			venue_text,
 			str(next_game.get("opponent_name", opponent_abbr)),
