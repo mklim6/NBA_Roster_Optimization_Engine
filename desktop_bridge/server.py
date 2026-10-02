@@ -1088,16 +1088,27 @@ async def project_meta(_: Request) -> JSONResponse:
 
 
 async def franchise_summary(_: Request) -> JSONResponse:
-    """
-    Read the active V2 checkpoint and expose a small, read-only summary
-    for the V3 Godot desktop client.
-    """
-
+    # V3 Home follows the isolated working checkpoint. Protected V2 remains
+    # a read-only fallback only before V3 working-save initialization.
     try:
-        checkpoint = load_franchise_checkpoint()
-        state = checkpoint.simulation_state
+        checkpoint = _working_checkpoint()
+        source = "v3_working_checkpoint"
 
-        active_team = checkpoint.preferences.get("franchise_pref_active_team")
+        if checkpoint is None:
+            checkpoint = load_franchise_checkpoint()
+            source = "active_v2_franchise_checkpoint"
+
+        if checkpoint is None:
+            return JSONResponse(
+                {
+                    "error": "franchise_checkpoint_not_found",
+                    "active_v2_read_only": True,
+                },
+                status_code=404,
+            )
+
+        state = checkpoint.simulation_state
+        active_team = _active_team_from_checkpoint(checkpoint)
 
         if not active_team:
             return JSONResponse(
@@ -1137,7 +1148,9 @@ async def franchise_summary(_: Request) -> JSONResponse:
 
         payload = {
             "read_only": True,
-            "source": "active_v2_franchise_checkpoint",
+            "source": source,
+            "active_v2_read_only": True,
+            "v3_working_save_writable": True,
             "api_version": API_VERSION,
 
             "team": {

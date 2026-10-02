@@ -5,6 +5,8 @@ const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
 const ROSTER_URL := "http://127.0.0.1:8765/v3/roster"
 const ROTATION_PREVIEW_URL := "http://127.0.0.1:8765/v3/rotation/preview"
 const ROTATION_APPLY_URL := "http://127.0.0.1:8765/v3/rotation/apply"
+const GAME_DAY_URL := "http://127.0.0.1:8765/v3/game-day"
+const GAME_DAY_SIMULATE_URL := "http://127.0.0.1:8765/v3/game-day/simulate"
 
 const BG := Color("07101d")
 const SIDEBAR := Color("0b1525")
@@ -25,6 +27,8 @@ var http_request: HTTPRequest
 var summary_request: HTTPRequest
 var roster_request: HTTPRequest
 var rotation_request: HTTPRequest
+var game_day_request: HTTPRequest
+var game_day_simulate_request: HTTPRequest
 
 var home_page: Control
 var roster_page: Control
@@ -41,6 +45,12 @@ var roster_chemistry_value: Label
 var roster_rows: VBoxContainer
 var player_detail_overlay: Control
 var rotation_overlay: Control
+var game_day_overlay: Control
+var game_day_matchup_label: Label
+var game_day_detail_label: Label
+var game_day_status_label: Label
+var game_day_simulate_button: Button
+var game_day_result_label: Label
 var rotation_edit_rows := {}
 var rotation_edit_order := []
 var rotation_feedback: Label
@@ -125,7 +135,7 @@ func _build_sidebar() -> Control:
 	column.add_child(brand)
 
 	var version := Label.new()
-	version.text = "V3 • DESKTOP ALPHA"
+	version.text = "V3 â€¢ DESKTOP ALPHA"
 	version.add_theme_color_override("font_color", ACCENT)
 	version.add_theme_font_size_override("font_size", 11)
 	column.add_child(version)
@@ -147,7 +157,7 @@ func _build_sidebar() -> Control:
 	expanding_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(expanding_spacer)
 
-	var eras := _nav_button("ERAS  •  COMING IN V3")
+	var eras := _nav_button("ERAS  â€¢  COMING IN V3")
 	eras.disabled = true
 	column.add_child(eras)
 
@@ -431,7 +441,7 @@ func _build_roster_area() -> Control:
 	column.add_child(roster_card)
 
 	var note := Label.new()
-	note.text = "V3 WORKING SAVE • Rotation edits are isolated from the protected V2 release checkpoint. Cap room remains an active-roster contract estimate."
+	note.text = "V3 WORKING SAVE â€¢ Rotation edits are isolated from the protected V2 release checkpoint. Cap room remains an active-roster contract estimate."
 	note.add_theme_color_override("font_color", MUTED)
 	note.add_theme_font_size_override("font_size", 10)
 	column.add_child(note)
@@ -587,7 +597,7 @@ func _show_player_detail(player: Dictionary) -> void:
 	title_box.add_child(player_name)
 
 	var subtitle := Label.new()
-	subtitle.text = "%s  •  Age %s  •  OVR %s  •  POT %s  •  %s" % [
+	subtitle.text = "%s  â€¢  Age %s  â€¢  OVR %s  â€¢  POT %s  â€¢  %s" % [
 		str(player.get("position", "")),
 		_number_text(player.get("age", null), 1),
 		_number_text(player.get("overall", null), 1),
@@ -686,7 +696,7 @@ func _show_player_detail(player: Dictionary) -> void:
 	for reason in morale.get("reasons", []):
 		if morale_reasons != "":
 			morale_reasons += "\n"
-		morale_reasons += "• " + str(reason)
+		morale_reasons += "â€¢ " + str(reason)
 
 	if morale_reasons == "":
 		morale_reasons = "No active morale concerns."
@@ -761,7 +771,7 @@ func _show_player_detail(player: Dictionary) -> void:
 	)
 
 	var footer := Label.new()
-	footer.text = "READ-ONLY PLAYER PROFILE • Data comes from the active V2 franchise checkpoint."
+	footer.text = "READ-ONLY PLAYER PROFILE â€¢ Data comes from the active V2 franchise checkpoint."
 	footer.add_theme_color_override("font_color", MUTED)
 	footer.add_theme_font_size_override("font_size", 10)
 	content.add_child(footer)
@@ -789,6 +799,307 @@ func _close_player_detail() -> void:
 	if player_detail_overlay != null and is_instance_valid(player_detail_overlay):
 		player_detail_overlay.queue_free()
 	player_detail_overlay = null
+
+
+func _open_game_day_overlay() -> void:
+	_close_game_day_overlay()
+
+	game_day_overlay = Control.new()
+	game_day_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	game_day_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(game_day_overlay)
+	game_day_overlay.move_to_front()
+
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.76)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	game_day_overlay.add_child(dim)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var center := CenterContainer.new()
+	center.mouse_filter = Control.MOUSE_FILTER_PASS
+	game_day_overlay.add_child(center)
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var card := _card(Vector2(720, 540))
+	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	center.add_child(card)
+
+	var body := _card_body(card, 22)
+	body.add_theme_constant_override("separation", 14)
+
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 12)
+	body.add_child(header)
+
+	var titles := VBoxContainer.new()
+	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(titles)
+
+	var title := Label.new()
+	title.text = "GAME DAY"
+	title.add_theme_color_override("font_color", TEXT)
+	title.add_theme_font_size_override("font_size", 26)
+	titles.add_child(title)
+
+	var subtitle := Label.new()
+	subtitle.text = "V3 WORKING SAVE â€¢ READ-ONLY UI PROBE"
+	subtitle.add_theme_color_override("font_color", MUTED)
+	subtitle.add_theme_font_size_override("font_size", 11)
+	titles.add_child(subtitle)
+
+	var close_button := _action_button("CLOSE")
+	close_button.pressed.connect(_close_game_day_overlay)
+	header.add_child(close_button)
+
+	body.add_child(_divider())
+
+	game_day_matchup_label = Label.new()
+	game_day_matchup_label.text = "LOADING NEXT MATCHUP..."
+	game_day_matchup_label.add_theme_color_override("font_color", TEXT)
+	game_day_matchup_label.add_theme_font_size_override("font_size", 30)
+	body.add_child(game_day_matchup_label)
+
+	game_day_detail_label = Label.new()
+	game_day_detail_label.text = "Reading V3 Game Day endpoint..."
+	game_day_detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	game_day_detail_label.add_theme_color_override("font_color", MUTED)
+	game_day_detail_label.add_theme_font_size_override("font_size", 13)
+	body.add_child(game_day_detail_label)
+
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(spacer)
+
+	game_day_status_label = Label.new()
+	game_day_status_label.text = "Connecting to Game Day state..."
+	game_day_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	game_day_status_label.add_theme_color_override("font_color", MUTED)
+	game_day_status_label.add_theme_font_size_override("font_size", 12)
+	body.add_child(game_day_status_label)
+
+	var action_row := HBoxContainer.new()
+	action_row.add_theme_constant_override("separation", 10)
+	body.add_child(action_row)
+
+	var action_spacer := Control.new()
+	action_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	action_row.add_child(action_spacer)
+
+	game_day_simulate_button = _action_button("SIMULATE GAME", true)
+	game_day_simulate_button.disabled = true
+	game_day_simulate_button.pressed.connect(_simulate_game_day_overlay)
+	action_row.add_child(game_day_simulate_button)
+
+	game_day_result_label = Label.new()
+	game_day_result_label.text = "No game simulated in this session."
+	game_day_result_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	game_day_result_label.add_theme_color_override("font_color", MUTED)
+	game_day_result_label.add_theme_font_size_override("font_size", 12)
+	body.add_child(game_day_result_label)
+
+	_request_game_day_overlay()
+
+
+func _request_game_day_overlay() -> void:
+	if game_day_request == null:
+		return
+	if game_day_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		game_day_request.cancel_request()
+
+	var error := game_day_request.request(GAME_DAY_URL)
+	if error != OK and game_day_status_label != null:
+		game_day_status_label.text = "Could not start Game Day request (error %s)." % error
+		game_day_status_label.add_theme_color_override("font_color", BAD)
+
+
+func _on_game_day_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	if game_day_overlay == null or not is_instance_valid(game_day_overlay):
+		return
+
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		game_day_status_label.text = "Game Day state could not be loaded."
+		game_day_status_label.add_theme_color_override("font_color", BAD)
+		return
+
+	var payload = JSON.parse_string(body.get_string_from_utf8())
+	if typeof(payload) != TYPE_DICTIONARY:
+		game_day_status_label.text = "Game Day endpoint returned invalid data."
+		game_day_status_label.add_theme_color_override("font_color", BAD)
+		return
+
+	var record = payload.get("record", {})
+	var opponent_record = payload.get("opponent_record", {})
+	var next_game = payload.get("next_game", null)
+	var rotation = payload.get("rotation", {})
+	var unavailable = payload.get("unavailable_players", [])
+	var sync = payload.get("league_sync", {})
+
+	if next_game == null or typeof(next_game) != TYPE_DICTIONARY:
+		game_day_matchup_label.text = "NO GAME SCHEDULED"
+		game_day_detail_label.text = "Record %s" % str(record.get("display", "N/A"))
+		game_day_status_label.text = "No controlled-team game is currently scheduled."
+		return
+
+	game_day_matchup_label.text = str(next_game.get("matchup", "NEXT GAME")).to_upper()
+	game_day_detail_label.text = (
+		"Your record %s â€¢ Opponent %s\nDAY %s â€¢ %s rotation players â€¢ %.0f minutes â€¢ %s unavailable"
+	) % [
+		str(record.get("display", "N/A")),
+		str(opponent_record.get("display", "N/A")),
+		str(next_game.get("day_index", "?")),
+		str(rotation.get("rotation_player_ids", []).size()),
+		float(rotation.get("total_minutes", 0.0)),
+		str(unavailable.size())
+	]
+
+	var ready := bool(sync.get("ready_for_next_controlled_game", false))
+	var pending := int(sync.get("cpu_games_before_next_controlled", 0))
+	if ready:
+		game_day_status_label.text = "READY â€¢ League synchronized â€¢ V2 release checkpoint protected"
+		game_day_status_label.add_theme_color_override("font_color", GOOD)
+		if game_day_simulate_button != null:
+			game_day_simulate_button.disabled = false
+	else:
+		game_day_status_label.text = "WAITING â€¢ %s CPU game(s) remain before this matchup" % pending
+		game_day_status_label.add_theme_color_override("font_color", BAD)
+		if game_day_simulate_button != null:
+			game_day_simulate_button.disabled = true
+
+
+func _simulate_game_day_overlay() -> void:
+	if game_day_simulate_request == null:
+		return
+	if game_day_simulate_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		return
+
+	if game_day_simulate_button != null:
+		game_day_simulate_button.disabled = true
+
+	if game_day_status_label != null:
+		game_day_status_label.text = "SIMULATING â€¢ Committing game, synchronizing league, saving V3, and verifying V2 protection..."
+		game_day_status_label.add_theme_color_override("font_color", ACCENT)
+
+	var error := game_day_simulate_request.request(
+		GAME_DAY_SIMULATE_URL,
+		PackedStringArray(),
+		HTTPClient.METHOD_POST,
+		""
+	)
+
+	if error != OK:
+		if game_day_status_label != null:
+			game_day_status_label.text = "Could not start simulation request (error %s)." % error
+			game_day_status_label.add_theme_color_override("font_color", BAD)
+
+
+func _on_game_day_simulate_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	if game_day_overlay == null or not is_instance_valid(game_day_overlay):
+		return
+
+	if result != HTTPRequest.RESULT_SUCCESS:
+		game_day_status_label.text = "Simulation request failed before the Python engine responded."
+		game_day_status_label.add_theme_color_override("font_color", BAD)
+		return
+
+	var payload = JSON.parse_string(body.get_string_from_utf8())
+	if typeof(payload) != TYPE_DICTIONARY:
+		game_day_status_label.text = "Simulation endpoint returned invalid data."
+		game_day_status_label.add_theme_color_override("font_color", BAD)
+		return
+
+	if response_code != 200:
+		game_day_status_label.text = str(
+			payload.get("detail", payload.get("error", "Game Day simulation failed."))
+		)
+		game_day_status_label.add_theme_color_override("font_color", BAD)
+		return
+
+	var applied := str(payload.get("status", "")) == "applied"
+	var persisted := bool(payload.get("persisted_after_reload", false))
+	var v2_unchanged := bool(payload.get("active_v2_unchanged", false))
+
+	if not applied or not persisted or not v2_unchanged:
+		game_day_status_label.text = "Simulation did not pass persistence and V2 safety verification."
+		game_day_status_label.add_theme_color_override("font_color", BAD)
+		return
+
+	var game = payload.get("game", {})
+	var result_code := str(payload.get("result", ""))
+	var home_team := str(game.get("home_team", "HOME"))
+	var away_team := str(game.get("away_team", "AWAY"))
+	var home_score := int(game.get("home_score", 0))
+	var away_score := int(game.get("away_score", 0))
+	var after_record = payload.get("after_record", {})
+	var cpu_games := int(payload.get("cpu_games_synchronized", 0))
+
+	var performer_lines := []
+	var performers: Array = game.get("top_performers", [])
+	var performer_limit: int = min(3, performers.size())
+	for index in range(performer_limit):
+		var performer = performers[index]
+		if typeof(performer) == TYPE_DICTIONARY:
+			performer_lines.append(
+				"%s %s: %s PTS, %s REB, %s AST" % [
+					str(performer.get("team", "")),
+					str(performer.get("name", "Unknown")),
+					str(performer.get("points", 0)),
+					str(performer.get("rebounds", 0)),
+					str(performer.get("assists", 0))
+				]
+			)
+
+	game_day_result_label.text = (
+		"FINAL â€¢ %s %s, %s %s â€¢ %s â€¢ Record %s â€¢ %s CPU game(s) synchronized"
+		% [
+			away_team,
+			away_score,
+			home_team,
+			home_score,
+			"WIN" if result_code == "W" else "LOSS",
+			str(after_record.get("display", "N/A")),
+			cpu_games
+		]
+	)
+
+	if performer_lines.size() > 0:
+		game_day_result_label.text += "
+" + "
+".join(performer_lines)
+
+	game_day_result_label.add_theme_color_override(
+		"font_color",
+		GOOD if result_code == "W" else BAD
+	)
+
+	# Refresh the overlay and the existing live V3 surfaces after the durable save.
+	_request_game_day_overlay()
+	_request_franchise_summary()
+	_request_roster()
+
+
+func _close_game_day_overlay() -> void:
+	if game_day_request != null and game_day_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		game_day_request.cancel_request()
+	if game_day_overlay != null and is_instance_valid(game_day_overlay):
+		game_day_overlay.queue_free()
+	game_day_overlay = null
+	game_day_matchup_label = null
+	game_day_detail_label = null
+	game_day_status_label = null
+	game_day_simulate_button = null
+	game_day_result_label = null
 
 
 func _friendly_value(value: String) -> String:
@@ -964,6 +1275,9 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 	if text_value == "HOME" or text_value == "ROSTER":
 		nav_buttons[text_value] = button
 		button.pressed.connect(_show_page.bind(text_value))
+	elif text_value == "GAME DAY":
+		nav_buttons[text_value] = button
+		button.pressed.connect(_open_game_day_overlay)
 
 	return button
 
@@ -1080,6 +1394,16 @@ func _build_http_client() -> void:
 	rotation_request.request_completed.connect(_on_rotation_request_completed)
 	add_child(rotation_request)
 
+	game_day_request = HTTPRequest.new()
+	game_day_request.timeout = 6.0
+	game_day_request.request_completed.connect(_on_game_day_completed)
+	add_child(game_day_request)
+
+	game_day_simulate_request = HTTPRequest.new()
+	game_day_simulate_request.timeout = 60.0
+	game_day_simulate_request.request_completed.connect(_on_game_day_simulate_completed)
+	add_child(game_day_simulate_request)
+
 func _check_bridge() -> void:
 	if http_request == null:
 		return
@@ -1113,7 +1437,7 @@ func _on_health_completed(
 
 	_set_bridge_status(
 		true,
-		"Python engine connected • API %s • V3 working save enabled • V2 release protected" % payload.get("api_version", "unknown")
+		"Python engine connected â€¢ API %s â€¢ V3 working save enabled â€¢ V2 release protected" % payload.get("api_version", "unknown")
 	)
 
 	_request_franchise_summary()
@@ -1169,7 +1493,7 @@ func _apply_roster_payload(payload: Dictionary) -> void:
 
 	var source_label := "V3 WORKING SAVE" if str(payload.get("source", "")) == "v3_working_checkpoint" else "PROTECTED V2 SAVE"
 
-	roster_subtitle.text = "%s • %s • LEAGUE DAY %s • %s" % [
+	roster_subtitle.text = "%s â€¢ %s â€¢ LEAGUE DAY %s â€¢ %s" % [
 		str(team.get("name", "Active Franchise")).to_upper(),
 		str(season.get("label", "")),
 		str(season.get("day_index", "?")),
@@ -1181,7 +1505,7 @@ func _apply_roster_payload(payload: Dictionary) -> void:
 	roster_cap_value.text = str(financial.get("cap_room_estimate_display", "N/A"))
 	roster_chemistry_value.text = _number_text(chemistry.get("score", null), 1)
 
-	roster_status.text = "%s active • %s inactive • %s starters • %s rotation • %s injured • Click a player for full profile" % [
+	roster_status.text = "%s active â€¢ %s inactive â€¢ %s starters â€¢ %s rotation â€¢ %s injured â€¢ Click a player for full profile" % [
 		str(team.get("active_players", "?")),
 		str(team.get("inactive_players", "?")),
 		str(team.get("starters", "?")),
@@ -1253,7 +1577,7 @@ func _show_rotation_editor() -> void:
 	titles.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "V3 WORKING SAVE • Changes are validated by the existing V2 rotation engine before they can be applied."
+	subtitle.text = "V3 WORKING SAVE â€¢ Changes are validated by the existing V2 rotation engine before they can be applied."
 	subtitle.add_theme_color_override("font_color", MUTED)
 	subtitle.add_theme_font_size_override("font_size", 11)
 	titles.add_child(subtitle)
@@ -1541,14 +1865,14 @@ func _refresh_rotation_editor_state() -> void:
 	)
 
 	if valid:
-		rotation_feedback.text = "%s starters • %s rotation players • Ready for server validation." % [
+		rotation_feedback.text = "%s starters â€¢ %s rotation players â€¢ Ready for server validation." % [
 			str(check.get("starters", 0)),
 			str(check.get("rotation_players", 0))
 		]
 		rotation_feedback.add_theme_color_override("font_color", GOOD)
 	else:
 		var issues: Array = check.get("issues", [])
-		rotation_feedback.text = " • ".join(issues)
+		rotation_feedback.text = " â€¢ ".join(issues)
 		rotation_feedback.add_theme_color_override("font_color", BAD)
 
 	if rotation_preview_button != null:
@@ -1647,7 +1971,7 @@ func _on_rotation_request_completed(
 	if rotation_request_mode == "preview":
 		if str(payload.get("status", "")) == "valid":
 			rotation_validated_body = rotation_pending_body
-			rotation_feedback.text = "ENGINE VALIDATION PASSED • Ready to apply to the V3 working save."
+			rotation_feedback.text = "ENGINE VALIDATION PASSED â€¢ Ready to apply to the V3 working save."
 			rotation_feedback.add_theme_color_override("font_color", GOOD)
 			rotation_preview_button.disabled = false
 			rotation_apply_button.disabled = false
@@ -1663,7 +1987,7 @@ func _on_rotation_request_completed(
 		var v2_unchanged := bool(payload.get("active_v2_unchanged", false))
 
 		if applied and persisted and v2_unchanged:
-			rotation_feedback.text = "ROTATION SAVED • Reload verified • V2 release checkpoint unchanged."
+			rotation_feedback.text = "ROTATION SAVED â€¢ Reload verified â€¢ V2 release checkpoint unchanged."
 			rotation_feedback.add_theme_color_override("font_color", GOOD)
 			_close_rotation_editor()
 			_request_roster()
@@ -1758,7 +2082,7 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 	var phase_label := _pretty_phase(str(season.get("phase", "")))
 	var day_index := str(season.get("day_index", "?"))
 
-	header_subtitle.text = "%s  •  LEAGUE DAY %s  •  %s" % [
+	header_subtitle.text = "%s  â€¢  LEAGUE DAY %s  â€¢  %s" % [
 		season_label,
 		day_index,
 		phase_label
@@ -1766,8 +2090,8 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 
 	team_name_label.text = str(team.get("name", "Unknown Team")).to_upper()
 
-	team_detail_label.text = "%s • %s Division
-%s rostered • %s active" % [
+	team_detail_label.text = "%s â€¢ %s Division
+%s rostered â€¢ %s active" % [
 		str(team.get("conference", "Unknown")),
 		str(team.get("division", "Unknown")),
 		str(team.get("roster_size", "?")),
@@ -1787,7 +2111,7 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 		if record_text == "Live standings":
 			record_text = str(streak_text)
 		else:
-			record_text += " • " + str(streak_text)
+			record_text += " â€¢ " + str(streak_text)
 
 	record_detail.text = record_text
 
@@ -1840,8 +2164,8 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 		var venue_text := "Home" if is_home else "Away"
 		var next_game_number := int(record.get("games_played", 0)) + 1
 
-		next_game_detail.text = "%s • %s
-%s • Game %s" % [
+		next_game_detail.text = "%s â€¢ %s
+%s â€¢ Game %s" % [
 			when_text,
 			venue_text,
 			str(next_game.get("opponent_name", opponent_abbr)),
