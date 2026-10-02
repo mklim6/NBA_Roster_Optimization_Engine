@@ -213,7 +213,7 @@ func _build_sidebar() -> Control:
 	column.add_child(eras)
 
 	var footer := Label.new()
-	footer.text = "V2 engine preserved\nV3 client prototype"
+	footer.text = "V2 engine preserved\nV3 desktop alpha"
 	footer.add_theme_color_override("font_color", MUTED)
 	footer.add_theme_font_size_override("font_size", 11)
 	column.add_child(footer)
@@ -237,17 +237,18 @@ func _build_main_area() -> Control:
 	hero_row.add_theme_constant_override("separation", 16)
 	hero_row.add_child(_build_team_card())
 	hero_row.add_child(_build_next_game_card())
-	hero_row.add_child(_build_engine_card())
 	column.add_child(hero_row)
+
+	column.add_child(_build_engine_status_strip())
 
 	var metrics := GridContainer.new()
 	metrics.columns = 4
 	metrics.add_theme_constant_override("h_separation", 14)
 	metrics.add_theme_constant_override("v_separation", 14)
-	metrics.add_child(_metric_card("RECORD", "LOADING...", "Waiting for V2 save"))
-	metrics.add_child(_metric_card("CHEMISTRY", "LOADING...", "Waiting for V2 save"))
-	metrics.add_child(_metric_card("CAP SPACE", "LOADING...", "Waiting for V2 save"))
-	metrics.add_child(_metric_card("DRAFT CLASS", "LOADING...", "Waiting for V2 save"))
+	metrics.add_child(_metric_card("RECORD", "LOADING...", "Waiting for V3 save"))
+	metrics.add_child(_metric_card("CHEMISTRY", "LOADING...", "Waiting for V3 save"))
+	metrics.add_child(_metric_card("CAP SPACE", "LOADING...", "Waiting for V3 save"))
+	metrics.add_child(_metric_card("DRAFT CLASS", "LOADING...", "Waiting for V3 save"))
 	column.add_child(metrics)
 
 	var lower := HBoxContainer.new()
@@ -385,33 +386,44 @@ func _build_next_game_card() -> Control:
 	body.add_child(actions)
 	return card
 
-func _build_engine_card() -> Control:
-	var card := _card(Vector2(285, 220))
-	var body := _card_body(card, 20)
+func _build_engine_status_strip() -> Control:
+	var strip := PanelContainer.new()
+	strip.custom_minimum_size = Vector2(0, 58)
+	strip.add_theme_stylebox_override("panel", _box(Color("0f151f"), 12, SOFT_BORDER))
 
-	body.add_child(_small_label("DESKTOP ENGINE", ACCENT))
+	var margin := MarginContainer.new()
+	_set_margins(margin, 16, 10, 12, 10)
+	strip.add_child(margin)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	margin.add_child(row)
+
+	var engine_tag := _pill("DESKTOP ENGINE", ACCENT)
+	row.add_child(engine_tag)
 
 	bridge_status = Label.new()
 	bridge_status.text = "CHECKING..."
 	bridge_status.add_theme_color_override("font_color", MUTED)
-	bridge_status.add_theme_font_size_override("font_size", 20)
-	body.add_child(bridge_status)
+	bridge_status.add_theme_font_size_override("font_size", 13)
+	bridge_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(bridge_status)
 
 	bridge_detail = Label.new()
 	bridge_detail.text = "Looking for the local Python bridge on port 8765."
+	bridge_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bridge_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	bridge_detail.add_theme_color_override("font_color", MUTED)
-	bridge_detail.add_theme_font_size_override("font_size", 12)
-	body.add_child(bridge_detail)
+	bridge_detail.add_theme_font_size_override("font_size", 10)
+	bridge_detail.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(bridge_detail)
 
-	var spacer := Control.new()
-	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_child(spacer)
-
-	retry_button = _action_button("RETRY CONNECTION")
+	retry_button = _action_button("RETRY")
+	retry_button.custom_minimum_size = Vector2(88, 32)
 	retry_button.pressed.connect(_check_bridge)
-	body.add_child(retry_button)
-	return card
+	row.add_child(retry_button)
+
+	return strip
 
 
 func _metric_card(label_text: String, value_text: String, detail_text: String) -> Control:
@@ -468,14 +480,20 @@ func _build_roster_area() -> Control:
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	titles.add_theme_constant_override("separation", 3)
 
+	var eyebrow := Label.new()
+	eyebrow.text = "TEAM OPERATIONS"
+	eyebrow.add_theme_color_override("font_color", TEAM_PRIMARY_HOVER)
+	eyebrow.add_theme_font_size_override("font_size", 10)
+	titles.add_child(eyebrow)
+
 	var title := Label.new()
-	title.text = "ROSTER COMMAND CENTER"
+	title.text = "ROSTER MANAGEMENT"
 	title.add_theme_color_override("font_color", TEXT)
-	title.add_theme_font_size_override("font_size", 28)
+	title.add_theme_font_size_override("font_size", 31)
 	titles.add_child(title)
 
 	roster_subtitle = Label.new()
-	roster_subtitle.text = "LOADING ACTIVE V2 ROSTER..."
+	roster_subtitle.text = "LOADING V3 WORKING ROSTER..."
 	roster_subtitle.add_theme_color_override("font_color", MUTED)
 	roster_subtitle.add_theme_font_size_override("font_size", 12)
 	titles.add_child(roster_subtitle)
@@ -500,18 +518,32 @@ func _build_roster_area() -> Control:
 	metrics.add_child(_roster_summary_card("CHEMISTRY", "LOADING..."))
 	column.add_child(metrics)
 
+	var status_panel := PanelContainer.new()
+	status_panel.add_theme_stylebox_override("panel", _box(Color("0f151f"), 10, SOFT_BORDER))
+	column.add_child(status_panel)
+
+	var status_margin := MarginContainer.new()
+	_set_margins(status_margin, 12, 8, 12, 8)
+	status_panel.add_child(status_margin)
+
 	roster_status = Label.new()
-	roster_status.text = "Waiting for the read-only roster endpoint."
+	roster_status.text = "Waiting for the V3 roster endpoint."
 	roster_status.add_theme_color_override("font_color", MUTED)
-	roster_status.add_theme_font_size_override("font_size", 11)
-	column.add_child(roster_status)
+	roster_status.add_theme_font_size_override("font_size", 10)
+	status_margin.add_child(roster_status)
 
 	var roster_card := _card(Vector2(0, 0))
 	roster_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	roster_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var body := _card_body(roster_card, 16)
 
-	body.add_child(_section_title("ACTIVE ROSTER"))
+	var roster_header_row := HBoxContainer.new()
+	roster_header_row.add_child(_section_title("ACTIVE ROSTER"))
+	var roster_header_spacer := Control.new()
+	roster_header_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	roster_header_row.add_child(roster_header_spacer)
+	roster_header_row.add_child(_small_label("CLICK ANY PLAYER FOR FULL PROFILE", MUTED))
+	body.add_child(roster_header_row)
 	body.add_child(_roster_table_header())
 
 	var scroll := ScrollContainer.new()
@@ -525,7 +557,7 @@ func _build_roster_area() -> Control:
 	scroll.add_child(roster_rows)
 
 	var loading := Label.new()
-	loading.text = "Loading players from the active V2 checkpoint..."
+	loading.text = "Loading players from the V3 working checkpoint..."
 	loading.add_theme_color_override("font_color", MUTED)
 	loading.add_theme_font_size_override("font_size", 12)
 	roster_rows.add_child(loading)
@@ -542,16 +574,23 @@ func _build_roster_area() -> Control:
 
 
 func _roster_summary_card(label_text: String, value_text: String) -> Control:
-	var card := _card(Vector2(0, 88))
+	var card := _card(Vector2(0, 96))
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 12, SOFT_BORDER))
 	var body := _card_body(card, 14)
+	body.add_theme_constant_override("separation", 5)
 
-	body.add_child(_small_label(label_text, MUTED))
+	body.add_child(
+		_small_label(
+			label_text,
+			TEAM_PRIMARY_HOVER if label_text == "ROSTER" else MUTED
+		)
+	)
 
 	var value := Label.new()
 	value.text = value_text
 	value.add_theme_color_override("font_color", TEXT)
-	value.add_theme_font_size_override("font_size", 21)
+	value.add_theme_font_size_override("font_size", 23)
 	body.add_child(value)
 
 	match label_text:
@@ -594,7 +633,7 @@ func _roster_row(player: Dictionary) -> Control:
 
 	var margin := MarginContainer.new()
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_set_margins(margin, 10, 7, 10, 7)
+	_set_margins(margin, 11, 8, 11, 8)
 	panel.add_child(margin)
 
 	var row := HBoxContainer.new()
@@ -604,9 +643,13 @@ func _roster_row(player: Dictionary) -> Control:
 
 	var player_name := str(player.get("name", "Unknown"))
 	var starter := bool(player.get("is_starter", false))
-	var name_color := ACCENT if starter else TEXT
+	var name_color := TEAM_PRIMARY_HOVER if starter else TEXT
 	if starter:
-		player_name = "[S] " + player_name
+		player_name = "START • " + player_name
+		panel.add_theme_stylebox_override(
+			"panel",
+			_box(Color("1b1821"), 9, Color(TEAM_PRIMARY, 0.52))
+		)
 
 	var morale = player.get("morale", {})
 	var morale_text := str(morale.get("status", ""))
@@ -1694,7 +1737,7 @@ func _build_activity_panel() -> Control:
 	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var body := _card_body(card, 20)
 
-	body.add_child(_section_title("LEAGUE ACTIVITY"))
+	body.add_child(_section_title("LEAGUE PULSE"))
 	body.add_child(_activity("TRADE MARKET", "Multiple teams are evaluating early-season roster changes.", "2m"))
 	body.add_child(_divider())
 	body.add_child(_activity("ROOKIE WATCH", "The 2026 class is beginning to separate after the first month.", "18m"))
@@ -1710,7 +1753,7 @@ func _build_quick_actions_panel() -> Control:
 	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var body := _card_body(card, 20)
 
-	body.add_child(_section_title("QUICK ACTIONS"))
+	body.add_child(_section_title("FRANCHISE SHORTCUTS"))
 	body.add_child(_wide_action("OPEN ROSTER", "Depth chart, roles, development"))
 	body.add_child(_wide_action("TRADE CENTER", "Offers, finder, pick inventory"))
 	body.add_child(_wide_action("SCOUTING BOARD", "Prospects and staff reports"))
