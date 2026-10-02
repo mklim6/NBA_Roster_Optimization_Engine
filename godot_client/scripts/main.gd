@@ -55,6 +55,14 @@ var game_day_detail_label: Label
 var game_day_status_label: Label
 var game_day_simulate_button: Button
 var game_day_result_label: Label
+var game_day_result_badge: Label
+var game_day_result_meta_label: Label
+var game_day_active_postgame_title: Label
+var game_day_opponent_postgame_title: Label
+var game_day_active_shooting_label: Label
+var game_day_opponent_shooting_label: Label
+var game_day_active_leaders_label: Label
+var game_day_opponent_leaders_label: Label
 var game_day_active_team := ""
 var game_day_team_badge: Label
 var game_day_opponent_badge: Label
@@ -1092,12 +1100,87 @@ func _open_game_day_overlay() -> void:
 	last_game_header.add_child(last_game_spacer)
 	last_game_header.add_child(_pill("POSTGAME", MUTED))
 
+	var result_score_row := HBoxContainer.new()
+	result_score_row.add_theme_constant_override("separation", 10)
+	result_box.add_child(result_score_row)
+
 	game_day_result_label = Label.new()
 	game_day_result_label.text = "No completed game is available yet."
-	game_day_result_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	game_day_result_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	game_day_result_label.add_theme_color_override("font_color", TEXT)
-	game_day_result_label.add_theme_font_size_override("font_size", 11)
-	result_box.add_child(game_day_result_label)
+	game_day_result_label.add_theme_font_size_override("font_size", 24)
+	result_score_row.add_child(game_day_result_label)
+
+	game_day_result_badge = _pill("WAITING", MUTED)
+	result_score_row.add_child(game_day_result_badge)
+
+	game_day_result_meta_label = Label.new()
+	game_day_result_meta_label.text = "The latest completed controlled-team game will appear here."
+	game_day_result_meta_label.add_theme_color_override("font_color", MUTED)
+	game_day_result_meta_label.add_theme_font_size_override("font_size", 10)
+	result_box.add_child(game_day_result_meta_label)
+
+	var compare_row := HBoxContainer.new()
+	compare_row.add_theme_constant_override("separation", 12)
+	result_box.add_child(compare_row)
+
+	var active_postgame := PanelContainer.new()
+	active_postgame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	active_postgame.add_theme_stylebox_override("panel", _box(PANEL_ALT, 12, Color(TEAM_PRIMARY, 0.55)))
+	compare_row.add_child(active_postgame)
+
+	var active_margin := MarginContainer.new()
+	_set_margins(active_margin, 12, 10, 12, 10)
+	active_postgame.add_child(active_margin)
+
+	var active_box := VBoxContainer.new()
+	active_box.add_theme_constant_override("separation", 5)
+	active_margin.add_child(active_box)
+
+	game_day_active_postgame_title = _small_label("YOUR TEAM", TEAM_PRIMARY_HOVER)
+	active_box.add_child(game_day_active_postgame_title)
+
+	game_day_active_shooting_label = Label.new()
+	game_day_active_shooting_label.text = "FG -- • 3PT --"
+	game_day_active_shooting_label.add_theme_color_override("font_color", TEXT)
+	game_day_active_shooting_label.add_theme_font_size_override("font_size", 11)
+	active_box.add_child(game_day_active_shooting_label)
+
+	game_day_active_leaders_label = Label.new()
+	game_day_active_leaders_label.text = "Leaders unavailable."
+	game_day_active_leaders_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	game_day_active_leaders_label.add_theme_color_override("font_color", MUTED)
+	game_day_active_leaders_label.add_theme_font_size_override("font_size", 10)
+	active_box.add_child(game_day_active_leaders_label)
+
+	var opponent_postgame := PanelContainer.new()
+	opponent_postgame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	opponent_postgame.add_theme_stylebox_override("panel", _box(PANEL_ALT, 12, BORDER))
+	compare_row.add_child(opponent_postgame)
+
+	var opponent_margin := MarginContainer.new()
+	_set_margins(opponent_margin, 12, 10, 12, 10)
+	opponent_postgame.add_child(opponent_margin)
+
+	var opponent_box := VBoxContainer.new()
+	opponent_box.add_theme_constant_override("separation", 5)
+	opponent_margin.add_child(opponent_box)
+
+	game_day_opponent_postgame_title = _small_label("OPPONENT", MUTED)
+	opponent_box.add_child(game_day_opponent_postgame_title)
+
+	game_day_opponent_shooting_label = Label.new()
+	game_day_opponent_shooting_label.text = "FG -- • 3PT --"
+	game_day_opponent_shooting_label.add_theme_color_override("font_color", TEXT)
+	game_day_opponent_shooting_label.add_theme_font_size_override("font_size", 11)
+	opponent_box.add_child(game_day_opponent_shooting_label)
+
+	game_day_opponent_leaders_label = Label.new()
+	game_day_opponent_leaders_label.text = "Leaders unavailable."
+	game_day_opponent_leaders_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	game_day_opponent_leaders_label.add_theme_color_override("font_color", MUTED)
+	game_day_opponent_leaders_label.add_theme_font_size_override("font_size", 10)
+	opponent_box.add_child(game_day_opponent_leaders_label)
 
 	_request_game_day_overlay()
 
@@ -1347,29 +1430,14 @@ func _render_game_day_result(
 	var home_score := int(game.get("home_score", 0))
 	var away_score := int(game.get("away_score", 0))
 
-	var result_bits: Array = [
-		"FINAL • %s %s, %s %s" % [
-			away_team,
-			away_score,
-			home_team,
-			home_score
-		]
-	]
-
-	if result_code != "":
-		result_bits.append("WIN" if result_code == "W" else "LOSS")
-
-	if record_display != "":
-		result_bits.append("Record %s" % record_display)
-
-	if cpu_games >= 0:
-		result_bits.append("%s CPU game(s) synchronized" % cpu_games)
-
 	var active_team := game_day_active_team
 	if active_team == "":
 		active_team = away_team
 
 	var opponent_team := home_team if active_team == away_team else away_team
+
+	var active_score := away_score if active_team == away_team else home_score
+	var opponent_score := home_score if active_team == away_team else away_score
 
 	var active_team_name := active_team
 	var opponent_team_name := opponent_team
@@ -1380,25 +1448,63 @@ func _render_game_day_result(
 		active_team_name = str(game.get("away_team_name", active_team))
 		opponent_team_name = str(game.get("home_team_name", opponent_team))
 
-	var lines: Array = [" • ".join(result_bits)]
-	lines.append(_game_day_team_shooting_line(game, active_team))
-	lines.append(_game_day_team_shooting_line(game, opponent_team))
+	game_day_result_label.text = "%s %s   %s %s" % [
+		active_team,
+		active_score,
+		opponent_score,
+		opponent_team
+	]
+	game_day_result_label.add_theme_color_override("font_color", TEXT)
+
+	if game_day_result_badge != null:
+		var badge_text := "FINAL"
+		var badge_color := MUTED
+		if result_code == "W":
+			badge_text = "WIN"
+			badge_color = GOOD
+		elif result_code == "L":
+			badge_text = "LOSS"
+			badge_color = BAD
+		game_day_result_badge.text = "  %s  " % badge_text
+		game_day_result_badge.add_theme_color_override("font_color", badge_color)
+		game_day_result_badge.add_theme_stylebox_override(
+			"normal",
+			_box(Color(badge_color, 0.10), 7, Color(badge_color, 0.35))
+		)
+
+	if game_day_result_meta_label != null:
+		var meta_bits: Array = ["FINAL"]
+		if record_display != "":
+			meta_bits.append("Record %s" % record_display)
+		if int(game.get("overtime_periods", 0)) > 0:
+			meta_bits.append("%s OT" % str(game.get("overtime_periods", 0)))
+		if cpu_games >= 0:
+			meta_bits.append("%s CPU game(s) synchronized" % cpu_games)
+		game_day_result_meta_label.text = " • ".join(meta_bits)
+
+	if game_day_active_postgame_title != null:
+		game_day_active_postgame_title.text = active_team_name.to_upper()
+	if game_day_opponent_postgame_title != null:
+		game_day_opponent_postgame_title.text = opponent_team_name.to_upper()
+
+	if game_day_active_shooting_label != null:
+		game_day_active_shooting_label.text = _game_day_team_shooting_line(game, active_team)
+	if game_day_opponent_shooting_label != null:
+		game_day_opponent_shooting_label.text = _game_day_team_shooting_line(game, opponent_team)
 
 	var active_leaders: Array = _game_day_team_leader_lines(game, active_team, 3)
-	if active_leaders.size() > 0:
-		lines.append("%s LEADERS" % active_team_name.to_upper())
-		for leader_line in active_leaders:
-			lines.append(str(leader_line))
+	if game_day_active_leaders_label != null:
+		if active_leaders.size() > 0:
+			game_day_active_leaders_label.text = "\n".join(active_leaders)
+		else:
+			game_day_active_leaders_label.text = "No leaders available."
 
 	var opponent_leaders: Array = _game_day_team_leader_lines(game, opponent_team, 3)
-	if opponent_leaders.size() > 0:
-		lines.append("%s LEADERS" % opponent_team_name.to_upper())
-		for leader_line in opponent_leaders:
-			lines.append(str(leader_line))
-
-	game_day_result_label.text = "\n".join(lines)
-
-	game_day_result_label.add_theme_color_override("font_color", TEXT)
+	if game_day_opponent_leaders_label != null:
+		if opponent_leaders.size() > 0:
+			game_day_opponent_leaders_label.text = "\n".join(opponent_leaders)
+		else:
+			game_day_opponent_leaders_label.text = "No leaders available."
 
 
 func _simulate_game_day_overlay() -> void:
@@ -1493,6 +1599,14 @@ func _close_game_day_overlay() -> void:
 	game_day_status_label = null
 	game_day_simulate_button = null
 	game_day_result_label = null
+	game_day_result_badge = null
+	game_day_result_meta_label = null
+	game_day_active_postgame_title = null
+	game_day_opponent_postgame_title = null
+	game_day_active_shooting_label = null
+	game_day_opponent_shooting_label = null
+	game_day_active_leaders_label = null
+	game_day_opponent_leaders_label = null
 	game_day_active_team = ""
 	game_day_team_badge = null
 	game_day_opponent_badge = null
