@@ -55,3 +55,7 @@ app_data/league_scenarios/*.json
 # END NBA FRANCHISE RELEASE LOCAL ARTIFACTS V1
 /v2_phase1_service_evidence_patch_v1/
 /vscode_workspace_cleanup_v1/
+# BEGIN V3 BATCH 18D DESKTOP PACKAGING
+/dist_v3/
+/.v3_runtime/
+# END V3 BATCH 18D DESKTOP PACKAGING
