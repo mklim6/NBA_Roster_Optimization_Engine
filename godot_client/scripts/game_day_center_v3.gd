@@ -69,7 +69,6 @@ var simulate_armed := false
 func _ready() -> void:
 	_build_page()
 	_build_http()
-	refresh()
 
 
 func refresh() -> void:

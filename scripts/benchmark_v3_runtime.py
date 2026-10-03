@@ -18,11 +18,13 @@ if str(ROOT) not in sys.path:
 from desktop_bridge import server
 
 
-BENCHMARK_VERSION = "v3-batch18a-runtime-benchmark-v1.0.0-2026-10-03"
+BENCHMARK_VERSION = "v3-batch18b-runtime-benchmark-v1.1.0-2026-10-03"
 DEFAULT_ENDPOINTS = (
     "/v3/franchise-summary",
     "/v3/roster",
     "/v3/game-day",
+    "/v3/working-save/status",
+    "/v3/transaction-foundation?trade_finder=0",
     "/v3/preferences",
     "/v3/saves",
     "/v3/franchise-intelligence",
@@ -89,7 +91,7 @@ def main() -> int:
         return 2
 
     print("=" * 100)
-    print("V3 BATCH 18A DESKTOP RUNTIME BENCHMARK")
+    print("V3 BATCH 18B DESKTOP RUNTIME + NAVIGATION BENCHMARK")
     print("=" * 100)
     print(f"Bridge: {base_url} • rounds: {rounds}")
     print()
@@ -150,7 +152,7 @@ def main() -> int:
             "active_v2_unchanged": v2_before == v2_after,
         },
     }
-    out_dir = ROOT / "outputs" / "v3_batch18a_runtime_performance"
+    out_dir = ROOT / "outputs" / "v3_batch18b_request_coordination"
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     report_path = out_dir / f"benchmark_{stamp}.json"

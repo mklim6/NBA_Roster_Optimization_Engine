@@ -33,6 +33,9 @@ var payload := {}
 func _ready() -> void:
 	_build_page()
 	_build_http()
+
+
+func refresh() -> void:
 	_refresh()
 
 

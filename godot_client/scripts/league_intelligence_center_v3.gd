@@ -32,7 +32,6 @@ var refresh_button: Button
 func _ready() -> void:
 	_build_interface()
 	_build_http()
-	call_deferred("refresh")
 
 
 func _build_http() -> void:

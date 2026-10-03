@@ -182,7 +182,10 @@ def main() -> int:
 
     checks: dict[str, bool] = {
         "batch18a_runtime_version_present": RUNTIME_PERFORMANCE_VERSION in runtime_text,
-        "bridge_api_version_bumped": 'API_VERSION = "0.18.0"' in bridge_text,
+        "bridge_api_version_bumped": any(
+            marker in bridge_text
+            for marker in ('API_VERSION = "0.18.0"', 'API_VERSION = "0.18.1"')
+        ),
         "runtime_performance_route_registered": (
             'Route("/v3/runtime/performance", runtime_performance' in bridge_text
         ),

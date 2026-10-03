@@ -12,7 +12,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 
-RUNTIME_PERFORMANCE_VERSION = "v3-runtime-performance-foundation-batch-18a-v1.0.0-2026-10-03"
+RUNTIME_PERFORMANCE_VERSION = "v3-runtime-performance-foundation-batch-18b-v1.1.0-2026-10-03"
 
 # Conservative read-only cache. These endpoints are derived from the current
 # checkpoint / desktop preference files and are invalidated whenever any write
@@ -22,6 +22,8 @@ DEFAULT_CACHEABLE_PATHS = frozenset(
         "/v3/franchise-summary",
         "/v3/roster",
         "/v3/game-day",
+        "/v3/working-save/status",
+        "/v3/transaction-foundation",
         "/v3/franchise-intelligence",
         "/v3/league-intelligence",
         "/v3/front-office",

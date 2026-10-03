@@ -45,7 +45,6 @@ var execute_in_flight: bool = false
 func _ready() -> void:
 	_build_ui()
 	_build_requests()
-	refresh()
 
 
 func refresh() -> void:

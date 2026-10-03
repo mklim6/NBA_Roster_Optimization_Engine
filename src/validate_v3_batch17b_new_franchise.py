@@ -283,6 +283,7 @@ def main() -> int:
                 'API_VERSION = "0.17.1"',
                 'API_VERSION = "0.17.2"',
                 'API_VERSION = "0.18.0"',
+                'API_VERSION = "0.18.1"',
             )
         ),
         "fresh_home_summary_handles_optional_morale_state": (

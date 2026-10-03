@@ -199,7 +199,7 @@ def main() -> int:
         "batch17c_preferences_version_present": PREFERENCES_VERSION in foundation_text,
         "bridge_api_version_bumped": any(
             marker in bridge_text
-            for marker in ('API_VERSION = "0.17.2"', 'API_VERSION = "0.18.0"')
+            for marker in ('API_VERSION = "0.17.2"', 'API_VERSION = "0.18.0"', 'API_VERSION = "0.18.1"')
         ),
         "preferences_path_is_separate_runtime_json": (
             "V3_DESKTOP_PREFERENCES_PATH" in bridge_text

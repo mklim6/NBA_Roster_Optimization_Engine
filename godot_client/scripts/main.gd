@@ -9,6 +9,7 @@ const FrontOfficeCenterV3 = preload("res://scripts/front_office_center_v3.gd")
 const GameDayCenterV3 = preload("res://scripts/game_day_center_v3.gd")
 const SaveManagerV3 = preload("res://scripts/save_manager_v3.gd")
 const SettingsTutorialV3 = preload("res://scripts/settings_tutorial_v3.gd")
+const RequestCoordinatorV3 = preload("res://scripts/request_coordinator_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
@@ -71,6 +72,8 @@ var desktop_preferences: Dictionary = {
 }
 var startup_tutorial_checked := false
 var current_page := "HOME"
+var page_navigation_initialized := false
+var request_coordinator = null
 var nav_buttons := {}
 var roster_payload := {}
 var feature_status_labels := {}
@@ -135,6 +138,7 @@ var draft_detail: Label
 
 
 func _ready() -> void:
+	request_coordinator = RequestCoordinatorV3.new()
 	_build_background()
 	_build_interface()
 	_build_http_client()
@@ -2425,7 +2429,12 @@ func _on_intelligence_completed(
 	)
 
 
-func _show_page(page_name: String) -> void:
+func _show_page(page_name: String, force_refresh: bool = false) -> void:
+	# Batch 18B: repeated clicks on the already-visible page no longer trigger
+	# duplicate bridge work. Explicit state changes can request a forced refresh.
+	if page_navigation_initialized and page_name == current_page and not force_refresh:
+		return
+	page_navigation_initialized = true
 	current_page = page_name
 
 	if home_page != null:
@@ -2458,20 +2467,24 @@ func _show_page(page_name: String) -> void:
 		_apply_nav_button_style(button, str(key) == page_name)
 
 	if page_name == "ROSTER":
-		_request_roster()
+		_request_roster(force_refresh)
 	elif page_name == "GAME DAY":
 		if game_day_page != null and game_day_page.has_method("refresh"):
 			game_day_page.call("refresh")
 	elif page_name == "HOME":
-		_request_franchise_summary()
+		_request_franchise_summary(force_refresh)
 	elif page_name == "FRANCHISES":
 		if save_manager_page != null and save_manager_page.has_method("refresh"):
 			save_manager_page.call("refresh")
 	elif page_name == "SETTINGS":
 		if settings_page != null and settings_page.has_method("refresh"):
 			settings_page.call("refresh")
-	elif page_name in ["LEAGUE", "FRONT OFFICE"]:
-		_request_franchise_intelligence()
+	elif page_name == "LEAGUE":
+		if league_page != null and league_page.has_method("refresh"):
+			league_page.call("refresh")
+	elif page_name == "FRONT OFFICE":
+		if front_office_page != null and front_office_page.has_method("refresh"):
+			front_office_page.call("refresh")
 	elif page_name == "SCOUTING":
 		if scouting_page != null and scouting_page.has_method("refresh"):
 			scouting_page.call("refresh")
@@ -2487,12 +2500,14 @@ func _show_page(page_name: String) -> void:
 
 
 func _on_active_save_changed() -> void:
-	# Every data page reloads from the bridge on navigation. Desktop preference
-	# controls whether a completed save switch returns directly to Franchise HQ.
+	# A save switch changes the authoritative V3 working universe. Clear client
+	# request reuse state before loading the destination franchise.
+	if request_coordinator != null:
+		request_coordinator.invalidate_all()
 	if bool(desktop_preferences.get("return_home_after_save_switch", true)):
-		_show_page("HOME")
+		_show_page("HOME", true)
 	else:
-		_show_page("FRANCHISES")
+		_show_page("FRANCHISES", true)
 
 
 func _on_desktop_preferences_changed(next_preferences: Dictionary) -> void:
@@ -2820,23 +2835,29 @@ func _on_health_completed(
 	)
 
 	_request_franchise_summary()
-	_request_roster()
+	# Batch 18B: Roster is lazy-loaded on first navigation. The launcher already
+	# prewarms its server response cache, so hidden UI work is unnecessary.
 	if settings_page != null and settings_page.has_method("refresh"):
 		settings_page.call("refresh")
 
 
-func _request_roster() -> void:
+func _request_roster(force_refresh: bool = false) -> void:
 	if roster_request == null:
 		return
 
 	if roster_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
-		roster_request.cancel_request()
+		return
+
+	if request_coordinator != null and not request_coordinator.begin_request("roster", force_refresh):
+		return
 
 	if roster_status != null:
 		roster_status.text = "Refreshing V3 working roster..."
 
 	var error := roster_request.request(ROSTER_URL)
 	if error != OK:
+		if request_coordinator != null:
+			request_coordinator.finish_request("roster", false)
 		_set_roster_error("Could not request the active roster.")
 
 
@@ -2846,6 +2867,8 @@ func _on_roster_completed(
 	_headers: PackedStringArray,
 	body: PackedByteArray
 ) -> void:
+	if request_coordinator != null:
+		request_coordinator.finish_request("roster", result == HTTPRequest.RESULT_SUCCESS and response_code == 200)
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		_set_roster_error("V3 working roster could not be loaded.")
 		return
@@ -3371,7 +3394,9 @@ func _on_rotation_request_completed(
 			rotation_feedback.text = "ROTATION SAVED • Reload verified • V2 release checkpoint unchanged."
 			rotation_feedback.add_theme_color_override("font_color", GOOD)
 			_close_rotation_editor()
-			_request_roster()
+			if request_coordinator != null:
+				request_coordinator.invalidate_all()
+			_request_roster(true)
 		else:
 			rotation_feedback.text = "Rotation write did not pass persistence and safety verification."
 			rotation_feedback.add_theme_color_override("font_color", BAD)
@@ -3415,15 +3440,20 @@ func _set_roster_error(message: String) -> void:
 		roster_chemistry_value.text = "N/A"
 
 
-func _request_franchise_summary() -> void:
+func _request_franchise_summary(force_refresh: bool = false) -> void:
 	if summary_request == null:
 		return
 
 	if summary_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
-		summary_request.cancel_request()
+		return
+
+	if request_coordinator != null and not request_coordinator.begin_request("franchise_summary", force_refresh):
+		return
 
 	var error := summary_request.request(SUMMARY_URL)
 	if error != OK:
+		if request_coordinator != null:
+			request_coordinator.finish_request("franchise_summary", false)
 		_set_live_data_error("Could not request active franchise summary.")
 
 
@@ -3433,6 +3463,8 @@ func _on_summary_completed(
 	_headers: PackedStringArray,
 	body: PackedByteArray
 ) -> void:
+	if request_coordinator != null:
+		request_coordinator.finish_request("franchise_summary", result == HTTPRequest.RESULT_SUCCESS and response_code == 200)
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		_set_live_data_error("Active V3 franchise data could not be loaded.")
 		return
