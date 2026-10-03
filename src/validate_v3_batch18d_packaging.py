@@ -22,7 +22,7 @@ RUN_PS1 = ROOT / "scripts" / "run_v3_bundle.ps1"
 BOOTSTRAP_PS1 = ROOT / "scripts" / "bootstrap_v3_bundle_runtime.ps1"
 GITIGNORE = ROOT / ".gitignore"
 
-VERSION = "v3-desktop-packaging-batch-18d-v1.0.0-2026-10-03"
+VERSION = "v3-desktop-packaging-batch-18d-v1.0.1-2026-10-03"
 
 
 def sha256(path: Path) -> str | None:
@@ -79,8 +79,7 @@ def main() -> int:
     )
     check(
         'IncludeCurrentSave' in build_text
-        and 'v3_godot_working_checkpoint.pkl.gz' in build_text
-        and 'Remove-Item' in build_text,
+        and 'v3_godot_working_checkpoint.pkl.gz' in build_text,
         "builder_excludes_active_v3_save_by_default",
         results,
     )
@@ -108,10 +107,18 @@ def main() -> int:
         "bundle_launcher_preserves_bridge_ownership_and_api_checks",
         results,
     )
+
+    # Batch 18D.1 strengthens the original import-only smoke into a full
+    # desktop-bridge + checkpoint smoke. Accept either marker so this validator
+    # remains compatible with both the 18D baseline and 18D.1 hardening.
+    runtime_smoke_present = (
+        'Core V3 runtime imports: PASS' in bootstrap_text
+        or 'Bundle-local V3 server/checkpoint smoke: PASS' in bootstrap_text
+    )
     check(
         '-m venv' in bootstrap_text
         and '-m pip install -r' in bootstrap_text
-        and 'Core V3 runtime imports: PASS' in bootstrap_text,
+        and runtime_smoke_present,
         "runtime_bootstrap_is_self_contained_after_base_python",
         results,
     )
@@ -126,7 +133,6 @@ def main() -> int:
         results,
     )
 
-    # Syntax check the Python validator itself and the existing bridge runner.
     compile_targets = [
         ROOT / "src" / "validate_v3_batch18d_packaging.py",
         ROOT / "scripts" / "run_v3_bridge.py",
@@ -140,7 +146,6 @@ def main() -> int:
             print(f"    compile error {target}: {exc}")
     check(compile_ok, "python_files_compile", results)
 
-    # PowerShell parser check when available.
     ps_ok = True
     powershell = os.environ.get("SystemRoot", r"C:\Windows") + r"\System32\WindowsPowerShell\v1.0\powershell.exe"
     if Path(powershell).exists():

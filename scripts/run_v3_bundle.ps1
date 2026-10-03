@@ -60,14 +60,6 @@ function Resolve-BundlePython {
     throw "No usable Python runtime was found. Run Setup_Runtime.cmd once, then relaunch."
 }
 
-function Get-BridgeHealth {
-    try {
-        return Invoke-RestMethod $HealthUrl -TimeoutSec 2
-    } catch {
-        return $null
-    }
-}
-
 function Warm-DesktopViews {
     $paths = @(
         "/v3/franchise-summary",
@@ -97,6 +89,12 @@ if (-not (Test-Path $ProtectedV2 -PathType Leaf)) {
     throw "Protected V2 checkpoint is missing from the bundle: $ProtectedV2"
 }
 
+# Distribution builds must never attach to a development bridge.
+$listener = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($listener) {
+    throw "Port 8765 is already in use. Close any development V3 bridge or other simulator package before launching this bundle."
+}
+
 if (-not (Test-Path $WorkingV3 -PathType Leaf)) {
     Copy-Item $ProtectedV2 $WorkingV3 -Force
     Write-Host "[INIT] Created an isolated V3 working checkpoint from the bundled protected V2 checkpoint." -ForegroundColor DarkCyan
@@ -112,53 +110,45 @@ Write-Host "Bundle root: $BundleRoot"
 Write-Host "Expected bridge API: $ExpectedApiVersion"
 
 try {
-    $health = Get-BridgeHealth
-    if ($health) {
-        if ($health.service -ne "nba-franchise-v3-bridge") {
-            throw "Port 8765 is occupied by an unexpected service."
-        }
-        if ($health.api_version -ne $ExpectedApiVersion) {
-            throw "A stale V3 bridge is running on API $($health.api_version); bundle expects $ExpectedApiVersion."
-        }
-        Write-Host "[OK] Existing bridge detected on API $($health.api_version)." -ForegroundColor Green
-    } else {
-        $listener = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
-        if ($listener) {
-            throw "Port 8765 is occupied, but the V3 bridge is not responding."
-        }
+    $python = Resolve-BundlePython
+    Write-Host "[START] Launching bundle-owned V3 bridge with $python"
+    Remove-Item $BridgeStdout, $BridgeStderr -Force -ErrorAction SilentlyContinue
 
-        $python = Resolve-BundlePython
-        Write-Host "[START] Launching bundled V3 bridge with $python"
-        Remove-Item $BridgeStdout, $BridgeStderr -Force -ErrorAction SilentlyContinue
+    $BridgeProcess = Start-Process `
+        -FilePath $python `
+        -ArgumentList @("`"$BridgeScript`"") `
+        -WorkingDirectory $AppRoot `
+        -RedirectStandardOutput $BridgeStdout `
+        -RedirectStandardError $BridgeStderr `
+        -WindowStyle Hidden `
+        -PassThru
+    $StartedBridge = $true
 
-        $BridgeProcess = Start-Process `
-            -FilePath $python `
-            -ArgumentList @("`"$BridgeScript`"") `
-            -WorkingDirectory $AppRoot `
-            -RedirectStandardOutput $BridgeStdout `
-            -RedirectStandardError $BridgeStderr `
-            -WindowStyle Hidden `
-            -PassThru
-        $StartedBridge = $true
-
-        $deadline = (Get-Date).AddSeconds(25)
-        do {
-            Start-Sleep -Milliseconds 350
-            if ($BridgeProcess.HasExited) {
-                $stderr = if (Test-Path $BridgeStderr) { Get-Content $BridgeStderr -Raw } else { "" }
-                throw "Bundled V3 bridge exited during startup.`n$stderr"
-            }
-            $health = Get-BridgeHealth
-        } until ($health -or (Get-Date) -ge $deadline)
-
-        if (-not $health) {
-            throw "Timed out waiting for the bundled V3 bridge."
+    $deadline = (Get-Date).AddSeconds(25)
+    $health = $null
+    do {
+        Start-Sleep -Milliseconds 350
+        if ($BridgeProcess.HasExited) {
+            $stderr = if (Test-Path $BridgeStderr) { Get-Content $BridgeStderr -Raw } else { "" }
+            throw "Bundled V3 bridge exited during startup.`n$stderr"
         }
-        if ($health.api_version -ne $ExpectedApiVersion) {
-            throw "Bundled bridge started on API $($health.api_version), expected $ExpectedApiVersion."
+        try {
+            $health = Invoke-RestMethod $HealthUrl -TimeoutSec 2
+        } catch {
+            $health = $null
         }
-        Write-Host "[OK] Bundled bridge healthy on API $($health.api_version)." -ForegroundColor Green
+    } until ($health -or (Get-Date) -ge $deadline)
+
+    if (-not $health) {
+        throw "Timed out waiting for the bundled V3 bridge."
     }
+    if ($health.service -ne "nba-franchise-v3-bridge") {
+        throw "The bundle-owned process did not expose the expected V3 bridge service."
+    }
+    if ($health.api_version -ne $ExpectedApiVersion) {
+        throw "Bundled bridge started on API $($health.api_version), expected $ExpectedApiVersion."
+    }
+    Write-Host "[OK] Bundle-owned bridge healthy on API $($health.api_version)." -ForegroundColor Green
 
     Warm-DesktopViews
 
@@ -182,8 +172,7 @@ finally {
         }
     } elseif ($StartedBridge -and $KeepBridge) {
         Write-Host "[KEEP] Bundle-owned bridge left running by request."
-    } else {
-        Write-Host "[INFO] Existing bridge was not owned by this launcher and was left untouched."
     }
+
     Write-Host "V3 desktop session ended."
 }

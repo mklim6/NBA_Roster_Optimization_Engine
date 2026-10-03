@@ -1,4 +1,7 @@
-param()
+param(
+    [switch]$ForceRebuild,
+    [switch]$NoWinget
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -7,8 +10,9 @@ $BundleRoot = (Resolve-Path (Join-Path $AppRoot "..")).Path
 $VenvRoot = Join-Path $BundleRoot "runtime\venv"
 $VenvPython = Join-Path $VenvRoot "Scripts\python.exe"
 $Requirements = Join-Path $AppRoot "requirements.txt"
+$ProtectedV2 = Join-Path $AppRoot "outputs\runtime\franchise_mode_checkpoint_v1.pkl.gz"
 
-function Resolve-BasePython {
+function Find-BasePython {
     $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
     if ($pyLauncher) {
         try {
@@ -37,17 +41,81 @@ function Resolve-BasePython {
         return $normal.Source
     }
 
-    throw "Python was not found. Install 64-bit Python 3.12, then run Setup_Runtime.cmd again."
+    return $null
+}
+
+function Resolve-BasePython {
+    $candidate = Find-BasePython
+    if ($candidate) {
+        return $candidate
+    }
+
+    if (-not $NoWinget) {
+        $winget = Get-Command winget -ErrorAction SilentlyContinue
+        if ($winget) {
+            Write-Host "[SETUP] Python 3.12 was not found. Installing Python.Python.3.12 for the current user with winget..." -ForegroundColor Yellow
+            & winget install `
+                --exact `
+                --id Python.Python.3.12 `
+                --scope user `
+                --accept-package-agreements `
+                --accept-source-agreements `
+                --silent
+
+            if ($LASTEXITCODE -eq 0) {
+                $candidate = Find-BasePython
+                if ($candidate) {
+                    return $candidate
+                }
+
+                $pythonRoot = Join-Path $env:LOCALAPPDATA "Programs\Python"
+                if (Test-Path $pythonRoot) {
+                    $knownUserPython = Get-ChildItem `
+                        $pythonRoot `
+                        -Filter python.exe `
+                        -Recurse `
+                        -File `
+                        -ErrorAction SilentlyContinue |
+                        Sort-Object FullName -Descending |
+                        Select-Object -First 1
+
+                    if ($knownUserPython) {
+                        return $knownUserPython.FullName
+                    }
+                }
+            }
+        }
+    }
+
+    throw "Python 3.12 is unavailable. Install 64-bit Python 3.12, then run Setup_Runtime.cmd again."
+}
+
+function Test-BundleRuntime {
+    param([string]$PythonExe)
+
+    $smoke = "import sys; from pathlib import Path; root=Path(r'$AppRoot'); sys.path.insert(0,str(root)); sys.path.insert(0,str(root/'src')); import starlette,uvicorn,cloudpickle; from desktop_bridge import server; from simulation_franchise_checkpoint_v1 import load_franchise_checkpoint; cp=load_franchise_checkpoint(path=Path(r'$ProtectedV2'),allow_backup=False); assert cp is not None; assert server.API_VERSION=='0.18.1'; print('Bundle-local V3 server/checkpoint smoke: PASS')"
+    & $PythonExe -c $smoke
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bundle-local runtime smoke test failed."
+    }
 }
 
 if (-not (Test-Path $Requirements -PathType Leaf)) {
     throw "requirements.txt is missing from the application bundle."
 }
+if (-not (Test-Path $ProtectedV2 -PathType Leaf)) {
+    throw "The protected V2 bootstrap checkpoint is missing from the application bundle."
+}
+
+if ($ForceRebuild -and (Test-Path $VenvRoot)) {
+    Write-Host "[RESET] Removing existing bundle-local Python environment..."
+    Remove-Item $VenvRoot -Recurse -Force
+}
 
 if (Test-Path $VenvPython -PathType Leaf) {
     Write-Host "[OK] Bundle-local Python runtime already exists: $VenvPython" -ForegroundColor Green
-    & $VenvPython -c "import starlette, uvicorn, cloudpickle; print('Core V3 runtime imports: PASS')"
-    exit $LASTEXITCODE
+    Test-BundleRuntime -PythonExe $VenvPython
+    exit 0
 }
 
 $BasePython = Resolve-BasePython
@@ -72,10 +140,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Python dependency installation failed."
 }
 
-& $VenvPython -c "import starlette, uvicorn, cloudpickle; print('Core V3 runtime imports: PASS')"
-if ($LASTEXITCODE -ne 0) {
-    throw "Runtime import verification failed."
-}
+Test-BundleRuntime -PythonExe $VenvPython
 
 Write-Host ""
 Write-Host "[PASS] Bundle-local Python runtime is ready." -ForegroundColor Green
