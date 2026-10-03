@@ -5,6 +5,7 @@ const FreeAgencyCenterV3 = preload("res://scripts/free_agency_center_v3.gd")
 const ScoutingDraftCenterV3 = preload("res://scripts/scouting_draft_center_v3.gd")
 const SeasonLifecycleCenterV3 = preload("res://scripts/season_lifecycle_center_v3.gd")
 const LeagueIntelligenceCenterV3 = preload("res://scripts/league_intelligence_center_v3.gd")
+const FrontOfficeCenterV3 = preload("res://scripts/front_office_center_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
@@ -187,16 +188,7 @@ func _build_interface() -> void:
 	content_stack.add_child(league_page)
 	league_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	front_office_page = _build_feature_area(
-		"FRONT OFFICE",
-		"Staff, chemistry, development priorities, organizational direction, and franchise health.",
-		"OPERATIONS",
-		[
-			["STAFF ROOM", "Manage coaching, scouting, development, and front-office personnel."],
-			["TEAM HEALTH", "Review morale, chemistry, workload, injuries, and rotation stability."],
-			["FRANCHISE PLAN", "Set roster priorities, competitive timeline, and development focus."]
-		]
-	)
+	front_office_page = FrontOfficeCenterV3.new()
 	content_stack.add_child(front_office_page)
 	front_office_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
