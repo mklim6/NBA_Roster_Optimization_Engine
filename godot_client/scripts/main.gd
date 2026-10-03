@@ -1062,7 +1062,27 @@ func _roster_row(player: Dictionary) -> Control:
 	var contract = player.get("contract", {})
 	var stats = player.get("season_stats", {})
 
-	row.add_child(_roster_cell(player_name, 180, name_color))
+	var player_identity := HBoxContainer.new()
+	player_identity.custom_minimum_size = Vector2(180, 44)
+	player_identity.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	player_identity.add_theme_constant_override("separation", 7)
+
+	var portrait_script = load("res://scripts/player_portrait_v3.gd")
+	if portrait_script != null:
+		var portrait = portrait_script.new()
+		portrait.custom_minimum_size = Vector2(42, 36)
+		player_identity.add_child(portrait)
+		portrait.configure(player)
+
+	var player_name_label := Label.new()
+	player_name_label.text = player_name
+	player_name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	player_name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	player_name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	player_name_label.add_theme_color_override("font_color", name_color)
+	player_name_label.add_theme_font_size_override("font_size", 11)
+	player_identity.add_child(player_name_label)
+	row.add_child(player_identity)
 	row.add_child(_roster_cell(str(player.get("position", "")), 62, TEXT))
 	row.add_child(_roster_cell(_number_text(player.get("overall", null), 1), 48, TEXT, HORIZONTAL_ALIGNMENT_CENTER))
 	row.add_child(_roster_cell(_number_text(player.get("age", null), 1), 44, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
@@ -1114,6 +1134,13 @@ func _show_player_detail(player: Dictionary) -> void:
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 14)
 	body.add_child(header)
+
+	var profile_portrait_script = load("res://scripts/player_portrait_v3.gd")
+	if profile_portrait_script != null:
+		var profile_portrait = profile_portrait_script.new()
+		profile_portrait.custom_minimum_size = Vector2(150, 110)
+		header.add_child(profile_portrait)
+		profile_portrait.configure(player)
 
 	var title_box := VBoxContainer.new()
 	title_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
