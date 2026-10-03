@@ -15,7 +15,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.11.0"
+API_VERSION = "0.12.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -30,6 +30,12 @@ V3_TRADE_RECOVERY_DIR = (
     / "outputs"
     / "runtime"
     / "v3_trade_recovery"
+)
+V3_FREE_AGENCY_RECOVERY_DIR = (
+    REPO_ROOT
+    / "outputs"
+    / "runtime"
+    / "v3_free_agency_recovery"
 )
 
 # V2 checkpoints were serialized with top-level src module names.
@@ -64,13 +70,18 @@ from single_game_simulator_v1 import (
 from franchise_trade_transaction_v1 import (
     FranchiseTradeTransactionError,
 )
+from franchise_free_agency_transaction_v1 import (
+    FreeAgencyTransactionError,
+)
 from desktop_bridge.transaction_foundation import (
+    build_free_agency_execution_candidate,
     build_free_agency_market_payload,
     build_free_agency_preview_payload,
     build_trade_execution_candidate,
     build_trade_preview_payload,
     build_trade_team_assets_payload,
     build_transaction_foundation_payload,
+    verify_free_agency_execution_persisted,
     verify_trade_execution_persisted,
 )
 
@@ -2044,7 +2055,9 @@ async def free_agency_preview(request: Request) -> JSONResponse:
         v2_after = _file_sha256(v2_path)
         payload.update({
             "api_version": API_VERSION,
+            "working_save_sha256": working_after,
             "working_save_unchanged": working_before is not None and working_before == working_after,
+            "active_v2_sha256": v2_after,
             "active_v2_unchanged": v2_before is not None and v2_before == v2_after,
             "working_save_write_performed": False,
         })
@@ -2066,6 +2079,221 @@ async def free_agency_preview(request: Request) -> JSONResponse:
             "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
             "active_v2_unchanged": v2_before == _file_sha256(v2_path),
         }, status_code=500)
+
+
+async def free_agency_execute(request: Request) -> JSONResponse:
+    """Commit one freshly previewed free-agent signing to the isolated V3 save."""
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    recovery_path: Path | None = None
+    write_started = False
+
+    def _safety_payload() -> dict[str, Any]:
+        working_now = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_now = _file_sha256(v2_path)
+        return {
+            "api_version": API_VERSION,
+            "working_save_only": True,
+            "active_v2_read_only": True,
+            "working_save_sha256": working_now,
+            "active_v2_sha256": v2_now,
+            "active_v2_unchanged": v2_before is not None and v2_before == v2_now,
+        }
+
+    def _rollback() -> tuple[bool, str]:
+        if not write_started or recovery_path is None or not recovery_path.is_file():
+            return True, ""
+        try:
+            shutil.copy2(recovery_path, V3_WORKING_CHECKPOINT_PATH)
+            verified = (
+                _file_sha256(V3_WORKING_CHECKPOINT_PATH) == working_before
+                and _working_checkpoint() is not None
+            )
+            return verified, "" if verified else "Recovery bytes/reload verification failed."
+        except Exception as exc:
+            return False, str(exc)
+
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Free-agency execution request body must be a JSON object.")
+
+        if working_before is None:
+            return JSONResponse(
+                {"error": "v3_working_save_not_initialized", **_safety_payload()},
+                status_code=409,
+            )
+        if v2_before is None:
+            return JSONResponse(
+                {"error": "active_v2_checkpoint_not_found", **_safety_payload()},
+                status_code=409,
+            )
+
+        expected_working_sha = str(
+            body.get("expected_working_save_sha256", "") or ""
+        ).strip()
+        if not expected_working_sha:
+            raise ValueError(
+                "expected_working_save_sha256 is required. Run a fresh offer preview first."
+            )
+        if expected_working_sha != working_before:
+            return JSONResponse(
+                {
+                    "error": "stale_free_agency_preview",
+                    "detail": (
+                        "The V3 working save changed after this offer was previewed. "
+                        "Run PREVIEW OFFER again before signing."
+                    ),
+                    "expected_working_save_sha256": expected_working_sha,
+                    "observed_working_save_sha256": working_before,
+                    "working_save_write_performed": False,
+                    **_safety_payload(),
+                },
+                status_code=409,
+            )
+
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse(
+                {"error": "v3_working_save_not_initialized", **_safety_payload()},
+                status_code=409,
+            )
+        active_team = _active_team_from_checkpoint(checkpoint)
+        if not active_team:
+            return JSONResponse(
+                {"error": "active_franchise_not_found", **_safety_payload()},
+                status_code=404,
+            )
+
+        candidate = build_free_agency_execution_candidate(
+            checkpoint,
+            active_team,
+            body,
+        )
+
+        if _file_sha256(V3_WORKING_CHECKPOINT_PATH) != working_before:
+            raise FreeAgencyTransactionError(
+                "The V3 working save changed while the signing candidate was being built. "
+                "Nothing was committed."
+            )
+        if _file_sha256(v2_path) != v2_before:
+            raise RuntimeError(
+                "Protected V2 checkpoint changed before the V3 free-agency write boundary."
+            )
+
+        V3_FREE_AGENCY_RECOVERY_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        offer_id = str(candidate.commit_result.offer_id or "free_agent")
+        recovery_path = V3_FREE_AGENCY_RECOVERY_DIR / (
+            f"pre_{offer_id}_{stamp}_v3_godot_working_checkpoint.pkl.gz"
+        )
+        shutil.copy2(V3_WORKING_CHECKPOINT_PATH, recovery_path)
+        if _file_sha256(recovery_path) != working_before:
+            raise RuntimeError(
+                "V3 pre-signing recovery checkpoint did not match the working save."
+            )
+
+        write_started = True
+        save_franchise_checkpoint(
+            candidate.state,
+            checkpoint.trade_state,
+            preferences=checkpoint.preferences,
+            reason=(
+                "V3 Godot free-agency signing "
+                f"{candidate.commit_result.player_id} -> {candidate.commit_result.team_abbreviation}"
+            ),
+            path=V3_WORKING_CHECKPOINT_PATH,
+            copy_payload=False,
+            force_replace=True,
+        )
+
+        verified = _working_checkpoint()
+        if verified is None:
+            raise RuntimeError("Committed V3 free-agency checkpoint could not be reloaded.")
+        verification = verify_free_agency_execution_persisted(
+            verified,
+            candidate,
+        )
+
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        if working_after is None:
+            raise RuntimeError("Committed V3 working save disappeared after reload.")
+        v2_after = _file_sha256(v2_path)
+        if v2_after != v2_before:
+            raise RuntimeError(
+                "Protected V2 checkpoint changed during V3 free-agency execution."
+            )
+
+        return JSONResponse(
+            {
+                "status": "applied",
+                "api_version": API_VERSION,
+                "offer_id": candidate.commit_result.offer_id,
+                "player_id": candidate.commit_result.player_id,
+                "player_name": candidate.commit_result.player_name,
+                "team": candidate.commit_result.team_abbreviation,
+                "candidate_fingerprint": candidate.commit_result.committed_fingerprint,
+                "verification": verification,
+                "persisted_after_reload": True,
+                "working_save_only": True,
+                "working_save_write_performed": True,
+                "working_save_sha256_before": working_before,
+                "working_save_sha256": working_after,
+                "recovery_checkpoint_path": str(recovery_path),
+                "active_v2_read_only": True,
+                "active_v2_unchanged": True,
+                "active_v2_sha256": v2_after,
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+
+    except ValueError as exc:
+        rollback_verified, rollback_error = _rollback()
+        return JSONResponse(
+            {
+                "error": "invalid_free_agency_execution_request",
+                "detail": str(exc),
+                "rollback_performed": bool(write_started),
+                "rollback_verified": rollback_verified,
+                "rollback_error": rollback_error,
+                "recovery_checkpoint_path": str(recovery_path or ""),
+                "working_save_write_performed": bool(write_started),
+                **_safety_payload(),
+            },
+            status_code=400,
+        )
+    except FreeAgencyTransactionError as exc:
+        rollback_verified, rollback_error = _rollback()
+        return JSONResponse(
+            {
+                "error": "free_agency_execution_rejected",
+                "detail": str(exc),
+                "rollback_performed": bool(write_started),
+                "rollback_verified": rollback_verified,
+                "rollback_error": rollback_error,
+                "recovery_checkpoint_path": str(recovery_path or ""),
+                "working_save_write_performed": bool(write_started),
+                **_safety_payload(),
+            },
+            status_code=409,
+        )
+    except Exception as exc:
+        rollback_verified, rollback_error = _rollback()
+        return JSONResponse(
+            {
+                "error": "free_agency_execution_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "rollback_performed": bool(write_started),
+                "rollback_verified": rollback_verified,
+                "rollback_error": rollback_error,
+                "recovery_checkpoint_path": str(recovery_path or ""),
+                "working_save_write_performed": bool(write_started),
+                **_safety_payload(),
+            },
+            status_code=500,
+        )
 
 
 async def market_intelligence(_: Request) -> JSONResponse:
@@ -2918,6 +3146,7 @@ routes = [
     Route("/v3/trade/execute", trade_execute, methods=["POST"]),
     Route("/v3/free-agency/market", free_agency_market, methods=["GET"]),
     Route("/v3/free-agency/preview", free_agency_preview, methods=["POST"]),
+    Route("/v3/free-agency/execute", free_agency_execute, methods=["POST"]),
     Route("/v3/roster", roster_summary, methods=["GET"]),
     Route("/v3/working-save/status", working_save_status, methods=["GET"]),
     Route("/v3/working-save/reset", reset_working_save, methods=["POST"]),

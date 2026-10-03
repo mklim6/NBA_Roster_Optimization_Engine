@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from functools import lru_cache
 from typing import Any, Mapping
 
@@ -21,7 +21,12 @@ from franchise_free_agency_contract_salary_legality_v1_3 import (
 )
 from franchise_free_agency_transaction_v1 import (
     FREE_AGENCY_TRANSACTION_VERSION,
+    FreeAgencyCommitResult,
     FreeAgencyOffer,
+    FreeAgencyTransactionError,
+    FreeAgencyTransactionPreview,
+    commit_free_agency_preview,
+    free_agency_state_fingerprint,
 )
 from franchise_live_asset_ledger_v1 import (
     ASSET_LEDGER_VERSION,
@@ -41,8 +46,15 @@ from franchise_trade_transaction_v1 import (
 
 
 TRANSACTION_FOUNDATION_VERSION = (
-    "v3-transaction-foundation-batch-08-transactional-trade-execution-2026-10-02"
+    "v3-transaction-foundation-batch-08-transactional-trade-execution-batch-09-transactional-free-agency-execution-2026-10-02"
 )
+
+
+@dataclass(frozen=True)
+class V3FreeAgencyExecutionCandidate:
+    state: Any
+    preview: FreeAgencyTransactionPreview
+    commit_result: FreeAgencyCommitResult
 
 
 @lru_cache(maxsize=1)
@@ -533,11 +545,13 @@ def verify_trade_execution_persisted(
     }
 
 
-def build_free_agency_preview_payload(checkpoint: Any, active_team: str, request_payload: Mapping[str, Any]) -> dict[str, Any]:
+def _free_agency_offer_from_request(
+    active_team: str,
+    request_payload: Mapping[str, Any],
+) -> FreeAgencyOffer:
     if not isinstance(request_payload, Mapping):
-        raise ValueError("Free-agency preview request body must be a JSON object.")
+        raise ValueError("Free-agency request body must be a JSON object.")
 
-    state = checkpoint.simulation_state
     team = normalize_team(active_team)
     player_id = normalize_player_id(request_payload.get("player_id"))
     if not player_id:
@@ -552,7 +566,7 @@ def build_free_agency_preview_payload(checkpoint: Any, active_team: str, request
     except (TypeError, ValueError) as exc:
         raise ValueError("years must be an integer.") from exc
 
-    offer = FreeAgencyOffer(
+    return FreeAgencyOffer(
         player_id=player_id,
         team_abbreviation=team,
         annual_salary=annual_salary,
@@ -560,6 +574,12 @@ def build_free_agency_preview_payload(checkpoint: Any, active_team: str, request
         guaranteed=bool(request_payload.get("guaranteed", True)),
         option_type=str(request_payload.get("option_type", "") or "").strip(),
     )
+
+
+def build_free_agency_preview_payload(checkpoint: Any, active_team: str, request_payload: Mapping[str, Any]) -> dict[str, Any]:
+    state = checkpoint.simulation_state
+    team = normalize_team(active_team)
+    offer = _free_agency_offer_from_request(team, request_payload)
 
     gate = evaluate_contract_legal_financial_gate(state, offer)
     preview = build_contract_legal_free_agency_preview(state, offer)
@@ -569,9 +589,149 @@ def build_free_agency_preview_payload(checkpoint: Any, active_team: str, request
         "read_only": True,
         "write_actions_enabled": False,
         "team": team,
-        "player_id": player_id,
+        "player_id": offer.player_id,
         "contract_cba_gate": _json_safe(gate),
         "transaction_preview": _json_safe(preview),
+        "execution": {
+            "eligible": bool(preview.status == "pass" and preview.can_commit),
+            "endpoint": "/v3/free-agency/execute",
+            "transaction_engine_version": FREE_AGENCY_TRANSACTION_VERSION,
+            "requires_candidate_fingerprint": True,
+            "requires_working_save_sha256": True,
+            "phase_required": "offseason",
+        },
+    }
+
+
+def build_free_agency_execution_candidate(
+    checkpoint: Any,
+    active_team: str,
+    request_payload: Mapping[str, Any],
+) -> V3FreeAgencyExecutionCandidate:
+    """Re-preview and build a non-durable free-agency signing candidate.
+
+    The production free-agency engine remains the single authority for roster,
+    contract, financial/CBA, phase, and candidate-state validation. This bridge
+    function does not write a checkpoint.
+    """
+    if not isinstance(request_payload, Mapping):
+        raise ValueError("Free-agency execution request body must be a JSON object.")
+
+    state = checkpoint.simulation_state
+    offer = _free_agency_offer_from_request(active_team, request_payload)
+    expected_fingerprint = str(
+        request_payload.get("expected_candidate_fingerprint", "") or ""
+    ).strip()
+    if not expected_fingerprint:
+        raise ValueError(
+            "expected_candidate_fingerprint is required. Run a fresh offer preview first."
+        )
+
+    preview = build_contract_legal_free_agency_preview(state, offer)
+    if preview.status != "pass" or not preview.can_commit:
+        raise FreeAgencyTransactionError(
+            preview.message or "The free-agency offer is no longer committable."
+        )
+    if preview.candidate_fingerprint != expected_fingerprint:
+        raise FreeAgencyTransactionError(
+            "The free-agency preview is stale because the candidate fingerprint changed."
+        )
+
+    candidate_state, result = commit_free_agency_preview(
+        state,
+        preview,
+        financial_gate=evaluate_contract_legal_financial_gate,
+    )
+    if result.committed_fingerprint != expected_fingerprint:
+        raise FreeAgencyTransactionError(
+            "The committed free-agency candidate no longer matches the approved preview."
+        )
+
+    return V3FreeAgencyExecutionCandidate(
+        state=candidate_state,
+        preview=preview,
+        commit_result=result,
+    )
+
+
+def verify_free_agency_execution_persisted(
+    checkpoint: Any,
+    candidate: V3FreeAgencyExecutionCandidate,
+) -> dict[str, Any]:
+    """Verify one committed free-agency signing after checkpoint reload."""
+    state = checkpoint.simulation_state
+    offer = candidate.preview.offer
+    result = candidate.commit_result
+
+    observed_fingerprint = free_agency_state_fingerprint(state)
+    if observed_fingerprint != result.committed_fingerprint:
+        raise RuntimeError(
+            "Reloaded V3 checkpoint does not match the committed free-agency candidate."
+        )
+
+    free_agents = {
+        normalize_player_id(player_id)
+        for player_id in getattr(state, "free_agent_player_ids", ())
+    }
+    if offer.player_id in free_agents:
+        raise RuntimeError(
+            f"Reloaded V3 checkpoint still lists {offer.player_id} as a free agent."
+        )
+
+    team = getattr(state, "teams", {}).get(offer.team_abbreviation)
+    if team is None:
+        raise RuntimeError(
+            f"Reloaded V3 checkpoint lost team {offer.team_abbreviation}."
+        )
+    roster_ids = {
+        normalize_player_id(player_id)
+        for player_id in getattr(team, "roster_player_ids", ())
+    }
+    if offer.player_id not in roster_ids:
+        raise RuntimeError(
+            f"Reloaded V3 checkpoint did not preserve {offer.player_id} on {offer.team_abbreviation}."
+        )
+
+    player = getattr(state, "players", {}).get(offer.player_id)
+    if player is None:
+        raise RuntimeError(
+            f"Reloaded V3 checkpoint lost signed player {offer.player_id}."
+        )
+    if normalize_team(getattr(player, "team_abbreviation", "")) != offer.team_abbreviation:
+        raise RuntimeError(
+            f"Reloaded V3 checkpoint did not preserve player ownership for {offer.player_id}."
+        )
+
+    contract = getattr(player, "contract", None)
+    if contract is None:
+        raise RuntimeError("Reloaded signed player has no contract state.")
+    if abs(float(getattr(contract, "salary", 0.0) or 0.0) - float(offer.annual_salary)) > 0.01:
+        raise RuntimeError("Reloaded signed player salary does not match the approved offer.")
+    if int(getattr(contract, "years_remaining", 0) or 0) != int(offer.years):
+        raise RuntimeError("Reloaded signed player term does not match the approved offer.")
+    if str(getattr(contract, "option_type", "") or "") != offer.option_type:
+        raise RuntimeError("Reloaded signed player option does not match the approved offer.")
+    if bool(getattr(contract, "guaranteed", False)) != bool(offer.guaranteed):
+        raise RuntimeError("Reloaded signed player guarantee does not match the approved offer.")
+
+    roster_count = len(getattr(team, "roster_player_ids", ()))
+    if roster_count != int(result.roster_count_after):
+        raise RuntimeError(
+            "Reloaded team roster count does not match the committed signing result."
+        )
+
+    return {
+        "offer_id": result.offer_id,
+        "player_id": result.player_id,
+        "player_name": result.player_name,
+        "team": result.team_abbreviation,
+        "candidate_fingerprint": result.committed_fingerprint,
+        "roster_count_before": result.roster_count_before,
+        "roster_count_after": result.roster_count_after,
+        "annual_salary": offer.annual_salary,
+        "years": offer.years,
+        "option_type": offer.option_type,
+        "guaranteed": offer.guaranteed,
     }
 
 def build_trade_team_assets_payload(

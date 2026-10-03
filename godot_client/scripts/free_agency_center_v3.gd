@@ -2,6 +2,7 @@ extends Control
 
 const MARKET_URL := "http://127.0.0.1:8765/v3/free-agency/market"
 const PREVIEW_URL := "http://127.0.0.1:8765/v3/free-agency/preview"
+const EXECUTE_URL := "http://127.0.0.1:8765/v3/free-agency/execute"
 
 const PANEL := Color("121824")
 const PANEL_ALT := Color("171f2d")
@@ -18,6 +19,7 @@ const GOLD := Color("f3c96b")
 
 var market_request: HTTPRequest
 var preview_request: HTTPRequest
+var execute_request: HTTPRequest
 
 var status_label: Label
 var search_box: LineEdit
@@ -30,10 +32,15 @@ var offer_option: OptionButton
 var preview_button: Button
 var sign_button: Button
 var preview_label: Label
+var execute_dialog: ConfirmationDialog
 
 var market_payload := {}
 var free_agents: Array = []
 var selected_player := {}
+var latest_preview_fingerprint := ""
+var latest_preview_working_sha := ""
+var latest_preview_request_payload := {}
+var execute_in_flight := false
 
 
 func _ready() -> void:
@@ -55,6 +62,11 @@ func _build_http() -> void:
 	preview_request.timeout = 30.0
 	preview_request.request_completed.connect(_on_preview_completed)
 	add_child(preview_request)
+
+	execute_request = HTTPRequest.new()
+	execute_request.timeout = 90.0
+	execute_request.request_completed.connect(_on_execute_completed)
+	add_child(execute_request)
 
 
 func _build_ui() -> void:
@@ -193,10 +205,11 @@ func _build_ui() -> void:
 
 	sign_button = _action_button("SIGN PLAYER", false)
 	sign_button.disabled = true
+	sign_button.pressed.connect(_confirm_sign_player)
 	negotiation_body.add_child(sign_button)
 
 	var lock_note := Label.new()
-	lock_note.text = "WRITE GATE LOCKED\nBatch 07 does not commit signings. A future write batch will require offseason phase, PASS legality, transactional save/reload proof, and V2 hash protection."
+	lock_note.text = "BATCH 09 WRITE GATE\nExecution requires offseason phase, a fresh PASS preview, the exact V3 working-save hash, confirmation, durable reload verification, and an unchanged protected V2 checkpoint."
 	lock_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lock_note.add_theme_color_override("font_color", MUTED)
 	lock_note.add_theme_font_size_override("font_size", 9)
@@ -215,6 +228,13 @@ func _build_ui() -> void:
 
 	content_row.add_child(market_card)
 	content_row.add_child(negotiation_card)
+
+	execute_dialog = ConfirmationDialog.new()
+	execute_dialog.title = "Confirm free-agent signing"
+	execute_dialog.dialog_text = "Sign this player on the isolated V3 working save?"
+	execute_dialog.confirmed.connect(_execute_signing)
+	add_child(execute_dialog)
+	execute_dialog.get_ok_button().text = "SIGN PLAYER"
 
 
 func _request_market() -> void:
@@ -334,20 +354,29 @@ func _select_player(player_data: Dictionary) -> void:
 	]
 	preview_label.text = "Offer changed. Run a fresh contract/CBA preview."
 	preview_label.add_theme_color_override("font_color", MUTED)
+	_invalidate_signing_execution()
 	_update_preview_button()
+
+
+func _invalidate_signing_execution() -> void:
+	latest_preview_fingerprint = ""
+	latest_preview_working_sha = ""
+	latest_preview_request_payload = {}
+	if sign_button != null:
+		sign_button.disabled = true
 
 
 func _on_offer_changed(_value: String) -> void:
 	preview_label.text = "Offer changed. Run a fresh contract/CBA preview."
 	preview_label.add_theme_color_override("font_color", MUTED)
-	sign_button.disabled = true
+	_invalidate_signing_execution()
 	_update_preview_button()
 
 
 func _on_offer_option_changed(_index: int) -> void:
 	preview_label.text = "Offer changed. Run a fresh contract/CBA preview."
 	preview_label.add_theme_color_override("font_color", MUTED)
-	sign_button.disabled = true
+	_invalidate_signing_execution()
 	_update_preview_button()
 
 
@@ -367,6 +396,16 @@ func _option_code() -> String:
 	return ""
 
 
+func _current_offer_request_payload() -> Dictionary:
+	return {
+		"player_id": str(selected_player.get("player_id", "")),
+		"annual_salary": float(offer_salary.text.strip_edges()) if offer_salary.text.strip_edges().is_valid_float() else 0.0,
+		"years": int(offer_years.selected + 1),
+		"guaranteed": true,
+		"option_type": _option_code()
+	}
+
+
 func _request_preview() -> void:
 	if selected_player.is_empty() or preview_request == null:
 		return
@@ -375,13 +414,8 @@ func _request_preview() -> void:
 	if not offer_salary.text.strip_edges().is_valid_float():
 		return
 
-	var request_payload := {
-		"player_id": str(selected_player.get("player_id", "")),
-		"annual_salary": float(offer_salary.text.strip_edges()),
-		"years": offer_years.selected + 1,
-		"guaranteed": true,
-		"option_type": _option_code()
-	}
+	var request_payload: Dictionary = _current_offer_request_payload()
+	_invalidate_signing_execution()
 	preview_button.disabled = true
 	preview_label.text = "Running structural, salary, and CBA preview..."
 	preview_label.add_theme_color_override("font_color", ACCENT)
@@ -396,37 +430,139 @@ func _request_preview() -> void:
 func _on_preview_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	_update_preview_button()
 	if result != HTTPRequest.RESULT_SUCCESS:
+		_invalidate_signing_execution()
 		preview_label.text = "Free-agency preview failed before the Python engine responded."
 		preview_label.add_theme_color_override("font_color", BAD)
 		return
 	var raw_payload = JSON.parse_string(body.get_string_from_utf8())
 	if typeof(raw_payload) != TYPE_DICTIONARY:
+		_invalidate_signing_execution()
 		preview_label.text = "Free-agency preview returned invalid data."
 		preview_label.add_theme_color_override("font_color", BAD)
 		return
 	if response_code != 200:
+		_invalidate_signing_execution()
 		preview_label.text = str(raw_payload.get("detail", raw_payload.get("error", "Free-agency preview failed.")))
 		preview_label.add_theme_color_override("font_color", BAD)
 		return
 	if not bool(raw_payload.get("working_save_unchanged", false)) or not bool(raw_payload.get("active_v2_unchanged", false)):
+		_invalidate_signing_execution()
 		preview_label.text = "SAFETY FAILURE • preview changed a protected checkpoint"
 		preview_label.add_theme_color_override("font_color", BAD)
 		return
 
 	var gate: Dictionary = raw_payload.get("contract_cba_gate", {})
 	var transaction: Dictionary = raw_payload.get("transaction_preview", {})
-	var gate_status := str(gate.get("status", "manual_review"))
-	var transaction_status := str(transaction.get("status", "blocked"))
-	var can_commit := bool(transaction.get("can_commit", false))
-	preview_label.text = "CONTRACT/CBA %s\n%s\n\nTRANSACTION %s • ENGINE COMMITTABLE %s\n%s\n\nWrite action remains disabled in Batch 07." % [
+	var gate_status: String = str(gate.get("status", "manual_review"))
+	var transaction_status: String = str(transaction.get("status", "blocked"))
+	var can_commit: bool = bool(transaction.get("can_commit", false))
+	var detail: String = "CONTRACT/CBA %s\n%s\n\nTRANSACTION %s • ENGINE COMMITTABLE %s\n%s" % [
 		gate_status.to_upper(),
 		str(gate.get("reason", "")),
 		transaction_status.to_upper(),
 		"YES" if can_commit else "NO",
 		str(transaction.get("message", ""))
 	]
-	preview_label.add_theme_color_override("font_color", GOOD if gate_status == "pass" and transaction_status == "pass" and can_commit else GOLD)
+	var committable: bool = gate_status == "pass" and transaction_status == "pass" and can_commit
+	preview_label.text = detail
+	preview_label.add_theme_color_override("font_color", GOOD if committable else GOLD)
+
+	var fingerprint: String = str(transaction.get("candidate_fingerprint", ""))
+	var working_sha: String = str(raw_payload.get("working_save_sha256", ""))
+	if committable and fingerprint != "" and working_sha != "":
+		latest_preview_fingerprint = fingerprint
+		latest_preview_working_sha = working_sha
+		latest_preview_request_payload = _current_offer_request_payload().duplicate(true)
+		sign_button.disabled = false
+		detail += "\n\nEXECUTION READY • Fresh signing token locked to the current V3 working save."
+		preview_label.text = detail
+	else:
+		_invalidate_signing_execution()
+
+
+func _confirm_sign_player() -> void:
+	if execute_in_flight or latest_preview_fingerprint == "" or latest_preview_working_sha == "":
+		return
+	var player_name: String = str(selected_player.get("name", selected_player.get("player_id", "Free agent")))
+	var years_value: int = int(latest_preview_request_payload.get("years", 0))
+	var salary_value: float = float(latest_preview_request_payload.get("annual_salary", 0.0))
+	execute_dialog.dialog_text = "Sign %s for %s year(s) at %s annually?\n\nThis writes ONLY the isolated V3 working save. A recovery checkpoint is created first, the result is reloaded and verified, and the protected V2 checkpoint must remain unchanged." % [
+		player_name,
+		str(years_value),
+		_money_text(salary_value)
+	]
+	execute_dialog.popup_centered(Vector2i(560, 310))
+
+
+func _execute_signing() -> void:
+	if execute_request == null or execute_in_flight:
+		return
+	if execute_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		return
+	if latest_preview_fingerprint == "" or latest_preview_working_sha == "":
+		preview_label.text = "Signing token is stale. Run PREVIEW OFFER again."
+		preview_label.add_theme_color_override("font_color", GOLD)
+		_invalidate_signing_execution()
+		return
+
+	var request_payload: Dictionary = latest_preview_request_payload.duplicate(true)
+	request_payload["expected_candidate_fingerprint"] = latest_preview_fingerprint
+	request_payload["expected_working_save_sha256"] = latest_preview_working_sha
+	execute_in_flight = true
 	sign_button.disabled = true
+	preview_button.disabled = true
+	preview_label.text = "Signing through the production free-agency engine, then verifying the V3 save and protected V2 hash..."
+	preview_label.add_theme_color_override("font_color", ACCENT)
+	var headers := PackedStringArray(["Content-Type: application/json"])
+	var error: int = execute_request.request(EXECUTE_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(request_payload))
+	if error != OK:
+		execute_in_flight = false
+		_update_preview_button()
+		preview_label.text = "Could not start free-agency execution."
+		preview_label.add_theme_color_override("font_color", BAD)
+		_invalidate_signing_execution()
+
+
+func _on_execute_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	execute_in_flight = false
+	_update_preview_button()
+	var raw_payload = JSON.parse_string(body.get_string_from_utf8())
+	if result != HTTPRequest.RESULT_SUCCESS or typeof(raw_payload) != TYPE_DICTIONARY:
+		preview_label.text = "Signing request failed before a valid bridge response was received."
+		preview_label.add_theme_color_override("font_color", BAD)
+		_invalidate_signing_execution()
+		return
+
+	if response_code != 200:
+		var detail: String = str(raw_payload.get("detail", raw_payload.get("error", "Free-agency execution failed.")))
+		if bool(raw_payload.get("rollback_performed", false)):
+			detail += "\nRollback: %s" % ("VERIFIED" if bool(raw_payload.get("rollback_verified", false)) else "REQUIRES REVIEW")
+		if str(raw_payload.get("error", "")) == "stale_free_agency_preview":
+			detail += "\nRun PREVIEW OFFER again before retrying."
+		preview_label.text = detail
+		preview_label.add_theme_color_override("font_color", GOLD if response_code == 409 else BAD)
+		_invalidate_signing_execution()
+		return
+
+	if not bool(raw_payload.get("persisted_after_reload", false)) or not bool(raw_payload.get("active_v2_unchanged", false)):
+		preview_label.text = "SIGNING SAFETY FAILURE • bridge did not confirm reload persistence and V2 protection."
+		preview_label.add_theme_color_override("font_color", BAD)
+		_invalidate_signing_execution()
+		return
+
+	var player_name: String = str(raw_payload.get("player_name", raw_payload.get("player_id", "Player")))
+	preview_label.text = "SIGNING COMMITTED • %s\nPersisted after reload • V3 working save updated • protected V2 unchanged\nRecovery checkpoint: %s" % [
+		player_name,
+		str(raw_payload.get("recovery_checkpoint_path", ""))
+	]
+	preview_label.add_theme_color_override("font_color", GOOD)
+	status_label.text = "LIVE • %s signed successfully • refreshing free-agent market..." % player_name
+	status_label.add_theme_color_override("font_color", GOOD)
+	selected_player = {}
+	selection_label.text = "Select a player from the market board."
+	offer_salary.text = ""
+	_invalidate_signing_execution()
+	_request_market()
 
 
 func _money_text(value) -> String:
