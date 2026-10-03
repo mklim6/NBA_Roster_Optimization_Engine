@@ -2,6 +2,7 @@ extends Control
 
 const TradeCenterV3 = preload("res://scripts/trade_center_v3.gd")
 const FreeAgencyCenterV3 = preload("res://scripts/free_agency_center_v3.gd")
+const ScoutingDraftCenterV3 = preload("res://scripts/scouting_draft_center_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
@@ -171,16 +172,7 @@ func _build_interface() -> void:
 	content_stack.add_child(free_agency_page)
 	free_agency_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	scouting_page = _build_feature_area(
-		"SCOUTING CENTER",
-		"Draft-board management, prospect evaluation, staff intelligence, and long-range planning.",
-		"SCOUTING",
-		[
-			["DRAFT BOARD", "Organize prospects, tiers, team fits, and long-term upside."],
-			["REPORTS", "Review scouting evaluations, confidence, strengths, weaknesses, and risk."],
-			["STAFF", "Coordinate scout coverage, assignments, specialties, and information quality."]
-		]
-	)
+	scouting_page = ScoutingDraftCenterV3.new()
 	content_stack.add_child(scouting_page)
 	scouting_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
@@ -2434,8 +2426,11 @@ func _show_page(page_name: String) -> void:
 		_request_roster()
 	elif page_name == "HOME":
 		_request_franchise_summary()
-	elif page_name in ["SCOUTING", "LEAGUE", "FRONT OFFICE"]:
+	elif page_name in ["LEAGUE", "FRONT OFFICE"]:
 		_request_franchise_intelligence()
+	elif page_name == "SCOUTING":
+		if scouting_page != null and scouting_page.has_method("refresh"):
+			scouting_page.call("refresh")
 	elif page_name == "TRADES":
 		if trades_page != null and trades_page.has_method("refresh"):
 			trades_page.call("refresh")

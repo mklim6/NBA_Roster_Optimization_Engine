@@ -15,7 +15,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.12.0"
+API_VERSION = "0.13.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -36,6 +36,18 @@ V3_FREE_AGENCY_RECOVERY_DIR = (
     / "outputs"
     / "runtime"
     / "v3_free_agency_recovery"
+)
+V3_SCOUTING_RECOVERY_DIR = (
+    REPO_ROOT
+    / "outputs"
+    / "runtime"
+    / "v3_scouting_recovery"
+)
+V3_DRAFT_RECOVERY_DIR = (
+    REPO_ROOT
+    / "outputs"
+    / "runtime"
+    / "v3_draft_recovery"
 )
 
 # V2 checkpoints were serialized with top-level src module names.
@@ -74,14 +86,21 @@ from franchise_free_agency_transaction_v1 import (
     FreeAgencyTransactionError,
 )
 from desktop_bridge.transaction_foundation import (
+    build_draft_selection_candidate,
+    build_draft_selection_preview_payload,
     build_free_agency_execution_candidate,
     build_free_agency_market_payload,
     build_free_agency_preview_payload,
+    build_scouting_advance_candidate,
+    build_scouting_advance_preview_payload,
+    build_scouting_draft_payload,
     build_trade_execution_candidate,
     build_trade_preview_payload,
     build_trade_team_assets_payload,
     build_transaction_foundation_payload,
+    verify_draft_selection_persisted,
     verify_free_agency_execution_persisted,
+    verify_scouting_advance_persisted,
     verify_trade_execution_persisted,
 )
 
@@ -3130,6 +3149,397 @@ async def game_day_simulate(_: Request) -> JSONResponse:
             status_code=400,
         )
 
+
+async def scouting_draft_summary(_: Request) -> JSONResponse:
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized"}, status_code=409)
+        active_team = _active_team_from_checkpoint(checkpoint)
+        payload = build_scouting_draft_payload(checkpoint, active_team)
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_after = _file_sha256(v2_path)
+        payload.update({
+            "api_version": API_VERSION,
+            "working_save_sha256": working_after,
+            "working_save_unchanged": working_before is not None and working_before == working_after,
+            "active_v2_sha256": v2_after,
+            "active_v2_unchanged": v2_before is not None and v2_before == v2_after,
+            "working_save_write_performed": False,
+        })
+        if not payload["working_save_unchanged"] or not payload["active_v2_unchanged"]:
+            return JSONResponse({"error": "scouting_draft_summary_changed_checkpoint", **payload}, status_code=500)
+        return JSONResponse(payload)
+    except Exception as exc:
+        return JSONResponse({
+            "error": "scouting_draft_summary_failed",
+            "exception_type": type(exc).__name__,
+            "detail": str(exc),
+            "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+            "active_v2_unchanged": v2_before == _file_sha256(v2_path),
+        }, status_code=500)
+
+
+async def scouting_preview(request: Request) -> JSONResponse:
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Scouting preview request body must be a JSON object.")
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized"}, status_code=409)
+        active_team = _active_team_from_checkpoint(checkpoint)
+        payload = build_scouting_advance_preview_payload(checkpoint, active_team, body)
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_after = _file_sha256(v2_path)
+        payload.update({
+            "api_version": API_VERSION,
+            "working_save_sha256": working_after,
+            "working_save_unchanged": working_before is not None and working_before == working_after,
+            "active_v2_sha256": v2_after,
+            "active_v2_unchanged": v2_before is not None and v2_before == v2_after,
+            "working_save_write_performed": False,
+        })
+        if not payload["working_save_unchanged"] or not payload["active_v2_unchanged"]:
+            return JSONResponse({"error": "scouting_preview_changed_checkpoint", **payload}, status_code=500)
+        return JSONResponse(payload)
+    except ValueError as exc:
+        return JSONResponse({
+            "error": "invalid_scouting_preview_request",
+            "detail": str(exc),
+            "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+            "active_v2_unchanged": v2_before == _file_sha256(v2_path),
+        }, status_code=400)
+    except Exception as exc:
+        return JSONResponse({
+            "error": "scouting_preview_failed",
+            "exception_type": type(exc).__name__,
+            "detail": str(exc),
+            "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+            "active_v2_unchanged": v2_before == _file_sha256(v2_path),
+        }, status_code=500)
+
+
+async def scouting_advance(request: Request) -> JSONResponse:
+    """Advance one production scouting week in the isolated V3 working save."""
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    recovery_path: Path | None = None
+    write_started = False
+
+    def _safety_payload() -> dict[str, Any]:
+        working_now = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_now = _file_sha256(v2_path)
+        return {
+            "api_version": API_VERSION,
+            "working_save_only": True,
+            "active_v2_read_only": True,
+            "working_save_sha256": working_now,
+            "active_v2_sha256": v2_now,
+            "active_v2_unchanged": v2_before is not None and v2_before == v2_now,
+        }
+
+    def _rollback() -> tuple[bool, str]:
+        if not write_started or recovery_path is None or not recovery_path.is_file():
+            return True, ""
+        try:
+            shutil.copy2(recovery_path, V3_WORKING_CHECKPOINT_PATH)
+            verified = (
+                _file_sha256(V3_WORKING_CHECKPOINT_PATH) == working_before
+                and _working_checkpoint() is not None
+            )
+            return verified, "" if verified else "Recovery bytes/reload verification failed."
+        except Exception as exc:
+            return False, str(exc)
+
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Scouting execution request body must be a JSON object.")
+        if working_before is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized", **_safety_payload()}, status_code=409)
+        if v2_before is None:
+            return JSONResponse({"error": "active_v2_checkpoint_not_found", **_safety_payload()}, status_code=409)
+        expected_working_sha = str(body.get("expected_working_save_sha256", "") or "").strip()
+        if not expected_working_sha:
+            raise ValueError("expected_working_save_sha256 is required. Run a fresh scouting preview first.")
+        if expected_working_sha != working_before:
+            return JSONResponse({
+                "error": "stale_scouting_preview",
+                "detail": "The V3 working save changed after this scouting week was previewed. Run PREVIEW WEEK again.",
+                "expected_working_save_sha256": expected_working_sha,
+                "observed_working_save_sha256": working_before,
+                "working_save_write_performed": False,
+                **_safety_payload(),
+            }, status_code=409)
+
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized", **_safety_payload()}, status_code=409)
+        active_team = _active_team_from_checkpoint(checkpoint)
+        candidate = build_scouting_advance_candidate(checkpoint, active_team, body)
+        validate_simulation_league_state(candidate.state)
+
+        if _file_sha256(V3_WORKING_CHECKPOINT_PATH) != working_before:
+            raise RuntimeError("The V3 working save changed while the scouting candidate was being built.")
+        if _file_sha256(v2_path) != v2_before:
+            raise RuntimeError("Protected V2 checkpoint changed before the V3 scouting write boundary.")
+
+        V3_SCOUTING_RECOVERY_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        recovery_path = V3_SCOUTING_RECOVERY_DIR / f"pre_scouting_week_{candidate.weeks_before}_{stamp}_v3_godot_working_checkpoint.pkl.gz"
+        shutil.copy2(V3_WORKING_CHECKPOINT_PATH, recovery_path)
+        if _file_sha256(recovery_path) != working_before:
+            raise RuntimeError("V3 pre-scouting recovery checkpoint did not match the working save.")
+
+        write_started = True
+        save_franchise_checkpoint(
+            candidate.state,
+            checkpoint.trade_state,
+            preferences=checkpoint.preferences,
+            reason=f"V3 Godot scouting week {candidate.weeks_after} for {candidate.team}",
+            path=V3_WORKING_CHECKPOINT_PATH,
+            copy_payload=False,
+            force_replace=True,
+        )
+        verified = _working_checkpoint()
+        if verified is None:
+            raise RuntimeError("Committed V3 scouting checkpoint could not be reloaded.")
+        verification = verify_scouting_advance_persisted(verified, candidate)
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_after = _file_sha256(v2_path)
+        if working_after is None:
+            raise RuntimeError("Committed V3 working save disappeared after scouting reload.")
+        if v2_after != v2_before:
+            raise RuntimeError("Protected V2 checkpoint changed during V3 scouting execution.")
+        return JSONResponse({
+            "status": "applied",
+            "api_version": API_VERSION,
+            "action_fingerprint": candidate.action_fingerprint,
+            "verification": verification,
+            "persisted_after_reload": True,
+            "working_save_only": True,
+            "working_save_write_performed": True,
+            "working_save_sha256_before": working_before,
+            "working_save_sha256": working_after,
+            "recovery_checkpoint_path": str(recovery_path),
+            "active_v2_read_only": True,
+            "active_v2_unchanged": True,
+            "active_v2_sha256": v2_after,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        })
+    except ValueError as exc:
+        rollback_verified, rollback_error = _rollback()
+        return JSONResponse({
+            "error": "scouting_execution_rejected",
+            "detail": str(exc),
+            "rollback_performed": bool(write_started),
+            "rollback_verified": rollback_verified,
+            "rollback_error": rollback_error,
+            "recovery_checkpoint_path": str(recovery_path or ""),
+            "working_save_write_performed": bool(write_started),
+            **_safety_payload(),
+        }, status_code=409)
+    except Exception as exc:
+        rollback_verified, rollback_error = _rollback()
+        return JSONResponse({
+            "error": "scouting_execution_failed",
+            "exception_type": type(exc).__name__,
+            "detail": str(exc),
+            "rollback_performed": bool(write_started),
+            "rollback_verified": rollback_verified,
+            "rollback_error": rollback_error,
+            "recovery_checkpoint_path": str(recovery_path or ""),
+            "working_save_write_performed": bool(write_started),
+            **_safety_payload(),
+        }, status_code=500)
+
+
+async def draft_selection_preview(request: Request) -> JSONResponse:
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Draft preview request body must be a JSON object.")
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized"}, status_code=409)
+        active_team = _active_team_from_checkpoint(checkpoint)
+        payload = build_draft_selection_preview_payload(checkpoint, active_team, body)
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_after = _file_sha256(v2_path)
+        payload.update({
+            "api_version": API_VERSION,
+            "working_save_sha256": working_after,
+            "working_save_unchanged": working_before is not None and working_before == working_after,
+            "active_v2_sha256": v2_after,
+            "active_v2_unchanged": v2_before is not None and v2_before == v2_after,
+            "working_save_write_performed": False,
+        })
+        if not payload["working_save_unchanged"] or not payload["active_v2_unchanged"]:
+            return JSONResponse({"error": "draft_preview_changed_checkpoint", **payload}, status_code=500)
+        return JSONResponse(payload)
+    except ValueError as exc:
+        return JSONResponse({
+            "error": "invalid_draft_preview_request",
+            "detail": str(exc),
+            "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+            "active_v2_unchanged": v2_before == _file_sha256(v2_path),
+        }, status_code=400)
+    except Exception as exc:
+        return JSONResponse({
+            "error": "draft_preview_failed",
+            "exception_type": type(exc).__name__,
+            "detail": str(exc),
+            "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+            "active_v2_unchanged": v2_before == _file_sha256(v2_path),
+        }, status_code=500)
+
+
+async def draft_selection_execute(request: Request) -> JSONResponse:
+    """Commit one active-franchise Draft selection to the isolated V3 save."""
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    recovery_path: Path | None = None
+    write_started = False
+
+    def _safety_payload() -> dict[str, Any]:
+        working_now = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_now = _file_sha256(v2_path)
+        return {
+            "api_version": API_VERSION,
+            "working_save_only": True,
+            "active_v2_read_only": True,
+            "working_save_sha256": working_now,
+            "active_v2_sha256": v2_now,
+            "active_v2_unchanged": v2_before is not None and v2_before == v2_now,
+        }
+
+    def _rollback() -> tuple[bool, str]:
+        if not write_started or recovery_path is None or not recovery_path.is_file():
+            return True, ""
+        try:
+            shutil.copy2(recovery_path, V3_WORKING_CHECKPOINT_PATH)
+            verified = (
+                _file_sha256(V3_WORKING_CHECKPOINT_PATH) == working_before
+                and _working_checkpoint() is not None
+            )
+            return verified, "" if verified else "Recovery bytes/reload verification failed."
+        except Exception as exc:
+            return False, str(exc)
+
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Draft execution request body must be a JSON object.")
+        if working_before is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized", **_safety_payload()}, status_code=409)
+        if v2_before is None:
+            return JSONResponse({"error": "active_v2_checkpoint_not_found", **_safety_payload()}, status_code=409)
+        expected_working_sha = str(body.get("expected_working_save_sha256", "") or "").strip()
+        if not expected_working_sha:
+            raise ValueError("expected_working_save_sha256 is required. Run a fresh Draft preview first.")
+        if expected_working_sha != working_before:
+            return JSONResponse({
+                "error": "stale_draft_preview",
+                "detail": "The V3 working save changed after this Draft selection was previewed. Run PREVIEW PICK again.",
+                "expected_working_save_sha256": expected_working_sha,
+                "observed_working_save_sha256": working_before,
+                "working_save_write_performed": False,
+                **_safety_payload(),
+            }, status_code=409)
+
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized", **_safety_payload()}, status_code=409)
+        active_team = _active_team_from_checkpoint(checkpoint)
+        candidate = build_draft_selection_candidate(checkpoint, active_team, body)
+        validate_simulation_league_state(candidate.state)
+
+        if _file_sha256(V3_WORKING_CHECKPOINT_PATH) != working_before:
+            raise RuntimeError("The V3 working save changed while the Draft candidate was being built.")
+        if _file_sha256(v2_path) != v2_before:
+            raise RuntimeError("Protected V2 checkpoint changed before the V3 Draft write boundary.")
+
+        V3_DRAFT_RECOVERY_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        recovery_path = V3_DRAFT_RECOVERY_DIR / f"pre_draft_pick_{candidate.overall_pick}_{stamp}_v3_godot_working_checkpoint.pkl.gz"
+        shutil.copy2(V3_WORKING_CHECKPOINT_PATH, recovery_path)
+        if _file_sha256(recovery_path) != working_before:
+            raise RuntimeError("V3 pre-Draft recovery checkpoint did not match the working save.")
+
+        write_started = True
+        save_franchise_checkpoint(
+            candidate.state,
+            checkpoint.trade_state,
+            preferences=checkpoint.preferences,
+            reason=f"V3 Godot Draft selection #{candidate.overall_pick}: {candidate.prospect_name}",
+            path=V3_WORKING_CHECKPOINT_PATH,
+            copy_payload=False,
+            force_replace=True,
+        )
+        verified = _working_checkpoint()
+        if verified is None:
+            raise RuntimeError("Committed V3 Draft checkpoint could not be reloaded.")
+        verification = verify_draft_selection_persisted(verified, candidate)
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_after = _file_sha256(v2_path)
+        if working_after is None:
+            raise RuntimeError("Committed V3 working save disappeared after Draft reload.")
+        if v2_after != v2_before:
+            raise RuntimeError("Protected V2 checkpoint changed during V3 Draft execution.")
+        return JSONResponse({
+            "status": "applied",
+            "api_version": API_VERSION,
+            "action_fingerprint": candidate.action_fingerprint,
+            "verification": verification,
+            "persisted_after_reload": True,
+            "working_save_only": True,
+            "working_save_write_performed": True,
+            "working_save_sha256_before": working_before,
+            "working_save_sha256": working_after,
+            "recovery_checkpoint_path": str(recovery_path),
+            "active_v2_read_only": True,
+            "active_v2_unchanged": True,
+            "active_v2_sha256": v2_after,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        })
+    except ValueError as exc:
+        rollback_verified, rollback_error = _rollback()
+        return JSONResponse({
+            "error": "draft_execution_rejected",
+            "detail": str(exc),
+            "rollback_performed": bool(write_started),
+            "rollback_verified": rollback_verified,
+            "rollback_error": rollback_error,
+            "recovery_checkpoint_path": str(recovery_path or ""),
+            "working_save_write_performed": bool(write_started),
+            **_safety_payload(),
+        }, status_code=409)
+    except Exception as exc:
+        rollback_verified, rollback_error = _rollback()
+        return JSONResponse({
+            "error": "draft_execution_failed",
+            "exception_type": type(exc).__name__,
+            "detail": str(exc),
+            "rollback_performed": bool(write_started),
+            "rollback_verified": rollback_verified,
+            "rollback_error": rollback_error,
+            "recovery_checkpoint_path": str(recovery_path or ""),
+            "working_save_write_performed": bool(write_started),
+            **_safety_payload(),
+        }, status_code=500)
+
 async def not_found(_: Request, __: Exception) -> JSONResponse:
     return JSONResponse({"error": "not_found"}, status_code=404)
 
@@ -3147,6 +3557,11 @@ routes = [
     Route("/v3/free-agency/market", free_agency_market, methods=["GET"]),
     Route("/v3/free-agency/preview", free_agency_preview, methods=["POST"]),
     Route("/v3/free-agency/execute", free_agency_execute, methods=["POST"]),
+    Route("/v3/scouting-draft", scouting_draft_summary, methods=["GET"]),
+    Route("/v3/scouting/preview", scouting_preview, methods=["POST"]),
+    Route("/v3/scouting/advance", scouting_advance, methods=["POST"]),
+    Route("/v3/draft/selection/preview", draft_selection_preview, methods=["POST"]),
+    Route("/v3/draft/selection/execute", draft_selection_execute, methods=["POST"]),
     Route("/v3/roster", roster_summary, methods=["GET"]),
     Route("/v3/working-save/status", working_save_status, methods=["GET"]),
     Route("/v3/working-save/reset", reset_working_save, methods=["POST"]),

@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, is_dataclass
 from functools import lru_cache
 from typing import Any, Mapping
+import copy
+import hashlib
+import json
+import time
 
 from freeform_trade_machine_engine_v3 import (
     load_runtime_data,
@@ -32,6 +36,22 @@ from franchise_live_asset_ledger_v1 import (
     ASSET_LEDGER_VERSION,
     build_live_asset_ledger,
 )
+
+from franchise_draft_engine_v1 import (
+    DRAFT_ENGINE_VERSION,
+    current_pick as draft_current_pick,
+    draft_state as production_draft_state,
+    make_selection as make_draft_selection,
+)
+from franchise_scouting_discovery_v1 import (
+    FRANCHISE_SCOUTING_DISCOVERY_VERSION,
+    MAX_FOCUS_PROSPECTS,
+    advance_scouting_week_v1,
+    scouting_board_rows_v1,
+    scouting_summary_v1,
+    set_scouting_focus_v1,
+)
+from franchise_staff_system_v1 import lead_scout_member
 from franchise_trade_finder_ai_v1 import (
     GOAL_BEST_AVAILABLE,
     TRADE_FINDER_AI_VERSION,
@@ -46,7 +66,9 @@ from franchise_trade_transaction_v1 import (
 
 
 TRANSACTION_FOUNDATION_VERSION = (
-    "v3-transaction-foundation-batch-08-transactional-trade-execution-batch-09-transactional-free-agency-execution-2026-10-02"
+    "v3-transaction-foundation-batch-08-transactional-trade-execution-"
+    "batch-09-transactional-free-agency-execution-"
+    "batch-10-scouting-draft-workflow-2026-10-02"
 )
 
 
@@ -55,6 +77,34 @@ class V3FreeAgencyExecutionCandidate:
     state: Any
     preview: FreeAgencyTransactionPreview
     commit_result: FreeAgencyCommitResult
+
+@dataclass(frozen=True)
+class V3ScoutingAdvanceCandidate:
+    state: Any
+    team: str
+    draft_year: int
+    phase: str
+    focus_ids: tuple[str, ...]
+    action_fingerprint: str
+    weeks_before: int
+    weeks_after: int
+    summary_after: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class V3DraftSelectionCandidate:
+    state: Any
+    team: str
+    draft_year: int
+    prospect_id: str
+    prospect_name: str
+    overall_pick: int
+    round_number: int
+    round_pick: int
+    action_fingerprint: str
+    next_pick_index: int
+    draft_complete: bool
+
 
 
 @lru_cache(maxsize=1)
@@ -732,6 +782,505 @@ def verify_free_agency_execution_persisted(
         "years": offer.years,
         "option_type": offer.option_type,
         "guaranteed": offer.guaranteed,
+    }
+
+
+def _fingerprint_payload(payload: Mapping[str, Any]) -> str:
+    raw = json.dumps(_json_safe(dict(payload)), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _normalized_focus_ids(
+    state: Any,
+    raw_values: Any,
+) -> tuple[str, ...]:
+    if raw_values is None:
+        raw_values = []
+    if not isinstance(raw_values, (list, tuple)):
+        raise ValueError("focus_ids must be an array.")
+    current = production_draft_state(state)
+    if current is None:
+        raise ValueError("Draft state is not initialized.")
+    valid_ids = {
+        str(row.get("prospect_id", "") or "").strip()
+        for row in current.get("prospects", [])
+        if str(row.get("prospect_id", "") or "").strip()
+    }
+    selected: list[str] = []
+    for raw in raw_values:
+        prospect_id = str(raw or "").strip()
+        if not prospect_id:
+            continue
+        if prospect_id not in valid_ids:
+            raise ValueError(f"Unknown scouting prospect: {prospect_id}.")
+        if prospect_id not in selected:
+            selected.append(prospect_id)
+    if len(selected) > MAX_FOCUS_PROSPECTS:
+        raise ValueError(
+            f"Scouting focus supports at most {MAX_FOCUS_PROSPECTS} prospects."
+        )
+    return tuple(selected)
+
+
+def _scouting_action_fingerprint(
+    state: Any,
+    team: str,
+    focus_ids: tuple[str, ...],
+) -> str:
+    current = production_draft_state(state) or {}
+    summary = scouting_summary_v1(copy.deepcopy(state), team)
+    return _fingerprint_payload(
+        {
+            "kind": "v3_scouting_advance_v1",
+            "team": normalize_team(team),
+            "draft_year": int(current.get("draft_year", 0) or 0),
+            "phase": str(current.get("phase", "") or ""),
+            "current_pick_index": int(current.get("current_pick_index", 0) or 0),
+            "weeks_completed": int(summary.get("weeks_completed", 0) or 0),
+            "focus_ids": list(focus_ids),
+            "scouting_version": FRANCHISE_SCOUTING_DISCOVERY_VERSION,
+        }
+    )
+
+
+def _draft_action_fingerprint(
+    state: Any,
+    team: str,
+    prospect_id: str,
+) -> str:
+    current = production_draft_state(state) or {}
+    pick = draft_current_pick(current) if current else None
+    if pick is None:
+        raise ValueError("No Draft pick is currently on the clock.")
+    return _fingerprint_payload(
+        {
+            "kind": "v3_draft_selection_v1",
+            "team": normalize_team(team),
+            "draft_year": int(current.get("draft_year", 0) or 0),
+            "phase": str(current.get("phase", "") or ""),
+            "current_pick_index": int(current.get("current_pick_index", 0) or 0),
+            "overall_pick": int(pick.get("overall_pick", 0) or 0),
+            "owner_team": normalize_team(pick.get("owner_team")),
+            "prospect_id": str(prospect_id or "").strip(),
+            "draft_engine_version": DRAFT_ENGINE_VERSION,
+        }
+    )
+
+
+def build_scouting_draft_payload(
+    checkpoint: Any,
+    active_team: str,
+) -> dict[str, Any]:
+    state = getattr(checkpoint, "simulation_state", None)
+    if state is None:
+        raise RuntimeError("V3 working checkpoint has no simulation state.")
+    team = normalize_team(active_team)
+    if team not in getattr(state, "teams", {}):
+        raise ValueError(f"Unknown active franchise team: {team or '<blank>'}.")
+
+    current = production_draft_state(state)
+    if current is None:
+        return {
+            "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+            "source": "v3_working_checkpoint",
+            "read_only": True,
+            "team": team,
+            "draft_initialized": False,
+            "board": [],
+            "summary": {},
+            "draft": {},
+            "lead_scout": {},
+            "scouting_preview_endpoint": "/v3/scouting/preview",
+            "scouting_execute_endpoint": "/v3/scouting/advance",
+            "draft_preview_endpoint": "/v3/draft/selection/preview",
+            "draft_execute_endpoint": "/v3/draft/selection/execute",
+        }
+
+    # Production scouting getters lazily materialize reports. Build the display
+    # payload from a deep copy so GET remains byte-for-byte read only.
+    view_state = copy.deepcopy(state)
+    view_current = production_draft_state(view_state) or {}
+    # Materialize the complete board before computing its aggregate summary.
+    # Production scouting reports are lazy, so summarizing first can average only
+    # a partially persisted report set and make confidence appear to fall after
+    # a preview even though every weekly confidence gain is non-negative.
+    board = scouting_board_rows_v1(view_state, team, available_only=False)
+    summary = scouting_summary_v1(view_state, team)
+    phase = str(view_current.get("phase", "") or "")
+    pick = draft_current_pick(view_current) if phase == "draft_in_progress" else None
+    owner = normalize_team(pick.get("owner_team")) if pick else ""
+    scout = lead_scout_member(view_state, team, ensure=True)
+
+    current_pick_payload: dict[str, Any] = {}
+    if pick is not None:
+        current_pick_payload = {
+            "overall_pick": int(pick.get("overall_pick", 0) or 0),
+            "round": int(pick.get("round", 0) or 0),
+            "round_pick": int(pick.get("round_pick", 0) or 0),
+            "owner_team": owner,
+            "origin_team": normalize_team(pick.get("origin_team")),
+            "asset_id": str(pick.get("asset_id", "") or ""),
+            "team_on_clock": owner == team,
+        }
+
+    return {
+        "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+        "source": "v3_working_checkpoint",
+        "read_only": True,
+        "working_save_write_performed": False,
+        "active_v2_read_only": True,
+        "team": team,
+        "draft_initialized": True,
+        "draft": {
+            "draft_year": int(view_current.get("draft_year", 0) or 0),
+            "source_season": str(view_current.get("source_season", "") or ""),
+            "target_season": str(view_current.get("target_season", "") or ""),
+            "phase": phase,
+            "current_pick_index": int(view_current.get("current_pick_index", 0) or 0),
+            "draft_order_count": len(view_current.get("draft_order", []) or []),
+            "available_prospect_count": sum(
+                1 for row in view_current.get("prospects", []) if not row.get("drafted")
+            ),
+            "current_pick": current_pick_payload,
+            "selection_enabled": bool(
+                phase == "draft_in_progress" and owner == team
+            ),
+            "engine_version": DRAFT_ENGINE_VERSION,
+        },
+        "summary": _json_safe(summary),
+        "board": _json_safe(board),
+        "lead_scout": (
+            {
+                "staff_id": str(getattr(scout, "staff_id", "")),
+                "name": str(getattr(scout, "name", "")),
+                "overall": float(getattr(scout, "overall_rating", 0.0) or 0.0),
+                "current_rating": float(getattr(scout, "scouting_current_rating", 0.0) or 0.0),
+                "potential_rating": float(getattr(scout, "scouting_potential_rating", 0.0) or 0.0),
+                "traits": list(getattr(scout, "traits", ()) or ()),
+            }
+            if scout is not None
+            else {}
+        ),
+        "scouting_preview_endpoint": "/v3/scouting/preview",
+        "scouting_execute_endpoint": "/v3/scouting/advance",
+        "draft_preview_endpoint": "/v3/draft/selection/preview",
+        "draft_execute_endpoint": "/v3/draft/selection/execute",
+        "scouting_execution_enabled": phase in {"season_scouting", "scouting"},
+        "draft_execution_enabled": bool(
+            phase == "draft_in_progress" and owner == team
+        ),
+    }
+
+
+def build_scouting_advance_preview_payload(
+    checkpoint: Any,
+    active_team: str,
+    request_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    state = getattr(checkpoint, "simulation_state", None)
+    if state is None:
+        raise RuntimeError("V3 working checkpoint has no simulation state.")
+    team = normalize_team(active_team)
+    current = production_draft_state(state)
+    if current is None:
+        raise ValueError("Draft state is not initialized.")
+    phase = str(current.get("phase", "") or "")
+    focus_ids = _normalized_focus_ids(state, request_payload.get("focus_ids", []))
+    fingerprint = _scouting_action_fingerprint(state, team, focus_ids)
+
+    # Compare like with like. Scouting reports are lazily materialized, so build
+    # the full read-only board before taking the pre-week aggregate. Otherwise a
+    # partially persisted report set can make the preview average appear to drop
+    # when the candidate creates reports for the rest of the class.
+    before_state = copy.deepcopy(state)
+    scouting_board_rows_v1(before_state, team, available_only=False)
+    before = scouting_summary_v1(before_state, team)
+
+    if phase not in {"season_scouting", "scouting"}:
+        return {
+            "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+            "source": "v3_working_checkpoint",
+            "read_only": True,
+            "status": "blocked",
+            "can_commit": False,
+            "reason": f"Scouting-week advancement is unavailable during draft phase '{phase}'.",
+            "phase": phase,
+            "focus_ids": list(focus_ids),
+            "action_fingerprint": fingerprint,
+            "summary_before": _json_safe(before),
+            "summary_after": _json_safe(before),
+            "scouting_version": FRANCHISE_SCOUTING_DISCOVERY_VERSION,
+        }
+
+    candidate_state = copy.deepcopy(state)
+    set_scouting_focus_v1(candidate_state, team, focus_ids)
+    after = advance_scouting_week_v1(candidate_state, team)
+    return {
+        "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+        "source": "v3_working_checkpoint",
+        "read_only": True,
+        "status": "pass",
+        "can_commit": True,
+        "phase": phase,
+        "team": team,
+        "focus_ids": list(focus_ids),
+        "action_fingerprint": fingerprint,
+        "summary_before": _json_safe(before),
+        "summary_after": _json_safe(after),
+        "scouting_version": FRANCHISE_SCOUTING_DISCOVERY_VERSION,
+    }
+
+
+def build_scouting_advance_candidate(
+    checkpoint: Any,
+    active_team: str,
+    request_payload: Mapping[str, Any],
+) -> V3ScoutingAdvanceCandidate:
+    state = getattr(checkpoint, "simulation_state", None)
+    if state is None:
+        raise RuntimeError("V3 working checkpoint has no simulation state.")
+    team = normalize_team(active_team)
+    current = production_draft_state(state)
+    if current is None:
+        raise ValueError("Draft state is not initialized.")
+    phase = str(current.get("phase", "") or "")
+    if phase not in {"season_scouting", "scouting"}:
+        raise ValueError(
+            f"Scouting-week advancement is unavailable during draft phase '{phase}'."
+        )
+    focus_ids = _normalized_focus_ids(state, request_payload.get("focus_ids", []))
+    expected = str(request_payload.get("expected_action_fingerprint", "") or "").strip()
+    if not expected:
+        raise ValueError(
+            "expected_action_fingerprint is required. Run a fresh scouting preview first."
+        )
+    observed = _scouting_action_fingerprint(state, team, focus_ids)
+    if observed != expected:
+        raise ValueError(
+            "The scouting preview is stale or the focus package changed. Run PREVIEW WEEK again."
+        )
+    before = scouting_summary_v1(copy.deepcopy(state), team)
+    candidate_state = copy.deepcopy(state)
+    set_scouting_focus_v1(candidate_state, team, focus_ids)
+    after = advance_scouting_week_v1(candidate_state, team)
+    return V3ScoutingAdvanceCandidate(
+        state=candidate_state,
+        team=team,
+        draft_year=int(current.get("draft_year", 0) or 0),
+        phase=phase,
+        focus_ids=focus_ids,
+        action_fingerprint=observed,
+        weeks_before=int(before.get("weeks_completed", 0) or 0),
+        weeks_after=int(after.get("weeks_completed", 0) or 0),
+        summary_after=dict(after),
+    )
+
+
+def verify_scouting_advance_persisted(
+    checkpoint: Any,
+    candidate: V3ScoutingAdvanceCandidate,
+) -> dict[str, Any]:
+    state = checkpoint.simulation_state
+    summary = scouting_summary_v1(copy.deepcopy(state), candidate.team)
+    if int(summary.get("weeks_completed", -1)) != candidate.weeks_after:
+        raise RuntimeError("Reloaded V3 checkpoint lost the scouting-week advancement.")
+    observed_focus = tuple(str(value) for value in summary.get("focus_ids", ()) or ())
+    if observed_focus != candidate.focus_ids:
+        raise RuntimeError("Reloaded V3 checkpoint lost the scouting focus assignments.")
+    return {
+        "team": candidate.team,
+        "draft_year": candidate.draft_year,
+        "phase": candidate.phase,
+        "weeks_before": candidate.weeks_before,
+        "weeks_after": candidate.weeks_after,
+        "focus_ids": list(candidate.focus_ids),
+        "average_confidence": summary.get("average_confidence"),
+        "action_fingerprint": candidate.action_fingerprint,
+    }
+
+
+def build_draft_selection_preview_payload(
+    checkpoint: Any,
+    active_team: str,
+    request_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    state = getattr(checkpoint, "simulation_state", None)
+    if state is None:
+        raise RuntimeError("V3 working checkpoint has no simulation state.")
+    team = normalize_team(active_team)
+    prospect_id = str(request_payload.get("prospect_id", "") or "").strip()
+    if not prospect_id:
+        raise ValueError("prospect_id is required.")
+    current = production_draft_state(state)
+    if current is None:
+        raise ValueError("Draft state is not initialized.")
+    phase = str(current.get("phase", "") or "")
+    prospect = next(
+        (
+            row for row in current.get("prospects", [])
+            if str(row.get("prospect_id", "")) == prospect_id and not row.get("drafted")
+        ),
+        None,
+    )
+    if prospect is None:
+        raise ValueError("The selected prospect is not available.")
+    if phase != "draft_in_progress":
+        return {
+            "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+            "source": "v3_working_checkpoint",
+            "read_only": True,
+            "status": "blocked",
+            "can_commit": False,
+            "reason": "Draft selection is phase-locked until Draft Night is in progress.",
+            "phase": phase,
+            "prospect_id": prospect_id,
+            "prospect_name": str(prospect.get("player_name", prospect_id)),
+            "draft_engine_version": DRAFT_ENGINE_VERSION,
+        }
+    pick = draft_current_pick(current)
+    if pick is None:
+        raise ValueError("No Draft pick is currently on the clock.")
+    owner = normalize_team(pick.get("owner_team"))
+    fingerprint = _draft_action_fingerprint(state, team, prospect_id)
+    if owner != team:
+        return {
+            "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+            "source": "v3_working_checkpoint",
+            "read_only": True,
+            "status": "blocked",
+            "can_commit": False,
+            "reason": f"{owner or 'A CPU team'} is currently on the clock.",
+            "phase": phase,
+            "prospect_id": prospect_id,
+            "prospect_name": str(prospect.get("player_name", prospect_id)),
+            "current_pick": _json_safe(pick),
+            "action_fingerprint": fingerprint,
+            "draft_engine_version": DRAFT_ENGINE_VERSION,
+        }
+    return {
+        "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+        "source": "v3_working_checkpoint",
+        "read_only": True,
+        "status": "pass",
+        "can_commit": True,
+        "phase": phase,
+        "team": team,
+        "prospect_id": prospect_id,
+        "prospect_name": str(prospect.get("player_name", prospect_id)),
+        "current_pick": {
+            "overall_pick": int(pick.get("overall_pick", 0) or 0),
+            "round": int(pick.get("round", 0) or 0),
+            "round_pick": int(pick.get("round_pick", 0) or 0),
+            "owner_team": owner,
+            "origin_team": normalize_team(pick.get("origin_team")),
+        },
+        "action_fingerprint": fingerprint,
+        "draft_engine_version": DRAFT_ENGINE_VERSION,
+    }
+
+
+def build_draft_selection_candidate(
+    checkpoint: Any,
+    active_team: str,
+    request_payload: Mapping[str, Any],
+) -> V3DraftSelectionCandidate:
+    state = getattr(checkpoint, "simulation_state", None)
+    if state is None:
+        raise RuntimeError("V3 working checkpoint has no simulation state.")
+    team = normalize_team(active_team)
+    prospect_id = str(request_payload.get("prospect_id", "") or "").strip()
+    if not prospect_id:
+        raise ValueError("prospect_id is required.")
+    current = production_draft_state(state)
+    if current is None or str(current.get("phase", "")) != "draft_in_progress":
+        raise ValueError("Draft selection is phase-locked until Draft Night is in progress.")
+    pick = draft_current_pick(current)
+    if pick is None:
+        raise ValueError("No Draft pick is currently on the clock.")
+    if normalize_team(pick.get("owner_team")) != team:
+        raise ValueError("The active franchise is not currently on the clock.")
+    prospect = next(
+        (
+            row for row in current.get("prospects", [])
+            if str(row.get("prospect_id", "")) == prospect_id and not row.get("drafted")
+        ),
+        None,
+    )
+    if prospect is None:
+        raise ValueError("The selected prospect is not available.")
+    expected = str(request_payload.get("expected_action_fingerprint", "") or "").strip()
+    if not expected:
+        raise ValueError(
+            "expected_action_fingerprint is required. Run a fresh Draft preview first."
+        )
+    observed = _draft_action_fingerprint(state, team, prospect_id)
+    if observed != expected:
+        raise ValueError(
+            "The Draft preview is stale or the selected prospect changed. Run PREVIEW PICK again."
+        )
+
+    candidate_state = copy.deepcopy(state)
+    candidate_current = production_draft_state(candidate_state) or {}
+    selected_pick = make_draft_selection(
+        candidate_state,
+        prospect_id,
+        selected_by_user=True,
+        now_ts=time.time(),
+        integrate=True,
+    )
+    return V3DraftSelectionCandidate(
+        state=candidate_state,
+        team=team,
+        draft_year=int(current.get("draft_year", 0) or 0),
+        prospect_id=prospect_id,
+        prospect_name=str(prospect.get("player_name", prospect_id)),
+        overall_pick=int(selected_pick.get("overall_pick", 0) or 0),
+        round_number=int(selected_pick.get("round", 0) or 0),
+        round_pick=int(selected_pick.get("round_pick", 0) or 0),
+        action_fingerprint=observed,
+        next_pick_index=int(candidate_current.get("current_pick_index", 0) or 0),
+        draft_complete=str(candidate_current.get("phase", "")) == "draft_complete",
+    )
+
+
+def verify_draft_selection_persisted(
+    checkpoint: Any,
+    candidate: V3DraftSelectionCandidate,
+) -> dict[str, Any]:
+    state = checkpoint.simulation_state
+    current = production_draft_state(state)
+    if current is None:
+        raise RuntimeError("Reloaded V3 checkpoint lost the Draft state.")
+    prospect = next(
+        (
+            row for row in current.get("prospects", [])
+            if str(row.get("prospect_id", "")) == candidate.prospect_id
+        ),
+        None,
+    )
+    if prospect is None or not prospect.get("drafted"):
+        raise RuntimeError("Reloaded V3 checkpoint lost the drafted prospect selection.")
+    if normalize_team(prospect.get("drafted_by")) != candidate.team:
+        raise RuntimeError("Reloaded V3 checkpoint has the drafted prospect on the wrong team.")
+    player = getattr(state, "players", {}).get(candidate.prospect_id)
+    if player is None or normalize_team(getattr(player, "team_abbreviation", "")) != candidate.team:
+        raise RuntimeError("Reloaded V3 checkpoint lost the integrated drafted player.")
+    team_state = getattr(state, "teams", {}).get(candidate.team)
+    if team_state is None or candidate.prospect_id not in getattr(team_state, "roster_player_ids", ()):
+        raise RuntimeError("Reloaded V3 checkpoint lost the drafted player from the team roster.")
+    if int(current.get("current_pick_index", -1)) != candidate.next_pick_index:
+        raise RuntimeError("Reloaded V3 checkpoint lost the Draft pick-index advancement.")
+    return {
+        "team": candidate.team,
+        "draft_year": candidate.draft_year,
+        "prospect_id": candidate.prospect_id,
+        "prospect_name": candidate.prospect_name,
+        "overall_pick": candidate.overall_pick,
+        "round": candidate.round_number,
+        "round_pick": candidate.round_pick,
+        "next_pick_index": candidate.next_pick_index,
+        "draft_complete": candidate.draft_complete,
+        "action_fingerprint": candidate.action_fingerprint,
     }
 
 def build_trade_team_assets_payload(
