@@ -3,6 +3,7 @@ extends Control
 const FOUNDATION_URL := "http://127.0.0.1:8765/v3/transaction-foundation?trade_finder=1"
 const TEAM_ASSETS_URL := "http://127.0.0.1:8765/v3/trade/team-assets"
 const TRADE_PREVIEW_URL := "http://127.0.0.1:8765/v3/trade/preview"
+const TRADE_EXECUTE_URL := "http://127.0.0.1:8765/v3/trade/execute"
 
 const PANEL := Color("121824")
 const PANEL_ALT := Color("171f2d")
@@ -20,6 +21,7 @@ const GOLD := Color("f3c96b")
 var foundation_request: HTTPRequest
 var partner_assets_request: HTTPRequest
 var preview_request: HTTPRequest
+var execute_request: HTTPRequest
 
 var status_label: Label
 var proposal_rows: VBoxContainer
@@ -30,6 +32,7 @@ var package_label: Label
 var preview_label: Label
 var preview_button: Button
 var execute_button: Button
+var execute_dialog: ConfirmationDialog
 
 var foundation_payload := {}
 var partner_payload := {}
@@ -37,6 +40,10 @@ var active_team := ""
 var partner_codes: Array = []
 var proposals: Array = []
 var pending_proposal := {}
+var latest_preview_fingerprint := ""
+var latest_preview_working_sha := ""
+var latest_preview_request_payload := {}
+var execute_in_flight := false
 
 var selected_active_players := {}
 var selected_active_picks := {}
@@ -68,6 +75,11 @@ func _build_http() -> void:
 	preview_request.timeout = 30.0
 	preview_request.request_completed.connect(_on_preview_completed)
 	add_child(preview_request)
+
+	execute_request = HTTPRequest.new()
+	execute_request.timeout = 90.0
+	execute_request.request_completed.connect(_on_execute_completed)
+	add_child(execute_request)
 
 
 func _build_ui() -> void:
@@ -192,10 +204,11 @@ func _build_ui() -> void:
 
 	execute_button = _action_button("EXECUTE TRADE", false)
 	execute_button.disabled = true
+	execute_button.pressed.connect(_confirm_execute_trade)
 	command_body.add_child(execute_button)
 
 	var locked := Label.new()
-	locked.text = "WRITE GATE LOCKED\nBatch 07 previews only. Execution remains disabled until transactional commit validation is added."
+	locked.text = "BATCH 08 WRITE GATE\nExecution requires a fresh PASS preview, the exact working-save SHA, confirmation, durable reload verification, and an unchanged V2 checkpoint."
 	locked.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	locked.add_theme_color_override("font_color", MUTED)
 	locked.add_theme_font_size_override("font_size", 9)
@@ -224,6 +237,13 @@ func _build_ui() -> void:
 	preview_label.add_theme_font_size_override("font_size", 11)
 	preview_body.add_child(preview_label)
 	column.add_child(preview_card)
+
+	execute_dialog = ConfirmationDialog.new()
+	execute_dialog.title = "Confirm franchise trade"
+	execute_dialog.dialog_text = "Execute this trade on the isolated V3 working save?"
+	execute_dialog.confirmed.connect(_execute_trade)
+	add_child(execute_dialog)
+	execute_dialog.get_ok_button().text = "EXECUTE TRADE"
 
 
 func _asset_panel(title_text: String, active_side: bool) -> PanelContainer:
@@ -463,6 +483,25 @@ func _selected_ids(selection: Dictionary) -> Array:
 	return ids
 
 
+func _current_trade_request_payload() -> Dictionary:
+	if partner_selector == null or partner_selector.item_count == 0:
+		return {}
+	return {
+		"partner_team": partner_selector.get_item_text(partner_selector.selected),
+		"side_a_player_ids": _selected_ids(selected_active_players),
+		"side_b_player_ids": _selected_ids(selected_partner_players),
+		"side_a_pick_asset_ids": _selected_ids(selected_active_picks),
+		"side_b_pick_asset_ids": _selected_ids(selected_partner_picks)
+	}
+
+
+func _invalidate_trade_execution() -> void:
+	latest_preview_fingerprint = ""
+	latest_preview_working_sha = ""
+	latest_preview_request_payload = {}
+	execute_button.disabled = true
+
+
 func _update_package_summary() -> void:
 	var partner := partner_selector.get_item_text(partner_selector.selected) if partner_selector.item_count > 0 else "PARTNER"
 	var outgoing_count := selected_active_players.size() + selected_active_picks.size()
@@ -476,9 +515,9 @@ func _update_package_summary() -> void:
 		str(selected_partner_picks.size())
 	]
 	preview_button.disabled = outgoing_count == 0 or incoming_count == 0 or partner_payload.is_empty()
-	preview_label.text = "Package changed. Run a fresh legality preview before any future execution step."
+	preview_label.text = "Package changed. Run a fresh legality preview before execution."
 	preview_label.add_theme_color_override("font_color", MUTED)
-	execute_button.disabled = true
+	_invalidate_trade_execution()
 
 
 func _clear_package() -> void:
@@ -564,13 +603,8 @@ func _request_trade_preview() -> void:
 		return
 	if preview_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
 		return
-	var request_payload := {
-		"partner_team": partner_selector.get_item_text(partner_selector.selected),
-		"side_a_player_ids": _selected_ids(selected_active_players),
-		"side_b_player_ids": _selected_ids(selected_partner_players),
-		"side_a_pick_asset_ids": _selected_ids(selected_active_picks),
-		"side_b_pick_asset_ids": _selected_ids(selected_partner_picks)
-	}
+	var request_payload := _current_trade_request_payload()
+	_invalidate_trade_execution()
 	preview_button.disabled = true
 	preview_label.text = "Running full embedded trade preview: ownership, salary/CBA, contracts, draft rights, Stepien, and canonical guards..."
 	preview_label.add_theme_color_override("font_color", ACCENT)
@@ -633,9 +667,109 @@ func _on_preview_completed(result: int, response_code: int, _headers: PackedStri
 		detail += "\n\nNON-PASS CHECKS\n" + "\n".join(issue_lines)
 	else:
 		detail += "\n\nAll surfaced preview checks passed."
+	var committable := preview_status == "pass" and bool(preview.get("can_commit", false))
 	preview_label.text = detail
-	preview_label.add_theme_color_override("font_color", GOOD if preview_status == "pass" and bool(preview.get("can_commit", false)) else GOLD)
+	preview_label.add_theme_color_override("font_color", GOOD if committable else GOLD)
+
+	var fingerprint := str(preview.get("package_fingerprint", ""))
+	var working_sha := str(raw_payload.get("working_save_sha256", ""))
+	if committable and fingerprint != "" and working_sha != "":
+		latest_preview_fingerprint = fingerprint
+		latest_preview_working_sha = working_sha
+		latest_preview_request_payload = _current_trade_request_payload().duplicate(true)
+		execute_button.disabled = false
+		detail += "\n\nEXECUTION READY • Fresh preview token locked to the current V3 working save."
+		preview_label.text = detail
+	else:
+		_invalidate_trade_execution()
+
+
+func _confirm_execute_trade() -> void:
+	if execute_in_flight or latest_preview_fingerprint == "" or latest_preview_working_sha == "":
+		return
+	var partner := str(latest_preview_request_payload.get("partner_team", ""))
+	var outgoing_count: int = int(latest_preview_request_payload.get("side_a_player_ids", []).size()) + int(latest_preview_request_payload.get("side_a_pick_asset_ids", []).size())
+	var incoming_count: int = int(latest_preview_request_payload.get("side_b_player_ids", []).size()) + int(latest_preview_request_payload.get("side_b_pick_asset_ids", []).size())
+	execute_dialog.dialog_text = "%s ↔ %s\n\nSend %s asset(s) and receive %s asset(s).\n\nThis writes ONLY the isolated V3 working save. A recovery checkpoint is created first, the result is reloaded and verified, and the protected V2 checkpoint must remain unchanged." % [
+		active_team,
+		partner,
+		str(outgoing_count),
+		str(incoming_count)
+	]
+	execute_dialog.popup_centered(Vector2i(540, 300))
+
+
+func _execute_trade() -> void:
+	if execute_request == null or execute_in_flight:
+		return
+	if execute_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		return
+	if latest_preview_fingerprint == "" or latest_preview_working_sha == "":
+		preview_label.text = "Execution token is stale. Run PREVIEW LEGALITY again."
+		preview_label.add_theme_color_override("font_color", GOLD)
+		_invalidate_trade_execution()
+		return
+
+	var request_payload: Dictionary = latest_preview_request_payload.duplicate(true)
+	request_payload["expected_package_fingerprint"] = latest_preview_fingerprint
+	request_payload["expected_working_save_sha256"] = latest_preview_working_sha
+	execute_in_flight = true
 	execute_button.disabled = true
+	preview_button.disabled = true
+	preview_label.text = "Executing through the production transaction engine, then verifying the V3 save and protected V2 hash..."
+	preview_label.add_theme_color_override("font_color", ACCENT)
+	var headers := PackedStringArray(["Content-Type: application/json"])
+	var error := execute_request.request(TRADE_EXECUTE_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(request_payload))
+	if error != OK:
+		execute_in_flight = false
+		preview_button.disabled = false
+		preview_label.text = "Could not start trade execution."
+		preview_label.add_theme_color_override("font_color", BAD)
+		_invalidate_trade_execution()
+
+
+func _on_execute_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	execute_in_flight = false
+	preview_button.disabled = false
+	var raw_payload = JSON.parse_string(body.get_string_from_utf8())
+	if result != HTTPRequest.RESULT_SUCCESS or typeof(raw_payload) != TYPE_DICTIONARY:
+		preview_label.text = "Trade execution request failed before a valid bridge response was received."
+		preview_label.add_theme_color_override("font_color", BAD)
+		_invalidate_trade_execution()
+		return
+
+	if response_code != 200:
+		var detail := str(raw_payload.get("detail", raw_payload.get("error", "Trade execution failed.")))
+		if bool(raw_payload.get("rollback_performed", false)):
+			detail += "\nRollback: %s" % ("VERIFIED" if bool(raw_payload.get("rollback_verified", false)) else "REQUIRES REVIEW")
+		if str(raw_payload.get("error", "")) == "stale_trade_preview":
+			detail += "\nRun PREVIEW LEGALITY again before retrying."
+		preview_label.text = detail
+		preview_label.add_theme_color_override("font_color", GOLD if response_code == 409 else BAD)
+		_invalidate_trade_execution()
+		return
+
+	if not bool(raw_payload.get("persisted_after_reload", false)) or not bool(raw_payload.get("active_v2_unchanged", false)):
+		preview_label.text = "TRADE SAFETY FAILURE • bridge did not confirm reload persistence and V2 protection."
+		preview_label.add_theme_color_override("font_color", BAD)
+		_invalidate_trade_execution()
+		return
+
+	var transaction_id := str(raw_payload.get("transaction_id", ""))
+	preview_label.text = "TRADE COMMITTED • %s\nPersisted after reload • V3 working save updated • protected V2 unchanged\nRecovery checkpoint: %s" % [
+		transaction_id,
+		str(raw_payload.get("recovery_checkpoint_path", ""))
+	]
+	preview_label.add_theme_color_override("font_color", GOOD)
+	status_label.text = "LIVE • %s committed successfully • refreshing transaction foundation..." % transaction_id
+	status_label.add_theme_color_override("font_color", GOOD)
+	selected_active_players.clear()
+	selected_active_picks.clear()
+	selected_partner_players.clear()
+	selected_partner_picks.clear()
+	pending_proposal = {}
+	_invalidate_trade_execution()
+	_request_foundation()
 
 
 func _join_assets(values: Array) -> String:

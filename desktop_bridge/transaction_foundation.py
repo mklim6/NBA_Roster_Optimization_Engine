@@ -33,10 +33,15 @@ from franchise_trade_finder_ai_v1 import (
     TRADE_FINDER_VALUE_MODEL_VERSION,
     generate_trade_finder_proposals,
 )
+from franchise_trade_transaction_v1 import (
+    FRANCHISE_TRADE_TRANSACTION_VERSION,
+    FranchiseTradeCandidate,
+    build_franchise_trade_candidate,
+)
 
 
 TRANSACTION_FOUNDATION_VERSION = (
-    "v3-transaction-foundation-batch-07-graphical-workflows-2026-10-02"
+    "v3-transaction-foundation-batch-08-transactional-trade-execution-2026-10-02"
 )
 
 
@@ -319,6 +324,15 @@ def build_transaction_foundation_payload(checkpoint: Any, active_team: str, *, i
             "endpoint": "/v3/trade/preview",
             "write_actions_enabled": False,
         },
+        "trade_execution": {
+            "available": True,
+            "endpoint": "/v3/trade/execute",
+            "transaction_engine_version": FRANCHISE_TRADE_TRANSACTION_VERSION,
+            "requires_fresh_preview_fingerprint": True,
+            "requires_working_save_sha256": True,
+            "working_save_only": True,
+            "active_v2_read_only": True,
+        },
         "free_agency_preview": {
             "available": True,
             "endpoint": "/v3/free-agency/preview",
@@ -386,7 +400,136 @@ def build_trade_preview_payload(checkpoint: Any, active_team: str, request_paylo
         "write_actions_enabled": False,
         "team": team_a,
         "partner_team": team_b,
+        "execution": {
+            "eligible": bool(preview.status == "pass" and preview.can_commit),
+            "endpoint": "/v3/trade/execute",
+            "transaction_engine_version": FRANCHISE_TRADE_TRANSACTION_VERSION,
+            "requires_package_fingerprint": True,
+            "requires_working_save_sha256": True,
+        },
         "preview": _json_safe(preview_to_dict(preview)),
+    }
+
+
+def build_trade_execution_candidate(
+    checkpoint: Any,
+    active_team: str,
+    request_payload: Mapping[str, Any],
+) -> FranchiseTradeCandidate:
+    """Re-preview and build an in-memory candidate for a V3 working-save trade.
+
+    This function deliberately does not write a checkpoint. The bridge owns the
+    isolated V3 durable write/rollback boundary, while the production V2
+    transaction engine remains the single authority for mutation and legality.
+    """
+    if not isinstance(request_payload, Mapping):
+        raise ValueError("Trade execution request body must be a JSON object.")
+
+    state = checkpoint.simulation_state
+    trade_state = checkpoint.trade_state
+    if trade_state is None:
+        raise RuntimeError("V3 working checkpoint has no durable trade state.")
+
+    team_a = normalize_team(active_team)
+    team_b = normalize_team(request_payload.get("partner_team"))
+    if not team_b:
+        raise ValueError("partner_team is required.")
+    if team_a == team_b:
+        raise ValueError("Trade execution requires a different partner team.")
+
+    expected_fingerprint = str(
+        request_payload.get("expected_package_fingerprint", "") or ""
+    ).strip()
+    if not expected_fingerprint:
+        raise ValueError(
+            "expected_package_fingerprint is required. Run a fresh legality preview first."
+        )
+
+    return build_franchise_trade_candidate(
+        _runtime(),
+        state,
+        trade_state,
+        team_a=team_a,
+        team_b=team_b,
+        side_a_player_ids=_string_tuple(request_payload, "side_a_player_ids"),
+        side_b_player_ids=_string_tuple(request_payload, "side_b_player_ids"),
+        side_a_pick_asset_ids=_string_tuple(request_payload, "side_a_pick_asset_ids"),
+        side_b_pick_asset_ids=_string_tuple(request_payload, "side_b_pick_asset_ids"),
+        expected_fingerprint=expected_fingerprint,
+    )
+
+
+def verify_trade_execution_persisted(
+    checkpoint: Any,
+    candidate: FranchiseTradeCandidate,
+) -> dict[str, Any]:
+    """Verify a committed V3 trade after checkpoint reload."""
+    state = checkpoint.simulation_state
+    trade_state = checkpoint.trade_state
+    if trade_state is None:
+        raise RuntimeError("Reloaded V3 working checkpoint has no durable trade state.")
+
+    history = getattr(state, "franchise_transaction_history_v1", None)
+    if not isinstance(history, list) or not history:
+        raise RuntimeError("Reloaded V3 checkpoint has no franchise transaction history.")
+    if str(history[-1].get("transaction_id", "")) != candidate.transaction_id:
+        raise RuntimeError(
+            "Reloaded V3 checkpoint did not preserve the committed trade transaction."
+        )
+
+    expected_revision = int(
+        getattr(candidate.state, "franchise_trade_revision_v1", 0) or 0
+    )
+    observed_revision = int(
+        getattr(state, "franchise_trade_revision_v1", 0) or 0
+    )
+    if observed_revision != expected_revision:
+        raise RuntimeError(
+            "Reloaded V3 checkpoint did not preserve the committed trade revision."
+        )
+
+    ledger = build_live_asset_ledger(_runtime(), state, trade_state)
+    player_map, pick_map = _asset_maps(ledger)
+    record = candidate.transaction_record
+    team_a = normalize_team(record.get("team_a"))
+    team_b = normalize_team(record.get("team_b"))
+
+    for player_id in record.get("side_a_player_ids", []):
+        pid = normalize_player_id(player_id)
+        if pid not in player_map or normalize_team(player_map[pid].get("team")) != team_b:
+            raise RuntimeError(
+                f"Reloaded V3 checkpoint lost player transfer {pid} to {team_b}."
+            )
+    for player_id in record.get("side_b_player_ids", []):
+        pid = normalize_player_id(player_id)
+        if pid not in player_map or normalize_team(player_map[pid].get("team")) != team_a:
+            raise RuntimeError(
+                f"Reloaded V3 checkpoint lost player transfer {pid} to {team_a}."
+            )
+    for asset_id in record.get("side_a_pick_asset_ids", []):
+        aid = str(asset_id)
+        if aid not in pick_map or normalize_team(pick_map[aid].get("current_owner")) != team_b:
+            raise RuntimeError(
+                f"Reloaded V3 checkpoint lost draft-right transfer {aid} to {team_b}."
+            )
+    for asset_id in record.get("side_b_pick_asset_ids", []):
+        aid = str(asset_id)
+        if aid not in pick_map or normalize_team(pick_map[aid].get("current_owner")) != team_a:
+            raise RuntimeError(
+                f"Reloaded V3 checkpoint lost draft-right transfer {aid} to {team_a}."
+            )
+
+    return {
+        "transaction_id": candidate.transaction_id,
+        "trade_revision": observed_revision,
+        "transaction_history_count": len(history),
+        "package_fingerprint": str(record.get("package_fingerprint", "")),
+        "team_a": team_a,
+        "team_b": team_b,
+        "side_a_player_ids": list(record.get("side_a_player_ids", [])),
+        "side_b_player_ids": list(record.get("side_b_player_ids", [])),
+        "side_a_pick_asset_ids": list(record.get("side_a_pick_asset_ids", [])),
+        "side_b_pick_asset_ids": list(record.get("side_b_pick_asset_ids", [])),
     }
 
 
