@@ -6,6 +6,7 @@ const ScoutingDraftCenterV3 = preload("res://scripts/scouting_draft_center_v3.gd
 const SeasonLifecycleCenterV3 = preload("res://scripts/season_lifecycle_center_v3.gd")
 const LeagueIntelligenceCenterV3 = preload("res://scripts/league_intelligence_center_v3.gd")
 const FrontOfficeCenterV3 = preload("res://scripts/front_office_center_v3.gd")
+const GameDayCenterV3 = preload("res://scripts/game_day_center_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
@@ -55,6 +56,7 @@ var scouting_page: Control
 var season_page: Control
 var league_page: Control
 var front_office_page: Control
+var game_day_page: Control
 var current_page := "HOME"
 var nav_buttons := {}
 var roster_payload := {}
@@ -167,6 +169,10 @@ func _build_interface() -> void:
 	roster_page = _build_roster_area()
 	content_stack.add_child(roster_page)
 	roster_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	game_day_page = GameDayCenterV3.new()
+	content_stack.add_child(game_day_page)
+	game_day_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	trades_page = TradeCenterV3.new()
 	content_stack.add_child(trades_page)
@@ -427,7 +433,7 @@ func _build_next_game_card() -> Control:
 	actions.add_theme_constant_override("separation", 8)
 	actions.add_child(_action_button("GAME PLAN"))
 	var open_game_day := _action_button("OPEN GAME DAY", true)
-	open_game_day.pressed.connect(_open_game_day_overlay)
+	open_game_day.pressed.connect(_show_page.bind("GAME DAY"))
 	actions.add_child(open_game_day)
 	body.add_child(actions)
 	return card
@@ -2398,6 +2404,8 @@ func _show_page(page_name: String) -> void:
 
 	if roster_page != null:
 		roster_page.visible = page_name == "ROSTER"
+	if game_day_page != null:
+		game_day_page.visible = page_name == "GAME DAY"
 	if trades_page != null:
 		trades_page.visible = page_name == "TRADES"
 	if free_agency_page != null:
@@ -2417,6 +2425,9 @@ func _show_page(page_name: String) -> void:
 
 	if page_name == "ROSTER":
 		_request_roster()
+	elif page_name == "GAME DAY":
+		if game_day_page != null and game_day_page.has_method("refresh"):
+			game_day_page.call("refresh")
 	elif page_name == "HOME":
 		_request_franchise_summary()
 	elif page_name in ["LEAGUE", "FRONT OFFICE"]:
@@ -2551,6 +2562,7 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 	if text_value in [
 		"HOME",
 		"ROSTER",
+		"GAME DAY",
 		"TRADES",
 		"FREE AGENCY",
 		"SCOUTING",
@@ -2560,9 +2572,6 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 	]:
 		nav_buttons[text_value] = button
 		button.pressed.connect(_show_page.bind(text_value))
-	elif text_value == "GAME DAY":
-		nav_buttons[text_value] = button
-		button.pressed.connect(_open_game_day_overlay)
 
 	return button
 
