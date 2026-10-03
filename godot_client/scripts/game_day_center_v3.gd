@@ -66,6 +66,24 @@ var rotation_syncing := false
 var simulate_armed := false
 
 
+var long_action_manager = null
+
+
+func set_long_action_manager(manager) -> void:
+	long_action_manager = manager
+
+
+func _begin_long_action(key: String, title: String, detail: String, steps: Array) -> bool:
+	if long_action_manager == null:
+		return true
+	return bool(long_action_manager.begin_action(key, title, detail, steps))
+
+
+func _finish_long_action(key: String, success: bool, message: String = "") -> void:
+	if long_action_manager != null:
+		long_action_manager.finish_action(key, success, message)
+
+
 func _ready() -> void:
 	_build_page()
 	_build_http()
@@ -919,6 +937,20 @@ func _on_simulate_pressed() -> void:
 
 
 func _execute_simulation() -> void:
+	if not _begin_long_action(
+		"game_day_simulation",
+		"SIMULATING GAME",
+		"Running the production game simulation and synchronizing the league calendar...",
+		[
+			"Preparing the controlled-team matchup...",
+			"Running the production game simulation engine...",
+			"Synchronizing CPU games, standings, statistics, and awards...",
+			"Saving and reloading the isolated V3 checkpoint...",
+			"Verifying the durable result and protected V2 checkpoint...",
+		]
+	):
+		_set_status("ANOTHER FRANCHISE ACTION IS ALREADY RUNNING", GOLD)
+		return
 	simulate_armed = false
 	simulation_button.disabled = true
 	simulation_button.text = "SIMULATING..."
@@ -930,6 +962,7 @@ func _execute_simulation() -> void:
 		""
 	)
 	if error != OK:
+		_finish_long_action("game_day_simulation", false, "Simulation request could not start.")
 		_set_status("SIMULATION REQUEST COULD NOT START • error %s" % error, BAD)
 		_reset_simulate_arm()
 
@@ -940,6 +973,11 @@ func _on_simulate_request_completed(
 	_headers: PackedStringArray,
 	body: PackedByteArray
 ) -> void:
+	_finish_long_action(
+		"game_day_simulation",
+		result == HTTPRequest.RESULT_SUCCESS and response_code == 200,
+		"Game simulation completed." if result == HTTPRequest.RESULT_SUCCESS and response_code == 200 else "Game simulation ended with an error."
+	)
 	if result != HTTPRequest.RESULT_SUCCESS:
 		_set_status("SIMULATION REQUEST FAILED BEFORE THE PYTHON ENGINE RESPONDED", BAD)
 		_reset_simulate_arm()

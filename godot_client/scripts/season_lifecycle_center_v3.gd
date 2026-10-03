@@ -42,6 +42,24 @@ var latest_working_sha: String = ""
 var execute_in_flight: bool = false
 
 
+var long_action_manager = null
+
+
+func set_long_action_manager(manager) -> void:
+	long_action_manager = manager
+
+
+func _begin_long_action(key: String, title: String, detail: String, steps: Array) -> bool:
+	if long_action_manager == null:
+		return true
+	return bool(long_action_manager.begin_action(key, title, detail, steps))
+
+
+func _finish_long_action(key: String, success: bool, message: String = "") -> void:
+	if long_action_manager != null:
+		long_action_manager.finish_action(key, success, message)
+
+
 func _ready() -> void:
 	_build_ui()
 	_build_requests()
@@ -364,6 +382,21 @@ func _execute_action() -> void:
 		return
 	if execute_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
 		return
+	if not _begin_long_action(
+		"season_lifecycle_commit",
+		"ADVANCING FRANCHISE LIFECYCLE",
+		"Running the certified season/offseason transition on the isolated V3 save...",
+		[
+			"Rechecking the lifecycle action fingerprint and current stage...",
+			"Running the production postseason/offseason lifecycle engine...",
+			"Applying CPU roster-market and season-boundary work where required...",
+			"Persisting and reloading the V3 franchise checkpoint...",
+			"Verifying lifecycle continuity and protected V2 safety...",
+		]
+	):
+		status_label.text = "Another franchise-changing action is already running."
+		status_label.add_theme_color_override("font_color", GOLD)
+		return
 	var request_payload: Dictionary = {
 		"action": latest_action,
 		"expected_action_fingerprint": latest_action_fingerprint,
@@ -377,6 +410,7 @@ func _execute_action() -> void:
 	var headers := PackedStringArray(["Content-Type: application/json"])
 	var error: int = execute_request.request(EXECUTE_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(request_payload))
 	if error != OK:
+		_finish_long_action("season_lifecycle_commit", false, "Lifecycle execution request could not start.")
 		execute_in_flight = false
 		status_label.text = "Could not start lifecycle execution."
 		status_label.add_theme_color_override("font_color", BAD)
@@ -384,6 +418,11 @@ func _execute_action() -> void:
 
 
 func _on_execute_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	_finish_long_action(
+		"season_lifecycle_commit",
+		result == HTTPRequest.RESULT_SUCCESS and response_code == 200,
+		"Lifecycle action completed." if result == HTTPRequest.RESULT_SUCCESS and response_code == 200 else "Lifecycle action ended with an error."
+	)
 	execute_in_flight = false
 	var raw_payload = JSON.parse_string(body.get_string_from_utf8())
 	if result != HTTPRequest.RESULT_SUCCESS or typeof(raw_payload) != TYPE_DICTIONARY:

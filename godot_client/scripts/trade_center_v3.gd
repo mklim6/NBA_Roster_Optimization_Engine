@@ -51,6 +51,24 @@ var selected_partner_players := {}
 var selected_partner_picks := {}
 
 
+var long_action_manager = null
+
+
+func set_long_action_manager(manager) -> void:
+	long_action_manager = manager
+
+
+func _begin_long_action(key: String, title: String, detail: String, steps: Array) -> bool:
+	if long_action_manager == null:
+		return true
+	return bool(long_action_manager.begin_action(key, title, detail, steps))
+
+
+func _finish_long_action(key: String, success: bool, message: String = "") -> void:
+	if long_action_manager != null:
+		long_action_manager.finish_action(key, success, message)
+
+
 func _ready() -> void:
 	_build_ui()
 	_build_http()
@@ -709,6 +727,21 @@ func _execute_trade() -> void:
 		preview_label.add_theme_color_override("font_color", GOLD)
 		_invalidate_trade_execution()
 		return
+	if not _begin_long_action(
+		"trade_execution",
+		"EXECUTING TRADE",
+		"Applying the certified transaction to the isolated V3 franchise...",
+		[
+			"Rechecking the fresh trade preview and working-save fingerprint...",
+			"Applying the production transaction and CBA engines...",
+			"Persisting rosters, contracts, and asset ledgers...",
+			"Reloading the V3 checkpoint and verifying the trade...",
+			"Confirming the protected V2 checkpoint is unchanged...",
+		]
+	):
+		preview_label.text = "Another franchise-changing action is already running."
+		preview_label.add_theme_color_override("font_color", GOLD)
+		return
 
 	var request_payload: Dictionary = latest_preview_request_payload.duplicate(true)
 	request_payload["expected_package_fingerprint"] = latest_preview_fingerprint
@@ -721,6 +754,7 @@ func _execute_trade() -> void:
 	var headers := PackedStringArray(["Content-Type: application/json"])
 	var error := execute_request.request(TRADE_EXECUTE_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(request_payload))
 	if error != OK:
+		_finish_long_action("trade_execution", false, "Trade execution request could not start.")
 		execute_in_flight = false
 		preview_button.disabled = false
 		preview_label.text = "Could not start trade execution."
@@ -729,6 +763,11 @@ func _execute_trade() -> void:
 
 
 func _on_execute_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	_finish_long_action(
+		"trade_execution",
+		result == HTTPRequest.RESULT_SUCCESS and response_code == 200,
+		"Trade execution completed." if result == HTTPRequest.RESULT_SUCCESS and response_code == 200 else "Trade execution ended with an error."
+	)
 	execute_in_flight = false
 	preview_button.disabled = false
 	var raw_payload = JSON.parse_string(body.get_string_from_utf8())

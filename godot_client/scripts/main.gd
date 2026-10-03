@@ -10,6 +10,7 @@ const GameDayCenterV3 = preload("res://scripts/game_day_center_v3.gd")
 const SaveManagerV3 = preload("res://scripts/save_manager_v3.gd")
 const SettingsTutorialV3 = preload("res://scripts/settings_tutorial_v3.gd")
 const RequestCoordinatorV3 = preload("res://scripts/request_coordinator_v3.gd")
+const LongActionManagerV3 = preload("res://scripts/long_action_manager_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
@@ -74,6 +75,12 @@ var startup_tutorial_checked := false
 var current_page := "HOME"
 var page_navigation_initialized := false
 var request_coordinator = null
+var long_action_manager = null
+var long_action_overlay: Control
+var long_action_title_label: Label
+var long_action_detail_label: Label
+var long_action_elapsed_label: Label
+var long_action_spinner_label: Label
 var nav_buttons := {}
 var roster_payload := {}
 var feature_status_labels := {}
@@ -139,10 +146,103 @@ var draft_detail: Label
 
 func _ready() -> void:
 	request_coordinator = RequestCoordinatorV3.new()
+	long_action_manager = LongActionManagerV3.new()
+	long_action_manager.action_started.connect(_on_long_action_started)
+	long_action_manager.action_finished.connect(_on_long_action_finished)
 	_build_background()
 	_build_interface()
+	_build_long_action_overlay()
 	_build_http_client()
 	_check_bridge()
+
+
+func _build_long_action_overlay() -> void:
+	long_action_overlay = Control.new()
+	long_action_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	long_action_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	long_action_overlay.visible = false
+	add_child(long_action_overlay)
+	long_action_overlay.move_to_front()
+
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.78)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	long_action_overlay.add_child(dim)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var center := CenterContainer.new()
+	long_action_overlay.add_child(center)
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var card := _card(Vector2(650, 315))
+	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	center.add_child(card)
+
+	var body := _card_body(card, 26)
+	body.add_theme_constant_override("separation", 14)
+	body.add_child(_small_label("FRANCHISE ENGINE • DURABLE ACTION", TEAM_PRIMARY_HOVER))
+
+	long_action_title_label = Label.new()
+	long_action_title_label.text = "WORKING..."
+	long_action_title_label.add_theme_color_override("font_color", TEXT)
+	long_action_title_label.add_theme_font_size_override("font_size", 28)
+	body.add_child(long_action_title_label)
+
+	long_action_spinner_label = Label.new()
+	long_action_spinner_label.text = "●  ○  ○"
+	long_action_spinner_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	long_action_spinner_label.add_theme_color_override("font_color", ACCENT)
+	long_action_spinner_label.add_theme_font_size_override("font_size", 22)
+	body.add_child(long_action_spinner_label)
+
+	long_action_detail_label = Label.new()
+	long_action_detail_label.text = "The production engine is working..."
+	long_action_detail_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	long_action_detail_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	long_action_detail_label.add_theme_color_override("font_color", TEXT)
+	long_action_detail_label.add_theme_font_size_override("font_size", 13)
+	body.add_child(long_action_detail_label)
+
+	long_action_elapsed_label = Label.new()
+	long_action_elapsed_label.text = "Elapsed 0.0s"
+	long_action_elapsed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	long_action_elapsed_label.add_theme_color_override("font_color", MUTED)
+	long_action_elapsed_label.add_theme_font_size_override("font_size", 11)
+	body.add_child(long_action_elapsed_label)
+
+	var safety := Label.new()
+	safety.text = "The desktop stays responsive while this write runs. A second franchise-changing action is blocked until persistence and V2-protection checks finish. Do not close the app during this operation."
+	safety.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	safety.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	safety.add_theme_color_override("font_color", GOLD)
+	safety.add_theme_font_size_override("font_size", 10)
+	body.add_child(safety)
+
+
+func _on_long_action_started(snapshot: Dictionary) -> void:
+	if long_action_overlay == null:
+		return
+	long_action_title_label.text = str(snapshot.get("title", "FRANCHISE ACTION")).to_upper()
+	long_action_detail_label.text = str(snapshot.get("detail", snapshot.get("status", "Working...")))
+	long_action_elapsed_label.text = "Elapsed 0.0s"
+	long_action_overlay.visible = true
+	long_action_overlay.move_to_front()
+
+
+func _on_long_action_finished(_snapshot: Dictionary) -> void:
+	if long_action_overlay != null:
+		long_action_overlay.visible = false
+
+
+func _process(_delta: float) -> void:
+	if long_action_manager == null or long_action_overlay == null or not long_action_manager.is_busy():
+		return
+	var elapsed := float(long_action_manager.elapsed_seconds())
+	var frames := ["●  ○  ○", "○  ●  ○", "○  ○  ●"]
+	long_action_spinner_label.text = frames[int(elapsed * 3.0) % frames.size()]
+	long_action_detail_label.text = str(long_action_manager.status_text())
+	long_action_elapsed_label.text = "Elapsed %.1fs • Safe write lock active" % elapsed
 
 
 func _build_background() -> void:
@@ -228,6 +328,10 @@ func _build_interface() -> void:
 	front_office_page = FrontOfficeCenterV3.new()
 	content_stack.add_child(front_office_page)
 	front_office_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	for page in [game_day_page, trades_page, free_agency_page, scouting_page, season_page]:
+		if page != null and page.has_method("set_long_action_manager"):
+			page.call("set_long_action_manager", long_action_manager)
 
 	_show_page("HOME")
 

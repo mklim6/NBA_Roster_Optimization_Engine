@@ -88,6 +88,24 @@ var draft_advance_execute_in_flight := false
 var roster_cut_execute_in_flight := false
 
 
+var long_action_manager = null
+
+
+func set_long_action_manager(manager) -> void:
+	long_action_manager = manager
+
+
+func _begin_long_action(key: String, title: String, detail: String, steps: Array) -> bool:
+	if long_action_manager == null:
+		return true
+	return bool(long_action_manager.begin_action(key, title, detail, steps))
+
+
+func _finish_long_action(key: String, success: bool, message: String = "") -> void:
+	if long_action_manager != null:
+		long_action_manager.finish_action(key, success, message)
+
+
 func _ready() -> void:
 	_build_ui()
 	_build_http()
@@ -629,6 +647,21 @@ func _execute_scouting_week() -> void:
 		return
 	if scout_execute_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
 		return
+	if not _begin_long_action(
+		"scouting_week_advance",
+		"ADVANCING SCOUTING WEEK",
+		"Running the certified scouting progression and persisting new discovery state...",
+		[
+			"Rechecking the certified preview and exact V3 working-save fingerprint...",
+			"Running the production scouting/Draft engine...",
+			"Applying roster, prospect, and Draft-state updates...",
+			"Persisting and reloading the isolated V3 checkpoint...",
+			"Verifying the durable result and protected V2 checkpoint...",
+		]
+	):
+		scouting_preview_label.text = "Another franchise-changing action is already running."
+		scouting_preview_label.add_theme_color_override("font_color", GOLD)
+		return
 	var request_payload: Dictionary = {
 		"focus_ids": latest_scout_focus_ids.duplicate(),
 		"expected_action_fingerprint": latest_scout_fingerprint,
@@ -642,6 +675,7 @@ func _execute_scouting_week() -> void:
 	var headers := PackedStringArray(["Content-Type: application/json"])
 	var error: int = scout_execute_request.request(SCOUT_EXECUTE_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(request_payload))
 	if error != OK:
+		_finish_long_action("scouting_week_advance", false, "The request could not start.")
 		scout_execute_in_flight = false
 		preview_week_button.disabled = not scouting_execution_enabled
 		scouting_preview_label.text = "Could not start scouting execution."
@@ -649,6 +683,11 @@ func _execute_scouting_week() -> void:
 
 
 func _on_scout_execute_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	_finish_long_action(
+		"scouting_week_advance",
+		result == HTTPRequest.RESULT_SUCCESS and response_code == 200,
+		"Action completed." if result == HTTPRequest.RESULT_SUCCESS and response_code == 200 else "Action ended with an error."
+	)
 	scout_execute_in_flight = false
 	preview_week_button.disabled = not scouting_execution_enabled
 	var raw_payload = JSON.parse_string(body.get_string_from_utf8())
@@ -762,6 +801,21 @@ func _execute_draft_pick() -> void:
 		return
 	if draft_execute_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
 		return
+	if not _begin_long_action(
+		"draft_selection",
+		"MAKING DRAFT SELECTION",
+		"Committing the user Draft selection through the production Draft engine...",
+		[
+			"Rechecking the certified preview and exact V3 working-save fingerprint...",
+			"Running the production scouting/Draft engine...",
+			"Applying roster, prospect, and Draft-state updates...",
+			"Persisting and reloading the isolated V3 checkpoint...",
+			"Verifying the durable result and protected V2 checkpoint...",
+		]
+	):
+		draft_status_label.text = "Another franchise-changing action is already running."
+		draft_status_label.add_theme_color_override("font_color", GOLD)
+		return
 	var request_payload: Dictionary = {
 		"prospect_id": latest_draft_prospect_id,
 		"expected_action_fingerprint": latest_draft_fingerprint,
@@ -775,6 +829,7 @@ func _execute_draft_pick() -> void:
 	var headers := PackedStringArray(["Content-Type: application/json"])
 	var error: int = draft_execute_request.request(DRAFT_EXECUTE_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(request_payload))
 	if error != OK:
+		_finish_long_action("draft_selection", false, "The request could not start.")
 		draft_execute_in_flight = false
 		_update_draft_controls()
 		draft_status_label.text = "Could not start Draft execution."
@@ -782,6 +837,11 @@ func _execute_draft_pick() -> void:
 
 
 func _on_draft_execute_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	_finish_long_action(
+		"draft_selection",
+		result == HTTPRequest.RESULT_SUCCESS and response_code == 200,
+		"Action completed." if result == HTTPRequest.RESULT_SUCCESS and response_code == 200 else "Action ended with an error."
+	)
 	draft_execute_in_flight = false
 	var raw_payload = JSON.parse_string(body.get_string_from_utf8())
 	if result != HTTPRequest.RESULT_SUCCESS or typeof(raw_payload) != TYPE_DICTIONARY:
@@ -882,6 +942,21 @@ func _execute_cpu_draft_advance() -> void:
 		return
 	if draft_advance_execute_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
 		return
+	if not _begin_long_action(
+		"cpu_draft_advance",
+		"ADVANCING CPU DRAFT PICKS",
+		"Simulating CPU-owned selections until the next controlled pick or Draft completion...",
+		[
+			"Rechecking the certified preview and exact V3 working-save fingerprint...",
+			"Running the production scouting/Draft engine...",
+			"Applying roster, prospect, and Draft-state updates...",
+			"Persisting and reloading the isolated V3 checkpoint...",
+			"Verifying the durable result and protected V2 checkpoint...",
+		]
+	):
+		draft_status_label.text = "Another franchise-changing action is already running."
+		draft_status_label.add_theme_color_override("font_color", GOLD)
+		return
 	var request_payload: Dictionary = {
 		"expected_action_fingerprint": latest_cpu_draft_fingerprint,
 		"expected_working_save_sha256": latest_cpu_draft_working_sha
@@ -896,6 +971,7 @@ func _execute_cpu_draft_advance() -> void:
 	var headers := PackedStringArray(["Content-Type: application/json"])
 	var error: int = draft_advance_execute_request.request(DRAFT_ADVANCE_EXECUTE_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(request_payload))
 	if error != OK:
+		_finish_long_action("cpu_draft_advance", false, "The request could not start.")
 		draft_advance_execute_in_flight = false
 		_update_draft_controls()
 		draft_status_label.text = "Could not start CPU Draft advancement."
@@ -903,6 +979,11 @@ func _execute_cpu_draft_advance() -> void:
 
 
 func _on_draft_advance_execute_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	_finish_long_action(
+		"cpu_draft_advance",
+		result == HTTPRequest.RESULT_SUCCESS and response_code == 200,
+		"Action completed." if result == HTTPRequest.RESULT_SUCCESS and response_code == 200 else "Action ended with an error."
+	)
 	draft_advance_execute_in_flight = false
 	var raw_payload = JSON.parse_string(body.get_string_from_utf8())
 	if result != HTTPRequest.RESULT_SUCCESS or typeof(raw_payload) != TYPE_DICTIONARY:
@@ -1077,6 +1158,21 @@ func _execute_roster_cut() -> void:
 		return
 	if roster_cut_execute_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
 		return
+	if not _begin_long_action(
+		"post_draft_roster_cut",
+		"RESOLVING POST-DRAFT ROSTER",
+		"Applying the explicit roster decision and certified financial reconciliation...",
+		[
+			"Rechecking the certified preview and exact V3 working-save fingerprint...",
+			"Running the production scouting/Draft engine...",
+			"Applying roster, prospect, and Draft-state updates...",
+			"Persisting and reloading the isolated V3 checkpoint...",
+			"Verifying the durable result and protected V2 checkpoint...",
+		]
+	):
+		roster_cut_status_label.text = "Another franchise-changing action is already running."
+		roster_cut_status_label.add_theme_color_override("font_color", GOLD)
+		return
 	var request_payload: Dictionary = {
 		"player_id": latest_roster_cut_player_id,
 		"expected_action_fingerprint": latest_roster_cut_fingerprint,
@@ -1096,6 +1192,7 @@ func _execute_roster_cut() -> void:
 		JSON.stringify(request_payload)
 	)
 	if error != OK:
+		_finish_long_action("post_draft_roster_cut", false, "The request could not start.")
 		roster_cut_execute_in_flight = false
 		roster_cut_status_label.text = "Could not start post-Draft roster release."
 		roster_cut_status_label.add_theme_color_override("font_color", BAD)
@@ -1103,6 +1200,11 @@ func _execute_roster_cut() -> void:
 
 
 func _on_roster_cut_execute_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	_finish_long_action(
+		"post_draft_roster_cut",
+		result == HTTPRequest.RESULT_SUCCESS and response_code == 200,
+		"Action completed." if result == HTTPRequest.RESULT_SUCCESS and response_code == 200 else "Action ended with an error."
+	)
 	roster_cut_execute_in_flight = false
 	var raw_payload = JSON.parse_string(body.get_string_from_utf8())
 	if result != HTTPRequest.RESULT_SUCCESS or typeof(raw_payload) != TYPE_DICTIONARY:
