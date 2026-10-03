@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, is_dataclass
+from types import SimpleNamespace
 from functools import lru_cache
 from typing import Any, Mapping
 import copy
@@ -42,6 +43,7 @@ from franchise_draft_engine_v1 import (
     current_pick as draft_current_pick,
     draft_state as production_draft_state,
     make_selection as make_draft_selection,
+    simulate_to_next_user_pick as simulate_draft_to_next_user_pick,
 )
 from franchise_scouting_discovery_v1 import (
     FRANCHISE_SCOUTING_DISCOVERY_VERSION,
@@ -52,6 +54,8 @@ from franchise_scouting_discovery_v1 import (
     set_scouting_focus_v1,
 )
 from franchise_staff_system_v1 import lead_scout_member
+import franchise_cpu_post_draft_roster_trim_orchestrator_v1 as post_draft_trim_orchestrator
+import franchise_cpu_post_draft_roster_trim_release_v1 as post_draft_release
 from franchise_trade_finder_ai_v1 import (
     GOAL_BEST_AVAILABLE,
     TRADE_FINDER_AI_VERSION,
@@ -68,7 +72,9 @@ from franchise_trade_transaction_v1 import (
 TRANSACTION_FOUNDATION_VERSION = (
     "v3-transaction-foundation-batch-08-transactional-trade-execution-"
     "batch-09-transactional-free-agency-execution-"
-    "batch-10-scouting-draft-workflow-2026-10-02"
+    "batch-10-scouting-draft-workflow-"
+    "batch-16-draft-night-continuity-"
+    "batch-16-0-2-user-post-draft-roster-resolution-2026-10-03"
 )
 
 
@@ -104,6 +110,39 @@ class V3DraftSelectionCandidate:
     action_fingerprint: str
     next_pick_index: int
     draft_complete: bool
+
+
+@dataclass(frozen=True)
+class V3DraftAdvanceCandidate:
+    state: Any
+    team: str
+    draft_year: int
+    action_fingerprint: str
+    start_pick_index: int
+    end_pick_index: int
+    picks_simulated: int
+    draft_complete: bool
+    next_pick: dict[str, Any]
+    simulated_selections: tuple[tuple[int, str, str, str], ...]
+
+
+@dataclass(frozen=True)
+class V3PostDraftRosterCutCandidate:
+    state: Any
+    trade_state: Any
+    team: str
+    player_id: str
+    player_name: str
+    action_fingerprint: str
+    transaction_id: str
+    cuts_remaining_before: int
+    cuts_remaining_after: int
+    roster_count_before: int
+    roster_count_after: int
+    standard_contract_count_before: int
+    standard_contract_count_after: int
+    financial_treatment: str
+    dead_money_current_season: float | None
 
 
 
@@ -867,6 +906,33 @@ def _draft_action_fingerprint(
     )
 
 
+def _draft_advance_action_fingerprint(
+    state: Any,
+    team: str,
+) -> str:
+    current = production_draft_state(state) or {}
+    pick = draft_current_pick(current) if current else None
+    if pick is None:
+        raise ValueError("No Draft pick is currently on the clock.")
+    return _fingerprint_payload(
+        {
+            "kind": "v3_draft_cpu_advance_v1",
+            "team": normalize_team(team),
+            "draft_year": int(current.get("draft_year", 0) or 0),
+            "phase": str(current.get("phase", "") or ""),
+            "current_pick_index": int(current.get("current_pick_index", 0) or 0),
+            "overall_pick": int(pick.get("overall_pick", 0) or 0),
+            "owner_team": normalize_team(pick.get("owner_team")),
+            "controlled_teams": sorted(
+                normalize_team(value)
+                for value in (current.get("controlled_teams", []) or [])
+                if normalize_team(value)
+            ),
+            "draft_engine_version": DRAFT_ENGINE_VERSION,
+        }
+    )
+
+
 def build_scouting_draft_payload(
     checkpoint: Any,
     active_team: str,
@@ -894,6 +960,11 @@ def build_scouting_draft_payload(
             "scouting_execute_endpoint": "/v3/scouting/advance",
             "draft_preview_endpoint": "/v3/draft/selection/preview",
             "draft_execute_endpoint": "/v3/draft/selection/execute",
+            "draft_advance_preview_endpoint": "/v3/draft/advance/preview",
+            "draft_advance_execute_endpoint": "/v3/draft/advance/execute",
+            "post_draft_roster": {"enabled": False, "cuts_remaining": 0, "candidates": []},
+            "post_draft_roster_cut_preview_endpoint": "/v3/draft/roster-cut/preview",
+            "post_draft_roster_cut_execute_endpoint": "/v3/draft/roster-cut/execute",
         }
 
     # Production scouting getters lazily materialize reports. Build the display
@@ -910,6 +981,20 @@ def build_scouting_draft_payload(
     pick = draft_current_pick(view_current) if phase == "draft_in_progress" else None
     owner = normalize_team(pick.get("owner_team")) if pick else ""
     scout = lead_scout_member(view_state, team, ensure=True)
+    post_draft_roster = (
+        build_post_draft_roster_payload(checkpoint, team)
+        if phase == "draft_complete"
+        else {
+            "enabled": False,
+            "status": "draft_not_complete",
+            "cuts_remaining": 0,
+            "roster_count": 0,
+            "standard_contract_count": 0,
+            "target_roster_size": post_draft_trim_orchestrator.POST_DRAFT_OFFSEASON_ROSTER_CEILING,
+            "target_standard_contract_count": post_draft_trim_orchestrator.POST_DRAFT_STANDARD_CONTRACT_CEILING,
+            "candidates": [],
+        }
+    )
 
     current_pick_payload: dict[str, Any] = {}
     if pick is not None:
@@ -965,9 +1050,17 @@ def build_scouting_draft_payload(
         "scouting_execute_endpoint": "/v3/scouting/advance",
         "draft_preview_endpoint": "/v3/draft/selection/preview",
         "draft_execute_endpoint": "/v3/draft/selection/execute",
+        "draft_advance_preview_endpoint": "/v3/draft/advance/preview",
+        "draft_advance_execute_endpoint": "/v3/draft/advance/execute",
+        "post_draft_roster": post_draft_roster,
+        "post_draft_roster_cut_preview_endpoint": "/v3/draft/roster-cut/preview",
+        "post_draft_roster_cut_execute_endpoint": "/v3/draft/roster-cut/execute",
         "scouting_execution_enabled": phase in {"season_scouting", "scouting"},
         "draft_execution_enabled": bool(
             phase == "draft_in_progress" and owner == team
+        ),
+        "draft_cpu_advance_enabled": bool(
+            phase == "draft_in_progress" and pick is not None and owner != team
         ),
     }
 
@@ -1280,6 +1373,598 @@ def verify_draft_selection_persisted(
         "round_pick": candidate.round_pick,
         "next_pick_index": candidate.next_pick_index,
         "draft_complete": candidate.draft_complete,
+        "action_fingerprint": candidate.action_fingerprint,
+    }
+
+def _draft_advance_core(
+    checkpoint: Any,
+    active_team: str,
+) -> V3DraftAdvanceCandidate:
+    state = getattr(checkpoint, "simulation_state", None)
+    if state is None:
+        raise RuntimeError("V3 working checkpoint has no simulation state.")
+    team = normalize_team(active_team)
+    current = production_draft_state(state)
+    if current is None or str(current.get("phase", "")) != "draft_in_progress":
+        raise ValueError("CPU Draft advancement is phase-locked until Draft Night is in progress.")
+    pick = draft_current_pick(current)
+    if pick is None:
+        raise ValueError("No Draft pick is currently on the clock.")
+    owner = normalize_team(pick.get("owner_team"))
+    if owner == team:
+        raise ValueError("Your franchise is currently on the clock. Make your Draft selection instead.")
+
+    fingerprint = _draft_advance_action_fingerprint(state, team)
+    start_pick_index = int(current.get("current_pick_index", 0) or 0)
+    candidate_state = copy.deepcopy(state)
+    picks_simulated = simulate_draft_to_next_user_pick(
+        candidate_state,
+        now_ts=time.time(),
+        integrate=True,
+        max_picks=60,
+    )
+    candidate_current = production_draft_state(candidate_state) or {}
+    end_pick_index = int(candidate_current.get("current_pick_index", 0) or 0)
+    if picks_simulated <= 0 or end_pick_index <= start_pick_index:
+        raise ValueError("CPU Draft advancement did not produce a legal pick progression.")
+
+    order = list(candidate_current.get("draft_order", []) or [])
+    simulated_rows = order[start_pick_index:end_pick_index]
+    simulated_selections = tuple(
+        (
+            int(row.get("overall_pick", 0) or 0),
+            normalize_team(row.get("owner_team")),
+            str(row.get("prospect_id", "") or ""),
+            str(row.get("player_name", "") or ""),
+        )
+        for row in simulated_rows
+    )
+    next_pick = draft_current_pick(candidate_current)
+    next_pick_payload: dict[str, Any] = {}
+    if next_pick is not None:
+        next_owner = normalize_team(next_pick.get("owner_team"))
+        if next_owner != team:
+            raise ValueError(
+                "CPU Draft advancement reached another controlled franchise before the active team. "
+                "Switch the active franchise before continuing Draft Night."
+            )
+        next_pick_payload = {
+            "overall_pick": int(next_pick.get("overall_pick", 0) or 0),
+            "round": int(next_pick.get("round", 0) or 0),
+            "round_pick": int(next_pick.get("round_pick", 0) or 0),
+            "owner_team": next_owner,
+            "origin_team": normalize_team(next_pick.get("origin_team")),
+        }
+
+    return V3DraftAdvanceCandidate(
+        state=candidate_state,
+        team=team,
+        draft_year=int(current.get("draft_year", 0) or 0),
+        action_fingerprint=fingerprint,
+        start_pick_index=start_pick_index,
+        end_pick_index=end_pick_index,
+        picks_simulated=int(picks_simulated),
+        draft_complete=str(candidate_current.get("phase", "")) == "draft_complete",
+        next_pick=next_pick_payload,
+        simulated_selections=simulated_selections,
+    )
+
+
+def build_draft_advance_preview_payload(
+    checkpoint: Any,
+    active_team: str,
+    request_payload: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    del request_payload
+    try:
+        candidate = _draft_advance_core(checkpoint, active_team)
+    except ValueError as exc:
+        state = getattr(checkpoint, "simulation_state", None)
+        current = production_draft_state(state) if state is not None else None
+        phase = str((current or {}).get("phase", "") or "")
+        pick = draft_current_pick(current) if current else None
+        return {
+            "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+            "source": "v3_working_checkpoint",
+            "read_only": True,
+            "status": "blocked",
+            "can_commit": False,
+            "reason": str(exc),
+            "phase": phase,
+            "current_pick": _json_safe(pick or {}),
+            "draft_engine_version": DRAFT_ENGINE_VERSION,
+        }
+
+    return {
+        "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+        "source": "v3_working_checkpoint",
+        "read_only": True,
+        "status": "pass",
+        "can_commit": True,
+        "team": candidate.team,
+        "draft_year": candidate.draft_year,
+        "action_fingerprint": candidate.action_fingerprint,
+        "start_pick_index": candidate.start_pick_index,
+        "end_pick_index": candidate.end_pick_index,
+        "picks_simulated": candidate.picks_simulated,
+        "draft_complete": candidate.draft_complete,
+        "next_pick": copy.deepcopy(candidate.next_pick),
+        "draft_engine_version": DRAFT_ENGINE_VERSION,
+    }
+
+
+def build_draft_advance_candidate(
+    checkpoint: Any,
+    active_team: str,
+    request_payload: Mapping[str, Any],
+) -> V3DraftAdvanceCandidate:
+    expected = str(request_payload.get("expected_action_fingerprint", "") or "").strip()
+    if not expected:
+        raise ValueError(
+            "expected_action_fingerprint is required. Run a fresh CPU Draft preview first."
+        )
+    observed = _draft_advance_action_fingerprint(
+        checkpoint.simulation_state,
+        active_team,
+    )
+    if observed != expected:
+        raise ValueError(
+            "The CPU Draft preview is stale. Run PREVIEW CPU PICKS again."
+        )
+    candidate = _draft_advance_core(checkpoint, active_team)
+    if candidate.action_fingerprint != expected:
+        raise ValueError(
+            "The CPU Draft candidate changed after preview. Run PREVIEW CPU PICKS again."
+        )
+    return candidate
+
+
+def verify_draft_advance_persisted(
+    checkpoint: Any,
+    candidate: V3DraftAdvanceCandidate,
+) -> dict[str, Any]:
+    state = checkpoint.simulation_state
+    current = production_draft_state(state)
+    if current is None:
+        raise RuntimeError("Reloaded V3 checkpoint lost the Draft state after CPU advancement.")
+    observed_index = int(current.get("current_pick_index", -1))
+    if observed_index != candidate.end_pick_index:
+        raise RuntimeError("Reloaded V3 checkpoint lost the CPU Draft pick-index advancement.")
+
+    order = list(current.get("draft_order", []) or [])
+    for overall_pick, owner_team, prospect_id, player_name in candidate.simulated_selections:
+        row = next(
+            (item for item in order if int(item.get("overall_pick", 0) or 0) == overall_pick),
+            None,
+        )
+        if row is None:
+            raise RuntimeError(f"Reloaded Draft order lost simulated pick #{overall_pick}.")
+        if normalize_team(row.get("owner_team")) != owner_team:
+            raise RuntimeError(f"Reloaded Draft order changed the owner of simulated pick #{overall_pick}.")
+        if str(row.get("prospect_id", "") or "") != prospect_id:
+            raise RuntimeError(f"Reloaded Draft order lost the selected prospect at pick #{overall_pick}.")
+        if str(row.get("player_name", "") or "") != player_name:
+            raise RuntimeError(f"Reloaded Draft order changed the player at pick #{overall_pick}.")
+
+    phase = str(current.get("phase", "") or "")
+    draft_complete = phase == "draft_complete"
+    if draft_complete != candidate.draft_complete:
+        raise RuntimeError("Reloaded V3 checkpoint changed the expected Draft completion state.")
+
+    next_pick = draft_current_pick(current) if not draft_complete else None
+    next_owner = normalize_team(next_pick.get("owner_team")) if next_pick else ""
+    if not draft_complete and next_owner != candidate.team:
+        raise RuntimeError(
+            "CPU Draft advancement did not stop at the active franchise's next pick."
+        )
+
+    return {
+        "team": candidate.team,
+        "draft_year": candidate.draft_year,
+        "start_pick_index": candidate.start_pick_index,
+        "end_pick_index": candidate.end_pick_index,
+        "picks_simulated": candidate.picks_simulated,
+        "draft_complete": candidate.draft_complete,
+        "next_pick": _json_safe(next_pick or {}),
+        "action_fingerprint": candidate.action_fingerprint,
+    }
+
+
+
+def _post_draft_controlled_teams(checkpoint: Any) -> tuple[str, ...]:
+    preferences = dict(getattr(checkpoint, "preferences", {}) or {})
+    raw = preferences.get("franchise_pref_controlled_teams", ()) or ()
+    if isinstance(raw, str):
+        raw = (raw,)
+    teams = []
+    for value in raw:
+        team = normalize_team(value)
+        if team and team not in teams:
+            teams.append(team)
+    return tuple(teams)
+
+
+def _post_draft_shadow_checkpoint(checkpoint: Any, team: str) -> Any:
+    """Create a read/candidate-only view that removes CPU auto-release control blocking.
+
+    The real checkpoint remains user-controlled. This shadow is used only after the
+    active user explicitly chooses a player to release. It lets the mature post-Draft
+    financial/reconciliation engine certify the exact same release mechanics without
+    misclassifying the real durable franchise as CPU controlled.
+    """
+    code = normalize_team(team)
+    preferences = copy.deepcopy(dict(getattr(checkpoint, "preferences", {}) or {}))
+    raw = preferences.get("franchise_pref_controlled_teams", ()) or ()
+    if isinstance(raw, str):
+        raw = (raw,)
+    preferences["franchise_pref_controlled_teams"] = tuple(
+        sorted(
+            normalize_team(value)
+            for value in raw
+            if normalize_team(value) and normalize_team(value) != code
+        )
+    )
+    if normalize_team(preferences.get("franchise_pref_active_team")) == code:
+        preferences["franchise_pref_active_team"] = ""
+    return SimpleNamespace(
+        simulation_state=checkpoint.simulation_state,
+        trade_state=checkpoint.trade_state,
+        preferences=preferences,
+    )
+
+
+def _post_draft_cut_count(team_preview: Any) -> int:
+    standard_overflow = max(0, int(getattr(team_preview, "required_cut_count", 0) or 0))
+    roster_overflow = max(
+        0,
+        int(getattr(team_preview, "roster_count_before", 0) or 0)
+        - int(getattr(team_preview, "target_roster_size", 0) or 0),
+    )
+    return max(standard_overflow, roster_overflow)
+
+
+def _post_draft_cut_action_fingerprint(
+    checkpoint: Any,
+    team: str,
+    player_id: str,
+) -> str:
+    state = checkpoint.simulation_state
+    trade_state = checkpoint.trade_state
+    current = production_draft_state(state) or {}
+    return _fingerprint_payload(
+        {
+            "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+            "action": "user_post_draft_roster_cut",
+            "team": normalize_team(team),
+            "player_id": normalize_player_id(player_id),
+            "draft_year": int(current.get("draft_year", 0) or 0),
+            "draft_phase": str(current.get("phase", "") or ""),
+            "simulation_fingerprint": post_draft_release._simulation_fingerprint(state),
+            "trade_fingerprint": post_draft_release._trade_fingerprint(trade_state),
+        }
+    )
+
+
+def _post_draft_release_preview_for_user(
+    checkpoint: Any,
+    team: str,
+    player_id: str,
+    *,
+    source_fingerprints: tuple[str, str] | None = None,
+) -> Any:
+    shadow = _post_draft_shadow_checkpoint(checkpoint, team)
+    return post_draft_release.build_cpu_post_draft_release_preview(
+        shadow,
+        team=normalize_team(team),
+        player_id=normalize_player_id(player_id),
+        rationale=("Explicit user-controlled post-Draft roster decision.",),
+        require_non_rotation=False,
+        _precomputed_source_fingerprints=source_fingerprints,
+    )
+
+
+def build_post_draft_roster_payload(
+    checkpoint: Any,
+    active_team: str,
+) -> dict[str, Any]:
+    state = getattr(checkpoint, "simulation_state", None)
+    trade_state = getattr(checkpoint, "trade_state", None)
+    if state is None or trade_state is None:
+        raise RuntimeError("V3 working checkpoint lacks a complete durable state.")
+    team = normalize_team(active_team)
+    if team not in getattr(state, "teams", {}):
+        raise ValueError(f"Unknown active franchise team: {team or '<blank>'}.")
+
+    current = production_draft_state(state) or {}
+    draft_phase = str(current.get("phase", "") or "")
+    controlled = _post_draft_controlled_teams(checkpoint)
+    is_controlled = team in controlled
+    if draft_phase != "draft_complete":
+        return {
+            "enabled": False,
+            "status": "draft_not_complete",
+            "team": team,
+            "cuts_remaining": 0,
+            "candidates": [],
+        }
+
+    team_state = getattr(state, "teams", {}).get(team)
+    roster_count = len(tuple(getattr(team_state, "roster_player_ids", ()) or ()))
+    standard_ids = set(
+        post_draft_trim_orchestrator._standard_contract_ids(state, team)
+    )
+    standard_contract_count = len(standard_ids)
+    target_roster_size = post_draft_trim_orchestrator.POST_DRAFT_OFFSEASON_ROSTER_CEILING
+    target_standard_contract_count = post_draft_trim_orchestrator.POST_DRAFT_STANDARD_CONTRACT_CEILING
+    cuts_remaining = max(
+        0,
+        standard_contract_count - target_standard_contract_count,
+        roster_count - target_roster_size,
+    )
+
+    runtime = _runtime()
+    ledger = build_live_asset_ledger(runtime, state, trade_state)
+    player_map, _ = _asset_maps(ledger)
+    candidates: list[dict[str, Any]] = []
+    blocked_count = 0
+    shared_source_fingerprints = (
+        post_draft_release._simulation_fingerprint(state),
+        post_draft_release._trade_fingerprint(trade_state),
+    )
+    for player_id in sorted(standard_ids):
+        preview = _post_draft_release_preview_for_user(
+            checkpoint,
+            team,
+            player_id,
+            source_fingerprints=shared_source_fingerprints,
+        )
+        asset = player_map.get(normalize_player_id(player_id), {})
+        financial_ok = (
+            preview.status == "pass"
+            and preview.can_commit_to_clone
+            and preview.financial_treatment
+            in {
+                *post_draft_trim_orchestrator.CERTIFIED_AUTOMATIC_FINANCIAL_ROUTES,
+                "exact_explicit_dead_money",
+                "exact_from_guaranteed_remaining",
+            }
+        )
+        if not financial_ok:
+            blocked_count += 1
+        candidates.append(
+            {
+                "player_id": player_id,
+                "name": str(asset.get("player_name", preview.player_name or player_id)),
+                "position": str(asset.get("position", "")),
+                "age": asset.get("age"),
+                "overall": asset.get("overall"),
+                "salary": preview.salary,
+                "years_remaining": preview.years_remaining,
+                "financial_treatment": preview.financial_treatment,
+                "dead_money_current_season": preview.dead_money_current_season,
+                "future_guarantee_exposure": preview.future_guarantee_exposure,
+                "can_release": bool(financial_ok),
+                "blockers": list(preview.blockers),
+            }
+        )
+
+    candidates.sort(
+        key=lambda row: (
+            not bool(row.get("can_release")),
+            float(row.get("overall") or 999.0),
+            -float(row.get("salary") or 0.0),
+            str(row.get("name", "")),
+        )
+    )
+    enabled = bool(is_controlled and cuts_remaining > 0 and any(row["can_release"] for row in candidates))
+    status = (
+        "user_roster_decision_required"
+        if cuts_remaining > 0
+        else "roster_cleared_for_next_season"
+    )
+    if cuts_remaining > 0 and not is_controlled:
+        status = "active_team_not_durably_controlled"
+    elif cuts_remaining > 0 and not any(row["can_release"] for row in candidates):
+        status = "no_certified_user_release_candidate"
+
+    return {
+        "enabled": enabled,
+        "status": status,
+        "team": team,
+        "draft_year": int(current.get("draft_year", 0) or 0),
+        "draft_phase": draft_phase,
+        "is_durably_controlled": is_controlled,
+        "roster_count": roster_count,
+        "standard_contract_count": standard_contract_count,
+        "target_roster_size": target_roster_size,
+        "target_standard_contract_count": target_standard_contract_count,
+        "cuts_remaining": cuts_remaining,
+        "blocked_candidate_count": blocked_count,
+        "eligible_candidate_count": sum(bool(row["can_release"]) for row in candidates),
+        "candidates": _json_safe(candidates),
+        "preview_endpoint": "/v3/draft/roster-cut/preview",
+        "execute_endpoint": "/v3/draft/roster-cut/execute",
+    }
+
+
+def build_post_draft_roster_cut_preview_payload(
+    checkpoint: Any,
+    active_team: str,
+    request_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    team = normalize_team(active_team)
+    player_id = normalize_player_id(request_payload.get("player_id"))
+    summary = build_post_draft_roster_payload(checkpoint, team)
+    fingerprint = _post_draft_cut_action_fingerprint(checkpoint, team, player_id)
+    if not player_id:
+        return {
+            "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+            "source": "v3_working_checkpoint",
+            "read_only": True,
+            "status": "blocked",
+            "can_commit": False,
+            "reason": "Select a rostered player before previewing a post-Draft release.",
+            "action_fingerprint": fingerprint,
+            "post_draft_roster": summary,
+        }
+    if int(summary.get("cuts_remaining", 0) or 0) <= 0:
+        return {
+            "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+            "source": "v3_working_checkpoint",
+            "read_only": True,
+            "status": "blocked",
+            "can_commit": False,
+            "reason": "The active franchise already satisfies the certified post-Draft roster ceiling.",
+            "action_fingerprint": fingerprint,
+            "post_draft_roster": summary,
+        }
+    if not bool(summary.get("is_durably_controlled", False)):
+        return {
+            "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+            "source": "v3_working_checkpoint",
+            "read_only": True,
+            "status": "blocked",
+            "can_commit": False,
+            "reason": "The active franchise is not persisted as a user-controlled team.",
+            "action_fingerprint": fingerprint,
+            "post_draft_roster": summary,
+        }
+    row = next(
+        (item for item in summary.get("candidates", []) if normalize_player_id(item.get("player_id")) == player_id),
+        None,
+    )
+    if row is None or not bool(row.get("can_release", False)):
+        reason = "Selected player is not eligible for the certified post-Draft release path."
+        if isinstance(row, dict) and row.get("blockers"):
+            reason += " " + "; ".join(str(value) for value in row.get("blockers", []))
+        return {
+            "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+            "source": "v3_working_checkpoint",
+            "read_only": True,
+            "status": "blocked",
+            "can_commit": False,
+            "reason": reason,
+            "action_fingerprint": fingerprint,
+            "player": _json_safe(row or {}),
+            "post_draft_roster": summary,
+        }
+
+    cuts_before = int(summary.get("cuts_remaining", 0) or 0)
+    return {
+        "foundation_version": TRANSACTION_FOUNDATION_VERSION,
+        "source": "v3_working_checkpoint",
+        "read_only": True,
+        "status": "pass",
+        "can_commit": True,
+        "team": team,
+        "player": _json_safe(row),
+        "action_fingerprint": fingerprint,
+        "cuts_remaining_before": cuts_before,
+        "cuts_remaining_after": max(0, cuts_before - 1),
+        "roster_count_before": int(summary.get("roster_count", 0) or 0),
+        "roster_count_after": max(0, int(summary.get("roster_count", 0) or 0) - 1),
+        "standard_contract_count_before": int(summary.get("standard_contract_count", 0) or 0),
+        "standard_contract_count_after": max(0, int(summary.get("standard_contract_count", 0) or 0) - 1),
+        "post_draft_roster": summary,
+    }
+
+
+def build_post_draft_roster_cut_candidate(
+    checkpoint: Any,
+    active_team: str,
+    request_payload: Mapping[str, Any],
+) -> V3PostDraftRosterCutCandidate:
+    team = normalize_team(active_team)
+    player_id = normalize_player_id(request_payload.get("player_id"))
+    expected = str(request_payload.get("expected_action_fingerprint", "") or "").strip()
+    if not expected:
+        raise ValueError(
+            "expected_action_fingerprint is required. Run PREVIEW ROSTER CUT again."
+        )
+    observed = _post_draft_cut_action_fingerprint(checkpoint, team, player_id)
+    if observed != expected:
+        raise ValueError(
+            "The post-Draft roster-cut preview is stale. Run PREVIEW ROSTER CUT again."
+        )
+    preview_payload = build_post_draft_roster_cut_preview_payload(
+        checkpoint,
+        team,
+        {"player_id": player_id},
+    )
+    if not bool(preview_payload.get("can_commit", False)):
+        raise ValueError(str(preview_payload.get("reason", "Post-Draft roster cut is blocked.")))
+
+    shadow = _post_draft_shadow_checkpoint(checkpoint, team)
+    release_preview = _post_draft_release_preview_for_user(checkpoint, team, player_id)
+    release_candidate = post_draft_release.build_cpu_post_draft_release_candidate(
+        shadow,
+        release_preview,
+    )
+    real_candidate_checkpoint = SimpleNamespace(
+        simulation_state=release_candidate.simulation_candidate,
+        trade_state=release_candidate.trade_candidate,
+        preferences=copy.deepcopy(dict(getattr(checkpoint, "preferences", {}) or {})),
+    )
+    after = build_post_draft_roster_payload(real_candidate_checkpoint, team)
+    cuts_before = int(preview_payload.get("cuts_remaining_before", 0) or 0)
+    cuts_after = int(after.get("cuts_remaining", 0) or 0)
+    if cuts_after != max(0, cuts_before - 1):
+        raise RuntimeError(
+            "Approved post-Draft release did not reduce the active franchise roster deficit by exactly one."
+        )
+    player_row = dict(preview_payload.get("player", {}) or {})
+    return V3PostDraftRosterCutCandidate(
+        state=release_candidate.simulation_candidate,
+        trade_state=release_candidate.trade_candidate,
+        team=team,
+        player_id=player_id,
+        player_name=str(player_row.get("name", release_preview.player_name or player_id)),
+        action_fingerprint=observed,
+        transaction_id=str(release_candidate.transaction_id),
+        cuts_remaining_before=cuts_before,
+        cuts_remaining_after=cuts_after,
+        roster_count_before=int(preview_payload.get("roster_count_before", 0) or 0),
+        roster_count_after=int(after.get("roster_count", 0) or 0),
+        standard_contract_count_before=int(preview_payload.get("standard_contract_count_before", 0) or 0),
+        standard_contract_count_after=int(after.get("standard_contract_count", 0) or 0),
+        financial_treatment=str(release_preview.financial_treatment),
+        dead_money_current_season=release_preview.dead_money_current_season,
+    )
+
+
+def verify_post_draft_roster_cut_persisted(
+    checkpoint: Any,
+    candidate: V3PostDraftRosterCutCandidate,
+) -> dict[str, Any]:
+    state = checkpoint.simulation_state
+    trade_state = checkpoint.trade_state
+    team_state = getattr(state, "teams", {}).get(candidate.team)
+    if team_state is None:
+        raise RuntimeError("Reloaded V3 checkpoint lost the active franchise after the roster cut.")
+    if candidate.player_id in tuple(getattr(team_state, "roster_player_ids", ()) or ()):
+        raise RuntimeError("Reloaded V3 checkpoint still rosters the released player.")
+    owner_map = getattr(trade_state, "player_team_by_id", None)
+    if not isinstance(owner_map, dict) or normalize_team(owner_map.get(candidate.player_id)):
+        raise RuntimeError("Reloaded TradeState still assigns the released player to a team.")
+    after = build_post_draft_roster_payload(checkpoint, candidate.team)
+    if int(after.get("cuts_remaining", -1)) != candidate.cuts_remaining_after:
+        raise RuntimeError("Reloaded V3 checkpoint changed the expected post-Draft roster deficit.")
+    if int(after.get("roster_count", -1)) != candidate.roster_count_after:
+        raise RuntimeError("Reloaded V3 checkpoint changed the expected active-franchise roster count.")
+    return {
+        "team": candidate.team,
+        "player_id": candidate.player_id,
+        "player_name": candidate.player_name,
+        "transaction_id": candidate.transaction_id,
+        "cuts_remaining_before": candidate.cuts_remaining_before,
+        "cuts_remaining_after": candidate.cuts_remaining_after,
+        "roster_count_before": candidate.roster_count_before,
+        "roster_count_after": candidate.roster_count_after,
+        "standard_contract_count_before": candidate.standard_contract_count_before,
+        "standard_contract_count_after": candidate.standard_contract_count_after,
+        "financial_treatment": candidate.financial_treatment,
+        "dead_money_current_season": candidate.dead_money_current_season,
+        "roster_cleared_for_next_season": candidate.cuts_remaining_after == 0,
         "action_fingerprint": candidate.action_fingerprint,
     }
 

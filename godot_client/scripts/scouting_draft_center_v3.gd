@@ -5,6 +5,10 @@ const SCOUT_PREVIEW_URL := "http://127.0.0.1:8765/v3/scouting/preview"
 const SCOUT_EXECUTE_URL := "http://127.0.0.1:8765/v3/scouting/advance"
 const DRAFT_PREVIEW_URL := "http://127.0.0.1:8765/v3/draft/selection/preview"
 const DRAFT_EXECUTE_URL := "http://127.0.0.1:8765/v3/draft/selection/execute"
+const DRAFT_ADVANCE_PREVIEW_URL := "http://127.0.0.1:8765/v3/draft/advance/preview"
+const DRAFT_ADVANCE_EXECUTE_URL := "http://127.0.0.1:8765/v3/draft/advance/execute"
+const ROSTER_CUT_PREVIEW_URL := "http://127.0.0.1:8765/v3/draft/roster-cut/preview"
+const ROSTER_CUT_EXECUTE_URL := "http://127.0.0.1:8765/v3/draft/roster-cut/execute"
 
 const PANEL := Color("121824")
 const PANEL_ALT := Color("171f2d")
@@ -24,6 +28,10 @@ var scout_preview_request: HTTPRequest
 var scout_execute_request: HTTPRequest
 var draft_preview_request: HTTPRequest
 var draft_execute_request: HTTPRequest
+var draft_advance_preview_request: HTTPRequest
+var draft_advance_execute_request: HTTPRequest
+var roster_cut_preview_request: HTTPRequest
+var roster_cut_execute_request: HTTPRequest
 
 var status_label: Label
 var draft_phase_value: Label
@@ -40,8 +48,16 @@ var draft_status_label: Label
 var selected_prospect_label: Label
 var preview_pick_button: Button
 var make_pick_button: Button
+var preview_cpu_picks_button: Button
+var advance_cpu_picks_button: Button
+var roster_cut_status_label: Label
+var roster_cut_selector: OptionButton
+var preview_roster_cut_button: Button
+var commit_roster_cut_button: Button
 var scout_dialog: ConfirmationDialog
 var draft_dialog: ConfirmationDialog
+var cpu_draft_dialog: ConfirmationDialog
+var roster_cut_dialog: ConfirmationDialog
 
 var page_payload: Dictionary = {}
 var prospects: Array = []
@@ -49,14 +65,27 @@ var focus_selected: Dictionary = {}
 var selected_prospect: Dictionary = {}
 var scouting_execution_enabled := false
 var draft_execution_enabled := false
+var draft_cpu_advance_enabled := false
 var latest_scout_fingerprint := ""
 var latest_scout_working_sha := ""
 var latest_scout_focus_ids: Array = []
 var latest_draft_fingerprint := ""
 var latest_draft_working_sha := ""
 var latest_draft_prospect_id := ""
+var latest_cpu_draft_fingerprint := ""
+var latest_cpu_draft_working_sha := ""
+var latest_cpu_draft_pick_count := 0
+var latest_cpu_draft_completes_draft := false
+var post_draft_roster_cut_enabled := false
+var latest_roster_cut_fingerprint := ""
+var latest_roster_cut_working_sha := ""
+var latest_roster_cut_player_id := ""
+var latest_roster_cut_player_name := ""
+var latest_roster_cut_remaining_after := 0
 var scout_execute_in_flight := false
 var draft_execute_in_flight := false
+var draft_advance_execute_in_flight := false
+var roster_cut_execute_in_flight := false
 
 
 func _ready() -> void:
@@ -94,12 +123,33 @@ func _build_http() -> void:
 	draft_execute_request.request_completed.connect(_on_draft_execute_completed)
 	add_child(draft_execute_request)
 
+	draft_advance_preview_request = HTTPRequest.new()
+	draft_advance_preview_request.timeout = 90.0
+	draft_advance_preview_request.request_completed.connect(_on_draft_advance_preview_completed)
+	add_child(draft_advance_preview_request)
+
+	draft_advance_execute_request = HTTPRequest.new()
+	draft_advance_execute_request.timeout = 120.0
+	draft_advance_execute_request.request_completed.connect(_on_draft_advance_execute_completed)
+	add_child(draft_advance_execute_request)
+
+	roster_cut_preview_request = HTTPRequest.new()
+	roster_cut_preview_request.timeout = 60.0
+	roster_cut_preview_request.request_completed.connect(_on_roster_cut_preview_completed)
+	add_child(roster_cut_preview_request)
+
+	roster_cut_execute_request = HTTPRequest.new()
+	roster_cut_execute_request.timeout = 120.0
+	roster_cut_execute_request.request_completed.connect(_on_roster_cut_execute_completed)
+	add_child(roster_cut_execute_request)
+
 
 func _build_ui() -> void:
 	var page_scroll := ScrollContainer.new()
 	page_scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	page_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	page_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	page_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(page_scroll)
 
 	var outer := MarginContainer.new()
@@ -158,7 +208,7 @@ func _build_ui() -> void:
 	content.add_theme_constant_override("separation", 14)
 	column.add_child(content)
 
-	var board_card := _card(Vector2(720, 650))
+	var board_card := _card(Vector2(0, 650))
 	board_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var board_body := _card_body(board_card, 16)
 	var board_header := HBoxContainer.new()
@@ -176,22 +226,23 @@ func _build_ui() -> void:
 
 	var board_header_row := HBoxContainer.new()
 	board_header_row.add_theme_constant_override("separation", 8)
-	board_header_row.add_child(_column_label("FOCUS", 58))
-	board_header_row.add_child(_column_label("RK", 34))
-	var prospect_header := _column_label("PROSPECT", 220)
+	board_header_row.add_child(_column_label("FOCUS", 42))
+	board_header_row.add_child(_column_label("RK", 28))
+	var prospect_header := _column_label("PROSPECT", 150)
 	prospect_header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	board_header_row.add_child(prospect_header)
-	board_header_row.add_child(_column_label("POS", 42))
-	board_header_row.add_child(_column_label("OVR", 48))
-	board_header_row.add_child(_column_label("POT", 48))
-	board_header_row.add_child(_column_label("CONF", 54))
-	board_header_row.add_child(_column_label("PROJECTED", 92))
-	board_header_row.add_child(_column_label("DRAFT", 68))
+	board_header_row.add_child(_column_label("POS", 32))
+	board_header_row.add_child(_column_label("OVR", 40))
+	board_header_row.add_child(_column_label("POT", 40))
+	board_header_row.add_child(_column_label("CONF", 42))
+	board_header_row.add_child(_column_label("PROJECTED", 65))
+	board_header_row.add_child(_column_label("DRAFT", 58))
 	board_body.add_child(board_header_row)
 
 	var board_scroll := ScrollContainer.new()
 	board_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	board_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	board_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	board_body.add_child(board_scroll)
 	board_rows = VBoxContainer.new()
 	board_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -200,11 +251,11 @@ func _build_ui() -> void:
 	content.add_child(board_card)
 
 	var actions := VBoxContainer.new()
-	actions.custom_minimum_size = Vector2(385, 0)
+	actions.custom_minimum_size = Vector2(320, 0)
 	actions.add_theme_constant_override("separation", 14)
 	content.add_child(actions)
 
-	var scout_card := _card(Vector2(385, 315))
+	var scout_card := _card(Vector2(320, 315))
 	var scout_body := _card_body(scout_card, 16)
 	scout_body.add_child(_small_label("WEEKLY INTELLIGENCE CYCLE", GOLD))
 	scout_body.add_child(_section_title("SCOUTING OPERATIONS"))
@@ -235,7 +286,7 @@ func _build_ui() -> void:
 	scout_body.add_child(scouting_preview_label)
 	actions.add_child(scout_card)
 
-	var draft_card := _card(Vector2(385, 315))
+	var draft_card := _card(Vector2(320, 390))
 	var draft_body := _card_body(draft_card, 16)
 	draft_body.add_child(_small_label("PHASE-LOCKED TRANSACTION", ACCENT))
 	draft_body.add_child(_section_title("DRAFT NIGHT DESK"))
@@ -263,7 +314,49 @@ func _build_ui() -> void:
 	make_pick_button.pressed.connect(_confirm_draft_pick)
 	draft_buttons.add_child(make_pick_button)
 	draft_body.add_child(draft_buttons)
+
+	var cpu_draft_buttons := HBoxContainer.new()
+	cpu_draft_buttons.add_theme_constant_override("separation", 8)
+	preview_cpu_picks_button = _action_button("PREVIEW CPU PICKS", false)
+	preview_cpu_picks_button.disabled = true
+	preview_cpu_picks_button.pressed.connect(_preview_cpu_draft_picks)
+	cpu_draft_buttons.add_child(preview_cpu_picks_button)
+	advance_cpu_picks_button = _action_button("ADVANCE CPU PICKS", true)
+	advance_cpu_picks_button.disabled = true
+	advance_cpu_picks_button.pressed.connect(_confirm_cpu_draft_advance)
+	cpu_draft_buttons.add_child(advance_cpu_picks_button)
+	draft_body.add_child(cpu_draft_buttons)
 	actions.add_child(draft_card)
+
+
+	var roster_cut_card := _card(Vector2(320, 315))
+	var roster_cut_body := _card_body(roster_cut_card, 16)
+	roster_cut_body.add_child(_small_label("POST-DRAFT ROSTER GATE", GOLD))
+	roster_cut_body.add_child(_section_title("ROSTER DECISIONS"))
+	roster_cut_status_label = Label.new()
+	roster_cut_status_label.text = "Post-Draft roster decisions unlock after the Draft is complete."
+	roster_cut_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	roster_cut_status_label.add_theme_color_override("font_color", MUTED)
+	roster_cut_status_label.add_theme_font_size_override("font_size", 10)
+	roster_cut_body.add_child(roster_cut_status_label)
+
+	roster_cut_selector = OptionButton.new()
+	roster_cut_selector.disabled = true
+	roster_cut_selector.item_selected.connect(_on_roster_cut_selection_changed)
+	roster_cut_body.add_child(roster_cut_selector)
+
+	var roster_cut_buttons := HBoxContainer.new()
+	roster_cut_buttons.add_theme_constant_override("separation", 8)
+	preview_roster_cut_button = _action_button("PREVIEW ROSTER CUT", false)
+	preview_roster_cut_button.disabled = true
+	preview_roster_cut_button.pressed.connect(_preview_roster_cut)
+	roster_cut_buttons.add_child(preview_roster_cut_button)
+	commit_roster_cut_button = _action_button("RELEASE PLAYER", true)
+	commit_roster_cut_button.disabled = true
+	commit_roster_cut_button.pressed.connect(_confirm_roster_cut)
+	roster_cut_buttons.add_child(commit_roster_cut_button)
+	roster_cut_body.add_child(roster_cut_buttons)
+	actions.add_child(roster_cut_card)
 
 	scout_dialog = ConfirmationDialog.new()
 	scout_dialog.title = "Confirm scouting week"
@@ -275,6 +368,16 @@ func _build_ui() -> void:
 	draft_dialog.confirmed.connect(_execute_draft_pick)
 	add_child(draft_dialog)
 
+	cpu_draft_dialog = ConfirmationDialog.new()
+	cpu_draft_dialog.title = "Confirm CPU Draft advancement"
+	cpu_draft_dialog.confirmed.connect(_execute_cpu_draft_advance)
+	add_child(cpu_draft_dialog)
+
+	roster_cut_dialog = ConfirmationDialog.new()
+	roster_cut_dialog.title = "Confirm post-Draft roster release"
+	roster_cut_dialog.confirmed.connect(_execute_roster_cut)
+	add_child(roster_cut_dialog)
+
 
 func _request_summary() -> void:
 	if summary_request == null:
@@ -283,6 +386,8 @@ func _request_summary() -> void:
 		return
 	_invalidate_scout_preview()
 	_invalidate_draft_preview()
+	_invalidate_draft_advance_preview()
+	_invalidate_roster_cut_preview()
 	status_label.text = "Loading production scouting reports and Draft state from the isolated V3 save..."
 	status_label.add_theme_color_override("font_color", ACCENT)
 	var error: int = summary_request.request(SUMMARY_URL)
@@ -329,9 +434,11 @@ func _apply_summary() -> void:
 	confidence_value.text = "%.0f%%" % float(summary.get("average_confidence", 0.0))
 	scouting_execution_enabled = bool(page_payload.get("scouting_execution_enabled", false)) and weeks_remaining > 0
 	draft_execution_enabled = bool(page_payload.get("draft_execution_enabled", false))
+	draft_cpu_advance_enabled = bool(page_payload.get("draft_cpu_advance_enabled", false))
 	preview_week_button.disabled = not scouting_execution_enabled
 	_update_draft_controls()
 	_update_focus_label()
+	_apply_post_draft_roster(page_payload.get("post_draft_roster", {}))
 
 	var draft_year: int = int(draft.get("draft_year", 0))
 	var source_label: String = str(draft.get("source_season", ""))
@@ -350,9 +457,18 @@ func _apply_summary() -> void:
 		var round_pick: int = int(pick.get("round_pick", 0))
 		draft_status_label.text = "ON THE CLOCK • Pick #%s • Round %s, Pick %s • %s\n%s" % [
 			str(overall_pick), str(round_number), str(round_pick), owner,
-			"Your franchise may select now." if draft_execution_enabled else "CPU-owned pick. Selection remains protected."
+			"Your franchise may select now." if draft_execution_enabled else "CPU-owned pick. Preview CPU PICKS to simulate safely to your next pick or Draft completion."
 		]
 		draft_status_label.add_theme_color_override("font_color", GOOD if draft_execution_enabled else GOLD)
+	elif phase == "draft_complete":
+		var roster_gate: Dictionary = page_payload.get("post_draft_roster", {})
+		var cuts_remaining: int = int(roster_gate.get("cuts_remaining", 0))
+		if cuts_remaining > 0:
+			draft_status_label.text = "DRAFT COMPLETE • %s post-Draft roster decision(s) remain. Use ROSTER DECISIONS below before opening the next season." % str(cuts_remaining)
+			draft_status_label.add_theme_color_override("font_color", GOLD)
+		else:
+			draft_status_label.text = "DRAFT COMPLETE • Post-Draft roster gate cleared. Return to SEASON → OPEN NEXT SEASON."
+			draft_status_label.add_theme_color_override("font_color", GOOD)
 	else:
 		draft_status_label.text = "Draft selection is locked during %s. Scouting remains available through its production phase rules." % phase.replace("_", " ").capitalize()
 		draft_status_label.add_theme_color_override("font_color", MUTED)
@@ -392,22 +508,22 @@ func _prospect_row(row: Dictionary) -> Control:
 	var prospect_id: String = str(row.get("prospect_id", ""))
 
 	var focus := CheckBox.new()
-	focus.custom_minimum_size = Vector2(58, 0)
+	focus.custom_minimum_size = Vector2(42, 0)
 	focus.button_pressed = focus_selected.has(prospect_id)
 	focus.disabled = not scouting_execution_enabled
 	focus.toggled.connect(_on_focus_toggled.bind(prospect_id))
 	line.add_child(focus)
-	line.add_child(_cell(str(row.get("Rank", "")), 34, MUTED))
-	var name := _cell(str(row.get("Prospect", prospect_id)), 220, TEXT)
+	line.add_child(_cell(str(row.get("Rank", "")), 28, MUTED))
+	var name := _cell(str(row.get("Prospect", prospect_id)), 150, TEXT)
 	name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	line.add_child(name)
-	line.add_child(_cell(str(row.get("Pos", "")), 42, ACCENT))
-	line.add_child(_cell(_rating_text(row.get("Scouted OVR")), 48, TEXT))
-	line.add_child(_cell(_rating_text(row.get("Scouted POT")), 48, GOOD))
-	line.add_child(_cell("%.0f%%" % float(row.get("Confidence", 0.0)), 54, MUTED))
-	line.add_child(_cell(str(row.get("Projected", "")), 92, MUTED))
+	line.add_child(_cell(str(row.get("Pos", "")), 32, ACCENT))
+	line.add_child(_cell(_rating_text(row.get("Scouted OVR")), 40, TEXT))
+	line.add_child(_cell(_rating_text(row.get("Scouted POT")), 40, GOOD))
+	line.add_child(_cell("%.0f%%" % float(row.get("Confidence", 0.0)), 42, MUTED))
+	line.add_child(_cell(str(row.get("Projected", "")), 65, MUTED))
 	var select_button := _mini_button("SELECT")
-	select_button.custom_minimum_size = Vector2(68, 30)
+	select_button.custom_minimum_size = Vector2(58, 30)
 	select_button.disabled = bool(row.get("Drafted", false))
 	select_button.pressed.connect(_select_prospect.bind(row.duplicate(true)))
 	line.add_child(select_button)
@@ -579,9 +695,12 @@ func _select_prospect(row: Dictionary) -> void:
 
 
 func _update_draft_controls() -> void:
-	preview_pick_button.disabled = not draft_execution_enabled or selected_prospect.is_empty() or draft_execute_in_flight
+	preview_pick_button.disabled = not draft_execution_enabled or selected_prospect.is_empty() or draft_execute_in_flight or draft_advance_execute_in_flight
+	preview_cpu_picks_button.disabled = not draft_cpu_advance_enabled or draft_execute_in_flight or draft_advance_execute_in_flight
 	if latest_draft_fingerprint == "":
 		make_pick_button.disabled = true
+	if latest_cpu_draft_fingerprint == "":
+		advance_cpu_picks_button.disabled = true
 
 
 func _preview_draft_pick() -> void:
@@ -697,6 +816,345 @@ func _on_draft_execute_completed(result: int, response_code: int, _headers: Pack
 	_request_summary()
 
 
+func _preview_cpu_draft_picks() -> void:
+	if not draft_cpu_advance_enabled or draft_advance_preview_request == null:
+		return
+	if draft_advance_preview_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		return
+	_invalidate_draft_advance_preview()
+	draft_status_label.text = "Building a read-only CPU Draft candidate through your next pick or Draft completion..."
+	draft_status_label.add_theme_color_override("font_color", ACCENT)
+	var headers := PackedStringArray(["Content-Type: application/json"])
+	var error: int = draft_advance_preview_request.request(DRAFT_ADVANCE_PREVIEW_URL, headers, HTTPClient.METHOD_POST, "{}")
+	if error != OK:
+		draft_status_label.text = "Could not start CPU Draft preview."
+		draft_status_label.add_theme_color_override("font_color", BAD)
+
+
+func _on_draft_advance_preview_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	var raw_payload = JSON.parse_string(body.get_string_from_utf8())
+	if result != HTTPRequest.RESULT_SUCCESS or typeof(raw_payload) != TYPE_DICTIONARY:
+		draft_status_label.text = "CPU Draft preview failed before a valid bridge response was received."
+		draft_status_label.add_theme_color_override("font_color", BAD)
+		return
+	if response_code != 200:
+		draft_status_label.text = str(raw_payload.get("detail", raw_payload.get("error", "CPU Draft preview failed.")))
+		draft_status_label.add_theme_color_override("font_color", BAD)
+		return
+	if not bool(raw_payload.get("working_save_unchanged", false)) or not bool(raw_payload.get("active_v2_unchanged", false)):
+		draft_status_label.text = "SAFETY FAILURE • CPU Draft preview changed a protected checkpoint."
+		draft_status_label.add_theme_color_override("font_color", BAD)
+		return
+	var can_commit: bool = bool(raw_payload.get("can_commit", false))
+	var pick_count: int = int(raw_payload.get("picks_simulated", 0))
+	var draft_complete: bool = bool(raw_payload.get("draft_complete", false))
+	var next_pick: Dictionary = raw_payload.get("next_pick", {})
+	var destination: String = "Draft completion" if draft_complete else "Pick #%s • %s on the clock" % [
+		str(next_pick.get("overall_pick", "")), str(next_pick.get("owner_team", ""))
+	]
+	draft_status_label.text = "CPU DRAFT PREVIEW • %s pick(s) • %s\n%s" % [
+		str(pick_count), destination,
+		str(raw_payload.get("reason", "No save written. Commit will reproduce this production-AI progression from the same V3 checkpoint."))
+	]
+	draft_status_label.add_theme_color_override("font_color", GOOD if can_commit else GOLD)
+	var fingerprint: String = str(raw_payload.get("action_fingerprint", ""))
+	var working_sha: String = str(raw_payload.get("working_save_sha256", ""))
+	if can_commit and fingerprint != "" and working_sha != "":
+		latest_cpu_draft_fingerprint = fingerprint
+		latest_cpu_draft_working_sha = working_sha
+		latest_cpu_draft_pick_count = pick_count
+		latest_cpu_draft_completes_draft = draft_complete
+		advance_cpu_picks_button.disabled = false
+
+
+func _confirm_cpu_draft_advance() -> void:
+	if draft_advance_execute_in_flight or latest_cpu_draft_fingerprint == "" or latest_cpu_draft_working_sha == "":
+		return
+	var destination := "finish the Draft" if latest_cpu_draft_completes_draft else "stop at your next controlled pick"
+	cpu_draft_dialog.dialog_text = "Advance %s CPU-owned Draft pick(s) and %s?\n\nThe existing production Draft AI makes every CPU selection. Your controlled pick is never auto-selected. This writes ONLY V3, creates a recovery checkpoint, reloads and verifies every simulated pick, and protects V2." % [
+		str(latest_cpu_draft_pick_count), destination
+	]
+	cpu_draft_dialog.popup_centered(Vector2i(600, 340))
+
+
+func _execute_cpu_draft_advance() -> void:
+	if draft_advance_execute_request == null or draft_advance_execute_in_flight:
+		return
+	if draft_advance_execute_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		return
+	var request_payload: Dictionary = {
+		"expected_action_fingerprint": latest_cpu_draft_fingerprint,
+		"expected_working_save_sha256": latest_cpu_draft_working_sha
+	}
+	draft_advance_execute_in_flight = true
+	advance_cpu_picks_button.disabled = true
+	preview_cpu_picks_button.disabled = true
+	preview_pick_button.disabled = true
+	make_pick_button.disabled = true
+	draft_status_label.text = "Advancing production CPU Draft picks, then reloading and verifying every committed selection..."
+	draft_status_label.add_theme_color_override("font_color", ACCENT)
+	var headers := PackedStringArray(["Content-Type: application/json"])
+	var error: int = draft_advance_execute_request.request(DRAFT_ADVANCE_EXECUTE_URL, headers, HTTPClient.METHOD_POST, JSON.stringify(request_payload))
+	if error != OK:
+		draft_advance_execute_in_flight = false
+		_update_draft_controls()
+		draft_status_label.text = "Could not start CPU Draft advancement."
+		draft_status_label.add_theme_color_override("font_color", BAD)
+
+
+func _on_draft_advance_execute_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	draft_advance_execute_in_flight = false
+	var raw_payload = JSON.parse_string(body.get_string_from_utf8())
+	if result != HTTPRequest.RESULT_SUCCESS or typeof(raw_payload) != TYPE_DICTIONARY:
+		draft_status_label.text = "CPU Draft advancement failed before a valid bridge response was received."
+		draft_status_label.add_theme_color_override("font_color", BAD)
+		_invalidate_draft_advance_preview()
+		_update_draft_controls()
+		return
+	if response_code != 200:
+		var detail: String = str(raw_payload.get("detail", raw_payload.get("error", "CPU Draft advancement failed.")))
+		if bool(raw_payload.get("rollback_performed", false)):
+			detail += "\nRollback: %s" % ("VERIFIED" if bool(raw_payload.get("rollback_verified", false)) else "REQUIRES REVIEW")
+		if str(raw_payload.get("error", "")) == "stale_draft_advance_preview":
+			detail += "\nRun PREVIEW CPU PICKS again."
+		draft_status_label.text = detail
+		draft_status_label.add_theme_color_override("font_color", GOLD if response_code == 409 else BAD)
+		_invalidate_draft_advance_preview()
+		_update_draft_controls()
+		return
+	if not bool(raw_payload.get("persisted_after_reload", false)) or not bool(raw_payload.get("active_v2_unchanged", false)):
+		draft_status_label.text = "CPU DRAFT SAFETY FAILURE • reload persistence or V2 protection was not confirmed."
+		draft_status_label.add_theme_color_override("font_color", BAD)
+		_invalidate_draft_advance_preview()
+		return
+	var verification: Dictionary = raw_payload.get("verification", {})
+	var completed: bool = bool(verification.get("draft_complete", false))
+	var next_pick: Dictionary = verification.get("next_pick", {})
+	var destination := "DRAFT COMPLETE • Continue from SEASON → OPEN NEXT SEASON." if completed else "NEXT USER PICK • #%s • %s" % [
+		str(next_pick.get("overall_pick", "")), str(next_pick.get("owner_team", ""))
+	]
+	draft_status_label.text = "CPU DRAFT ADVANCE COMMITTED • %s pick(s)\n%s\nPersisted after reload • protected V2 unchanged" % [
+		str(verification.get("picks_simulated", raw_payload.get("picks_simulated", 0))), destination
+	]
+	draft_status_label.add_theme_color_override("font_color", GOOD)
+	_invalidate_draft_advance_preview()
+	_invalidate_draft_preview()
+	_request_summary()
+
+
+
+func _apply_post_draft_roster(raw_payload) -> void:
+	_invalidate_roster_cut_preview()
+	var payload: Dictionary = raw_payload if typeof(raw_payload) == TYPE_DICTIONARY else {}
+	var cuts_remaining: int = int(payload.get("cuts_remaining", 0))
+	var roster_count: int = int(payload.get("roster_count", 0))
+	var standard_count: int = int(payload.get("standard_contract_count", 0))
+	var target_roster: int = int(payload.get("target_roster_size", 21))
+	var target_standard: int = int(payload.get("target_standard_contract_count", 15))
+	post_draft_roster_cut_enabled = bool(payload.get("enabled", false)) and cuts_remaining > 0
+
+	roster_cut_selector.clear()
+	var candidates: Array = payload.get("candidates", [])
+	for raw_row in candidates:
+		if typeof(raw_row) != TYPE_DICTIONARY:
+			continue
+		var row: Dictionary = raw_row
+		if not bool(row.get("can_release", false)):
+			continue
+		var label := "%s • %s • %s OVR • %s" % [
+			str(row.get("name", row.get("player_id", ""))),
+			str(row.get("position", "")),
+			_rating_text(row.get("overall")),
+			_money_text(row.get("salary"))
+		]
+		roster_cut_selector.add_item(label)
+		var index := roster_cut_selector.item_count - 1
+		roster_cut_selector.set_item_metadata(index, str(row.get("player_id", "")))
+
+	if cuts_remaining <= 0 and str(payload.get("status", "")) == "roster_cleared_for_next_season":
+		roster_cut_status_label.text = "ROSTER CLEARED • %s players / %s standard contracts. Return to SEASON → OPEN NEXT SEASON." % [
+			str(roster_count), str(standard_count)
+		]
+		roster_cut_status_label.add_theme_color_override("font_color", GOOD)
+	elif cuts_remaining > 0:
+		roster_cut_status_label.text = "%s RELEASE(S) REQUIRED • %s/%s roster • %s/%s standard contracts\nChoose the player you want to release. Every cut is previewed with its certified financial treatment before V3 is written." % [
+			str(cuts_remaining), str(roster_count), str(target_roster),
+			str(standard_count), str(target_standard)
+		]
+		roster_cut_status_label.add_theme_color_override("font_color", GOLD)
+	else:
+		roster_cut_status_label.text = "Post-Draft roster decisions unlock after the Draft is complete."
+		roster_cut_status_label.add_theme_color_override("font_color", MUTED)
+
+	roster_cut_selector.disabled = not post_draft_roster_cut_enabled or roster_cut_selector.item_count == 0
+	preview_roster_cut_button.disabled = roster_cut_selector.disabled
+	if roster_cut_selector.item_count > 0:
+		roster_cut_selector.select(0)
+
+
+func _selected_roster_cut_player_id() -> String:
+	if roster_cut_selector == null or roster_cut_selector.item_count == 0:
+		return ""
+	var index := roster_cut_selector.selected
+	if index < 0 or index >= roster_cut_selector.item_count:
+		return ""
+	return str(roster_cut_selector.get_item_metadata(index))
+
+
+func _on_roster_cut_selection_changed(_index: int) -> void:
+	_invalidate_roster_cut_preview()
+	preview_roster_cut_button.disabled = not post_draft_roster_cut_enabled or _selected_roster_cut_player_id().is_empty()
+
+
+func _preview_roster_cut() -> void:
+	if not post_draft_roster_cut_enabled or roster_cut_preview_request == null:
+		return
+	if roster_cut_preview_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		return
+	var player_id := _selected_roster_cut_player_id()
+	if player_id.is_empty():
+		return
+	_invalidate_roster_cut_preview()
+	roster_cut_status_label.text = "Building a read-only post-Draft roster-release candidate..."
+	roster_cut_status_label.add_theme_color_override("font_color", ACCENT)
+	var headers := PackedStringArray(["Content-Type: application/json"])
+	var error: int = roster_cut_preview_request.request(
+		ROSTER_CUT_PREVIEW_URL,
+		headers,
+		HTTPClient.METHOD_POST,
+		JSON.stringify({"player_id": player_id})
+	)
+	if error != OK:
+		roster_cut_status_label.text = "Could not start post-Draft roster-cut preview."
+		roster_cut_status_label.add_theme_color_override("font_color", BAD)
+
+
+func _on_roster_cut_preview_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	var raw_payload = JSON.parse_string(body.get_string_from_utf8())
+	if result != HTTPRequest.RESULT_SUCCESS or typeof(raw_payload) != TYPE_DICTIONARY:
+		roster_cut_status_label.text = "Roster-cut preview failed before a valid bridge response was received."
+		roster_cut_status_label.add_theme_color_override("font_color", BAD)
+		return
+	if response_code != 200 or not bool(raw_payload.get("can_commit", false)):
+		roster_cut_status_label.text = str(raw_payload.get("reason", raw_payload.get("detail", "Roster cut is blocked.")))
+		roster_cut_status_label.add_theme_color_override("font_color", GOLD if response_code == 409 else BAD)
+		_invalidate_roster_cut_preview()
+		return
+	if not bool(raw_payload.get("working_save_unchanged", false)) or not bool(raw_payload.get("active_v2_unchanged", false)):
+		roster_cut_status_label.text = "SAFETY FAILURE • roster-cut preview changed a protected checkpoint."
+		roster_cut_status_label.add_theme_color_override("font_color", BAD)
+		_invalidate_roster_cut_preview()
+		return
+	var player: Dictionary = raw_payload.get("player", {})
+	var fingerprint: String = str(raw_payload.get("action_fingerprint", ""))
+	var working_sha: String = str(raw_payload.get("working_save_sha256", ""))
+	latest_roster_cut_player_id = str(player.get("player_id", ""))
+	latest_roster_cut_player_name = str(player.get("name", latest_roster_cut_player_id))
+	latest_roster_cut_remaining_after = int(raw_payload.get("cuts_remaining_after", 0))
+	roster_cut_status_label.text = "ROSTER CUT PREVIEW • %s\n%s → %s required cut(s) • %s • dead money %s\nNo save written." % [
+		latest_roster_cut_player_name,
+		str(raw_payload.get("cuts_remaining_before", 0)),
+		str(latest_roster_cut_remaining_after),
+		str(player.get("financial_treatment", "certified")).replace("_", " ").capitalize(),
+		_money_text(player.get("dead_money_current_season"))
+	]
+	roster_cut_status_label.add_theme_color_override("font_color", GOOD)
+	if not fingerprint.is_empty() and not working_sha.is_empty() and not latest_roster_cut_player_id.is_empty():
+		latest_roster_cut_fingerprint = fingerprint
+		latest_roster_cut_working_sha = working_sha
+		commit_roster_cut_button.disabled = false
+
+
+func _confirm_roster_cut() -> void:
+	if roster_cut_execute_in_flight or latest_roster_cut_fingerprint.is_empty() or latest_roster_cut_working_sha.is_empty():
+		return
+	roster_cut_dialog.dialog_text = "Release %s from the active franchise?\n\nThis is your explicit post-Draft roster decision. The certified financial/reconciliation engine will apply the release ONLY to V3, create a recovery checkpoint, reload and verify the result, and protect V2." % latest_roster_cut_player_name
+	roster_cut_dialog.popup_centered(Vector2i(620, 340))
+
+
+func _execute_roster_cut() -> void:
+	if roster_cut_execute_request == null or roster_cut_execute_in_flight:
+		return
+	if roster_cut_execute_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		return
+	var request_payload: Dictionary = {
+		"player_id": latest_roster_cut_player_id,
+		"expected_action_fingerprint": latest_roster_cut_fingerprint,
+		"expected_working_save_sha256": latest_roster_cut_working_sha
+	}
+	roster_cut_execute_in_flight = true
+	preview_roster_cut_button.disabled = true
+	commit_roster_cut_button.disabled = true
+	roster_cut_selector.disabled = true
+	roster_cut_status_label.text = "Applying the selected post-Draft roster release, then reloading and verifying V3..."
+	roster_cut_status_label.add_theme_color_override("font_color", ACCENT)
+	var headers := PackedStringArray(["Content-Type: application/json"])
+	var error: int = roster_cut_execute_request.request(
+		ROSTER_CUT_EXECUTE_URL,
+		headers,
+		HTTPClient.METHOD_POST,
+		JSON.stringify(request_payload)
+	)
+	if error != OK:
+		roster_cut_execute_in_flight = false
+		roster_cut_status_label.text = "Could not start post-Draft roster release."
+		roster_cut_status_label.add_theme_color_override("font_color", BAD)
+		_request_summary()
+
+
+func _on_roster_cut_execute_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	roster_cut_execute_in_flight = false
+	var raw_payload = JSON.parse_string(body.get_string_from_utf8())
+	if result != HTTPRequest.RESULT_SUCCESS or typeof(raw_payload) != TYPE_DICTIONARY:
+		roster_cut_status_label.text = "Post-Draft roster release failed before a valid bridge response was received."
+		roster_cut_status_label.add_theme_color_override("font_color", BAD)
+		_invalidate_roster_cut_preview()
+		return
+	if response_code != 200:
+		var detail: String = str(raw_payload.get("detail", raw_payload.get("error", "Post-Draft roster release failed.")))
+		if bool(raw_payload.get("rollback_performed", false)):
+			detail += "\nRollback: %s" % ("VERIFIED" if bool(raw_payload.get("rollback_verified", false)) else "REQUIRES REVIEW")
+		if str(raw_payload.get("error", "")) == "stale_post_draft_roster_cut_preview":
+			detail += "\nRun PREVIEW ROSTER CUT again."
+		roster_cut_status_label.text = detail
+		roster_cut_status_label.add_theme_color_override("font_color", GOLD if response_code == 409 else BAD)
+		_invalidate_roster_cut_preview()
+		return
+	if not bool(raw_payload.get("persisted_after_reload", false)) or not bool(raw_payload.get("active_v2_unchanged", false)):
+		roster_cut_status_label.text = "ROSTER-CUT SAFETY FAILURE • reload persistence or V2 protection was not confirmed."
+		roster_cut_status_label.add_theme_color_override("font_color", BAD)
+		_invalidate_roster_cut_preview()
+		return
+	var verification: Dictionary = raw_payload.get("verification", {})
+	var remaining: int = int(verification.get("cuts_remaining_after", latest_roster_cut_remaining_after))
+	roster_cut_status_label.text = "ROSTER RELEASE COMMITTED • %s\n%s cut(s) remain • persisted after reload • protected V2 unchanged" % [
+		str(verification.get("player_name", latest_roster_cut_player_name)), str(remaining)
+	]
+	roster_cut_status_label.add_theme_color_override("font_color", GOOD)
+	_invalidate_roster_cut_preview()
+	_request_summary()
+
+
+func _invalidate_roster_cut_preview() -> void:
+	latest_roster_cut_fingerprint = ""
+	latest_roster_cut_working_sha = ""
+	latest_roster_cut_player_id = ""
+	latest_roster_cut_player_name = ""
+	latest_roster_cut_remaining_after = 0
+	if commit_roster_cut_button != null:
+		commit_roster_cut_button.disabled = true
+
+
+func _money_text(value) -> String:
+	if value == null:
+		return "$0"
+	var amount := float(value)
+	if abs(amount) >= 1000000.0:
+		return "$%.1fM" % (amount / 1000000.0)
+	if abs(amount) >= 1000.0:
+		return "$%.0fK" % (amount / 1000.0)
+	return "$%.0f" % amount
+
 func _invalidate_scout_preview() -> void:
 	latest_scout_fingerprint = ""
 	latest_scout_working_sha = ""
@@ -711,6 +1169,15 @@ func _invalidate_draft_preview() -> void:
 	latest_draft_prospect_id = ""
 	if make_pick_button != null:
 		make_pick_button.disabled = true
+
+
+func _invalidate_draft_advance_preview() -> void:
+	latest_cpu_draft_fingerprint = ""
+	latest_cpu_draft_working_sha = ""
+	latest_cpu_draft_pick_count = 0
+	latest_cpu_draft_completes_draft = false
+	if advance_cpu_picks_button != null:
+		advance_cpu_picks_button.disabled = true
 
 
 func _rating_text(value) -> String:
