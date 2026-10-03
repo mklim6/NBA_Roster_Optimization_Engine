@@ -11,6 +11,7 @@ const SaveManagerV3 = preload("res://scripts/save_manager_v3.gd")
 const SettingsTutorialV3 = preload("res://scripts/settings_tutorial_v3.gd")
 const RequestCoordinatorV3 = preload("res://scripts/request_coordinator_v3.gd")
 const LongActionManagerV3 = preload("res://scripts/long_action_manager_v3.gd")
+const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
@@ -23,21 +24,21 @@ const INTELLIGENCE_URL := "http://127.0.0.1:8765/v3/franchise-intelligence"
 const MARKET_INTELLIGENCE_URL := "http://127.0.0.1:8765/v3/market-intelligence"
 const TRANSACTION_FOUNDATION_URL := "http://127.0.0.1:8765/v3/transaction-foundation"
 
-const BG := Color("080b12")
-const SIDEBAR := Color("0d111a")
-const PANEL := Color("121824")
-const PANEL_ALT := Color("171f2d")
-const PANEL_HOVER := Color("202b3d")
-const TEXT := Color("f7f8fb")
-const MUTED := Color("8d99aa")
-const ACCENT := Color("8ed8ff")
-const GOOD := Color("61d69b")
-const BAD := Color("ff6577")
-const BORDER := Color("263247")
-const SOFT_BORDER := Color("1d2737")
-const TEAM_PRIMARY := Color("d9273c")
-const TEAM_PRIMARY_HOVER := Color("ef4055")
-const GOLD := Color("f3c96b")
+const BG := DesignSystemV3.BG
+const SIDEBAR := DesignSystemV3.SIDEBAR
+const PANEL := DesignSystemV3.PANEL
+const PANEL_ALT := DesignSystemV3.PANEL_ALT
+const PANEL_HOVER := DesignSystemV3.PANEL_HOVER
+const TEXT := DesignSystemV3.TEXT
+const MUTED := DesignSystemV3.MUTED
+const ACCENT := DesignSystemV3.ACCENT
+const GOOD := DesignSystemV3.GOOD
+const BAD := DesignSystemV3.BAD
+const BORDER := DesignSystemV3.BORDER
+const SOFT_BORDER := DesignSystemV3.SOFT_BORDER
+const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
+const TEAM_PRIMARY_HOVER := DesignSystemV3.TEAM_PRIMARY_HOVER
+const GOLD := DesignSystemV3.GOLD
 
 var bridge_status: Label
 var bridge_detail: Label
@@ -145,6 +146,7 @@ var draft_detail: Label
 
 
 func _ready() -> void:
+	theme = DesignSystemV3.build_theme()
 	request_coordinator = RequestCoordinatorV3.new()
 	long_action_manager = LongActionManagerV3.new()
 	long_action_manager.action_started.connect(_on_long_action_started)
