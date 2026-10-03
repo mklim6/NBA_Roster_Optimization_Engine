@@ -141,6 +141,7 @@ static func nav_button(
 	button.text = text_value
 	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	button.tooltip_text = "Open %s" % text_value.capitalize()
 	button.add_theme_font_size_override("font_size", DesignSystemV3.FONT_SMALL)
 	button.add_theme_color_override("font_hover_color", DesignSystemV3.TEXT_STRONG)
 	button.add_theme_color_override("font_pressed_color", DesignSystemV3.TEXT_STRONG)
@@ -214,6 +215,86 @@ static func divider() -> HSeparator:
 	line.add_theme_constant_override("separation", DesignSystemV3.SPACE_MD)
 	line.modulate = Color(1, 1, 1, 0.10)
 	return line
+
+
+static func status_banner(text_value: String, color: Color) -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override(
+		"panel",
+		_surface(
+			Color(color, 0.08),
+			DesignSystemV3.RADIUS_MD,
+			Color(color, 0.30),
+			1,
+			0.0
+		)
+	)
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 14)
+	margin.add_theme_constant_override("margin_top", 9)
+	margin.add_theme_constant_override("margin_right", 14)
+	margin.add_theme_constant_override("margin_bottom", 9)
+	panel.add_child(margin)
+
+	var label := Label.new()
+	label.text = text_value
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.add_theme_color_override("font_color", color)
+	label.add_theme_font_size_override("font_size", DesignSystemV3.FONT_SMALL)
+	margin.add_child(label)
+	return panel
+
+
+static func empty_state(title_text: String, detail_text: String) -> PanelContainer:
+	var panel := card(Vector2(0, 132), true)
+	var body := card_body(panel, 18)
+	body.alignment = BoxContainer.ALIGNMENT_CENTER
+
+	var title := Label.new()
+	title.text = title_text
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_color_override("font_color", DesignSystemV3.TEXT_STRONG)
+	title.add_theme_font_size_override("font_size", DesignSystemV3.FONT_SECTION)
+	body.add_child(title)
+
+	var detail := Label.new()
+	detail.text = detail_text
+	detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	detail.add_theme_color_override("font_color", DesignSystemV3.MUTED)
+	detail.add_theme_font_size_override("font_size", DesignSystemV3.FONT_BODY)
+	body.add_child(detail)
+	return panel
+
+
+static func loading_skeleton(
+	rows: int = 4,
+	label_text: String = "Loading live franchise data..."
+) -> VBoxContainer:
+	var root := VBoxContainer.new()
+	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.add_theme_constant_override("separation", DesignSystemV3.SPACE_SM)
+
+	var caption := small_label(label_text, DesignSystemV3.MUTED)
+	root.add_child(caption)
+
+	for index in range(max(rows, 1)):
+		var row := PanelContainer.new()
+		row.custom_minimum_size = Vector2(0, 36)
+		var opacity := 0.66 - (float(index % 3) * 0.08)
+		row.add_theme_stylebox_override(
+			"panel",
+			_surface(
+				Color(DesignSystemV3.PANEL_ALT, opacity),
+				DesignSystemV3.RADIUS_SM,
+				Color(DesignSystemV3.SOFT_BORDER, 0.70),
+				1,
+				0.0
+			)
+		)
+		root.add_child(row)
+
+	return root
 
 
 static func page_header(

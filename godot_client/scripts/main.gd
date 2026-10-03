@@ -14,6 +14,7 @@ const LongActionManagerV3 = preload("res://scripts/long_action_manager_v3.gd")
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const UiComponentsV3 = preload("res://scripts/ui_components_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+const UxPolishV3 = preload("res://scripts/ux_polish_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
@@ -244,6 +245,7 @@ func _on_long_action_started(snapshot: Dictionary) -> void:
 	long_action_elapsed_label.text = "Elapsed 0.0s"
 	long_action_overlay.visible = true
 	long_action_overlay.move_to_front()
+	UxPolishV3.animate_overlay_in(long_action_overlay)
 
 
 func _on_long_action_finished(_snapshot: Dictionary) -> void:
@@ -948,11 +950,12 @@ func _build_roster_area() -> Control:
 	roster_rows.add_theme_constant_override("separation", 5)
 	scroll.add_child(roster_rows)
 
-	var loading := Label.new()
-	loading.text = "Loading players from the V3 working checkpoint..."
-	loading.add_theme_color_override("font_color", MUTED)
-	loading.add_theme_font_size_override("font_size", 12)
-	roster_rows.add_child(loading)
+	roster_rows.add_child(
+		UiComponentsV3.loading_skeleton(
+			5,
+			"Loading players from the V3 working checkpoint..."
+		)
+	)
 
 	column.add_child(roster_card)
 
@@ -2582,38 +2585,67 @@ func _on_intelligence_completed(
 	)
 
 
+func _page_control(page_name: String):
+	match page_name:
+		"HOME":
+			return home_page
+		"FRANCHISES":
+			return save_manager_page
+		"ROSTER":
+			return roster_page
+		"GAME DAY":
+			return game_day_page
+		"TRADES":
+			return trades_page
+		"FREE AGENCY":
+			return free_agency_page
+		"SCOUTING":
+			return scouting_page
+		"SEASON":
+			return season_page
+		"LEAGUE":
+			return league_page
+		"FRONT OFFICE":
+			return front_office_page
+		"SETTINGS":
+			return settings_page
+	return null
+
+
+func _all_page_controls() -> Array:
+	return [
+		home_page,
+		save_manager_page,
+		roster_page,
+		game_day_page,
+		trades_page,
+		free_agency_page,
+		scouting_page,
+		season_page,
+		league_page,
+		front_office_page,
+		settings_page,
+	]
+
+
 func _show_page(page_name: String, force_refresh: bool = false) -> void:
-	# Batch 18B: repeated clicks on the already-visible page no longer trigger
-	# duplicate bridge work. Explicit state changes can request a forced refresh.
 	if page_navigation_initialized and page_name == current_page and not force_refresh:
 		return
+
+	var previous_page := current_page
 	page_navigation_initialized = true
 	current_page = page_name
 
-	if home_page != null:
-		home_page.visible = page_name == "HOME"
+	var target_page = _page_control(page_name)
+	for page in _all_page_controls():
+		if page == null:
+			continue
+		page.visible = page == target_page
+		if page != target_page:
+			page.modulate = Color(1.0, 1.0, 1.0, 1.0)
 
-	if save_manager_page != null:
-		save_manager_page.visible = page_name == "FRANCHISES"
-	if settings_page != null:
-		settings_page.visible = page_name == "SETTINGS"
-
-	if roster_page != null:
-		roster_page.visible = page_name == "ROSTER"
-	if game_day_page != null:
-		game_day_page.visible = page_name == "GAME DAY"
-	if trades_page != null:
-		trades_page.visible = page_name == "TRADES"
-	if free_agency_page != null:
-		free_agency_page.visible = page_name == "FREE AGENCY"
-	if scouting_page != null:
-		scouting_page.visible = page_name == "SCOUTING"
-	if season_page != null:
-		season_page.visible = page_name == "SEASON"
-	if league_page != null:
-		league_page.visible = page_name == "LEAGUE"
-	if front_office_page != null:
-		front_office_page.visible = page_name == "FRONT OFFICE"
+	if target_page != null and page_name != previous_page:
+		UxPolishV3.animate_page_in(target_page, active_team_primary)
 
 	for key in nav_buttons.keys():
 		var button: Button = nav_buttons[key]
@@ -2650,7 +2682,6 @@ func _show_page(page_name: String, force_refresh: bool = false) -> void:
 	elif page_name == "FREE AGENCY":
 		if free_agency_page != null and free_agency_page.has_method("refresh"):
 			free_agency_page.call("refresh")
-
 
 func _on_active_save_changed() -> void:
 	# A save switch changes the authoritative V3 working universe. Clear client
@@ -2707,6 +2738,8 @@ func _apply_active_team_brand(team_abbreviation: String) -> void:
 		header_eyebrow_label.add_theme_color_override("font_color", active_team_hover)
 	if team_card_eyebrow_label != null:
 		team_card_eyebrow_label.add_theme_color_override("font_color", active_team_hover)
+	if long_action_spinner_label != null:
+		long_action_spinner_label.add_theme_color_override("font_color", active_team_hover)
 
 	if team_card_panel != null:
 		team_card_panel.add_theme_stylebox_override(
