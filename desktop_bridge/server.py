@@ -16,7 +16,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.14.0"
+API_VERSION = "0.15.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -100,6 +100,7 @@ from desktop_bridge.season_lifecycle_foundation import (
     build_lifecycle_summary,
     verify_lifecycle_action_persisted,
 )
+from desktop_bridge.league_intelligence_foundation import build_league_intelligence_payload
 from desktop_bridge.transaction_foundation import (
     build_draft_selection_candidate,
     build_draft_selection_preview_payload,
@@ -2330,6 +2331,66 @@ async def free_agency_execute(request: Request) -> JSONResponse:
         )
 
 
+async def league_intelligence(_: Request) -> JSONResponse:
+    """Read-only league-wide intelligence from the isolated V3 working save."""
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse(
+                {
+                    "error": "v3_working_save_not_initialized",
+                    "read_only": True,
+                    "active_v2_read_only": True,
+                },
+                status_code=409,
+            )
+        payload = build_league_intelligence_payload(
+            checkpoint,
+            team_names=TEAM_NAMES,
+        )
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_after = _file_sha256(v2_path)
+        payload.update(
+            {
+                "api_version": API_VERSION,
+                "working_save_sha256": working_after,
+                "working_save_unchanged": (
+                    working_before is not None and working_before == working_after
+                ),
+                "active_v2_sha256": v2_after,
+                "active_v2_unchanged": (
+                    v2_before is not None and v2_before == v2_after
+                ),
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        if not payload["working_save_unchanged"] or not payload["active_v2_unchanged"]:
+            return JSONResponse(
+                {"error": "read_only_league_intelligence_changed_checkpoint", **payload},
+                status_code=500,
+            )
+        return JSONResponse(payload)
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "league_intelligence_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "read_only": True,
+                "working_save_unchanged": (
+                    working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+                ),
+                "active_v2_unchanged": (
+                    v2_before == _file_sha256(v2_path)
+                ),
+            },
+            status_code=500,
+        )
+
+
 async def market_intelligence(_: Request) -> JSONResponse:
     try:
         checkpoint = _working_checkpoint()
@@ -3860,6 +3921,7 @@ routes = [
     Route("/v3/meta", project_meta, methods=["GET"]),
     Route("/v3/franchise-summary", franchise_summary, methods=["GET"]),
     Route("/v3/franchise-intelligence", franchise_intelligence, methods=["GET"]),
+    Route("/v3/league-intelligence", league_intelligence, methods=["GET"]),
     Route("/v3/market-intelligence", market_intelligence, methods=["GET"]),
     Route("/v3/transaction-foundation", transaction_foundation, methods=["GET"]),
     Route("/v3/trade/team-assets", trade_team_assets, methods=["GET"]),

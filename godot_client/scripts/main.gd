@@ -4,6 +4,7 @@ const TradeCenterV3 = preload("res://scripts/trade_center_v3.gd")
 const FreeAgencyCenterV3 = preload("res://scripts/free_agency_center_v3.gd")
 const ScoutingDraftCenterV3 = preload("res://scripts/scouting_draft_center_v3.gd")
 const SeasonLifecycleCenterV3 = preload("res://scripts/season_lifecycle_center_v3.gd")
+const LeagueIntelligenceCenterV3 = preload("res://scripts/league_intelligence_center_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
@@ -182,16 +183,7 @@ func _build_interface() -> void:
 	content_stack.add_child(season_page)
 	season_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	league_page = _build_feature_area(
-		"LEAGUE HUB",
-		"Standings, awards races, transactions, schedule context, and league-wide franchise intelligence.",
-		"LEAGUE",
-		[
-			["STANDINGS", "Conference positioning, playoff race, streaks, and team performance."],
-			["AWARDS", "Track MVP, rookie, defensive, and other season award races."],
-			["TRANSACTIONS", "Follow trades, signings, waivers, injuries, and league movement."]
-		]
-	)
+	league_page = LeagueIntelligenceCenterV3.new()
 	content_stack.add_child(league_page)
 	league_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
