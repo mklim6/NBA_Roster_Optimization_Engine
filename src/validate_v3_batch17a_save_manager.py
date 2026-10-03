@@ -245,7 +245,11 @@ def main() -> int:
         "batch17a_foundation_version": SAVE_MANAGER_VERSION in foundation_text,
         "bridge_api_version_bumped": any(
             marker in bridge_text
-            for marker in ('API_VERSION = "0.17.0"', 'API_VERSION = "0.17.1"')
+            for marker in (
+                'API_VERSION = "0.17.0"',
+                'API_VERSION = "0.17.1"',
+                'API_VERSION = "0.17.2"',
+            )
         ),
         "save_manager_summary_endpoint_registered": 'Route("/v3/saves", save_manager_summary' in bridge_text,
         "save_manager_bootstrap_endpoint_registered": 'Route("/v3/saves/bootstrap", save_manager_bootstrap' in bridge_text,

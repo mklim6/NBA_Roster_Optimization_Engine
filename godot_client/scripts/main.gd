@@ -8,6 +8,7 @@ const LeagueIntelligenceCenterV3 = preload("res://scripts/league_intelligence_ce
 const FrontOfficeCenterV3 = preload("res://scripts/front_office_center_v3.gd")
 const GameDayCenterV3 = preload("res://scripts/game_day_center_v3.gd")
 const SaveManagerV3 = preload("res://scripts/save_manager_v3.gd")
+const SettingsTutorialV3 = preload("res://scripts/settings_tutorial_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
@@ -59,6 +60,16 @@ var league_page: Control
 var front_office_page: Control
 var game_day_page: Control
 var save_manager_page: Control
+var settings_page: Control
+var desktop_preferences: Dictionary = {
+	"show_tutorial_on_startup": true,
+	"tutorial_completed": false,
+	"confirm_load": true,
+	"confirm_delete": true,
+	"confirm_new_franchise": true,
+	"return_home_after_save_switch": true,
+}
+var startup_tutorial_checked := false
 var current_page := "HOME"
 var nav_buttons := {}
 var roster_payload := {}
@@ -174,6 +185,14 @@ func _build_interface() -> void:
 	if save_manager_page.has_signal("active_save_changed"):
 		save_manager_page.connect("active_save_changed", _on_active_save_changed)
 
+	settings_page = SettingsTutorialV3.new()
+	content_stack.add_child(settings_page)
+	settings_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if settings_page.has_signal("preferences_changed"):
+		settings_page.connect("preferences_changed", _on_desktop_preferences_changed)
+	if settings_page.has_signal("tutorial_finished"):
+		settings_page.connect("tutorial_finished", _on_tutorial_finished)
+
 	roster_page = _build_roster_area()
 	content_stack.add_child(roster_page)
 	roster_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -264,6 +283,7 @@ func _build_sidebar() -> Control:
 	column.add_child(_nav_button("SEASON"))
 	column.add_child(_nav_button("LEAGUE"))
 	column.add_child(_nav_button("FRONT OFFICE"))
+	column.add_child(_nav_button("SETTINGS"))
 
 	var expanding_spacer := Control.new()
 	expanding_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1121,7 +1141,7 @@ func _show_player_detail(player: Dictionary) -> void:
 	)
 
 	var footer := Label.new()
-	footer.text = "READ-ONLY PLAYER PROFILE • Data comes from the active V2 franchise checkpoint."
+	footer.text = "ACTIVE V3 PLAYER PROFILE • Data comes from the isolated V3 working franchise; protected V2 remains unchanged."
 	footer.add_theme_color_override("font_color", MUTED)
 	footer.add_theme_font_size_override("font_size", 10)
 	content.add_child(footer)
@@ -2413,6 +2433,8 @@ func _show_page(page_name: String) -> void:
 
 	if save_manager_page != null:
 		save_manager_page.visible = page_name == "FRANCHISES"
+	if settings_page != null:
+		settings_page.visible = page_name == "SETTINGS"
 
 	if roster_page != null:
 		roster_page.visible = page_name == "ROSTER"
@@ -2445,6 +2467,9 @@ func _show_page(page_name: String) -> void:
 	elif page_name == "FRANCHISES":
 		if save_manager_page != null and save_manager_page.has_method("refresh"):
 			save_manager_page.call("refresh")
+	elif page_name == "SETTINGS":
+		if settings_page != null and settings_page.has_method("refresh"):
+			settings_page.call("refresh")
 	elif page_name in ["LEAGUE", "FRONT OFFICE"]:
 		_request_franchise_intelligence()
 	elif page_name == "SCOUTING":
@@ -2462,10 +2487,31 @@ func _show_page(page_name: String) -> void:
 
 
 func _on_active_save_changed() -> void:
-	# Every data page reloads from the bridge on navigation. Returning Home after
-	# a slot switch guarantees all visible franchise identity cards come from
-	# the newly activated V3 working checkpoint rather than stale UI state.
-	_show_page("HOME")
+	# Every data page reloads from the bridge on navigation. Desktop preference
+	# controls whether a completed save switch returns directly to Franchise HQ.
+	if bool(desktop_preferences.get("return_home_after_save_switch", true)):
+		_show_page("HOME")
+	else:
+		_show_page("FRANCHISES")
+
+
+func _on_desktop_preferences_changed(next_preferences: Dictionary) -> void:
+	desktop_preferences = next_preferences.duplicate(true)
+	if save_manager_page != null and save_manager_page.has_method("apply_preferences"):
+		save_manager_page.call("apply_preferences", desktop_preferences)
+
+	if startup_tutorial_checked:
+		return
+	startup_tutorial_checked = true
+	if bool(desktop_preferences.get("show_tutorial_on_startup", true)):
+		_show_page("SETTINGS")
+		if settings_page != null and settings_page.has_method("start_tutorial"):
+			settings_page.call_deferred("start_tutorial", true)
+
+
+func _on_tutorial_finished(started_from_startup: bool) -> void:
+	if started_from_startup:
+		_show_page("HOME")
 
 
 func _apply_nav_button_style(button: Button, active: bool) -> void:
@@ -2591,7 +2637,8 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 		"SCOUTING",
 		"SEASON",
 		"LEAGUE",
-		"FRONT OFFICE"
+		"FRONT OFFICE",
+		"SETTINGS"
 	]:
 		nav_buttons[text_value] = button
 		button.pressed.connect(_show_page.bind(text_value))
@@ -2774,6 +2821,8 @@ func _on_health_completed(
 
 	_request_franchise_summary()
 	_request_roster()
+	if settings_page != null and settings_page.has_method("refresh"):
+		settings_page.call("refresh")
 
 
 func _request_roster() -> void:
@@ -3385,7 +3434,7 @@ func _on_summary_completed(
 	body: PackedByteArray
 ) -> void:
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
-		_set_live_data_error("Active V2 franchise data could not be loaded.")
+		_set_live_data_error("Active V3 franchise data could not be loaded.")
 		return
 
 	var payload = JSON.parse_string(body.get_string_from_utf8())
@@ -3511,7 +3560,7 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 
 
 func _set_live_data_error(message: String) -> void:
-	header_subtitle.text = "V2 SAVE DATA UNAVAILABLE"
+	header_subtitle.text = "V3 FRANCHISE DATA UNAVAILABLE"
 
 	record_value.text = "N/A"
 	record_detail.text = message

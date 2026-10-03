@@ -33,6 +33,12 @@ var pending_confirm_action := ""
 var rename_mode := false
 var new_franchise_mode := false
 var pending_new_franchise_body: Dictionary = {}
+var desktop_preferences: Dictionary = {
+	"confirm_load": true,
+	"confirm_delete": true,
+	"confirm_new_franchise": true,
+	"return_home_after_save_switch": true,
+}
 
 var status_label: Label
 var active_slot_value: Label
@@ -65,6 +71,10 @@ func _ready() -> void:
 
 func refresh() -> void:
 	_request_summary()
+
+
+func apply_preferences(next_preferences: Dictionary) -> void:
+	desktop_preferences = next_preferences.duplicate(true)
 
 
 func _build_http() -> void:
@@ -529,6 +539,10 @@ func _confirm_new_franchise() -> void:
 		clean_name = "%s Franchise" % _team_name_for_code(team)
 		name_input.text = clean_name
 	pending_new_franchise_body = {"team": team, "name": clean_name}
+	if not bool(desktop_preferences.get("confirm_new_franchise", true)):
+		_post_action("new_franchise", NEW_FRANCHISE_URL, pending_new_franchise_body)
+		pending_new_franchise_body = {}
+		return
 	pending_confirm_action = "new_franchise"
 	confirm_dialog.dialog_text = "Create '%s' as %s?\n\nThis builds a clean 2026-27 franchise from the certified Sep. 7 universe. Your current live session is snapshotted to its existing save before the new franchise becomes active. Protected V2 remains unchanged." % [clean_name, _team_name_for_code(team)]
 	confirm_dialog.ok_button_text = "CREATE FRANCHISE"
@@ -589,6 +603,9 @@ func _confirm_load() -> void:
 	var selected := _slot_by_id(selected_slot_id)
 	if selected.is_empty() or bool(selected.get("active", false)):
 		return
+	if not bool(desktop_preferences.get("confirm_load", true)):
+		_post_action("load", LOAD_URL, {"slot_id": selected_slot_id})
+		return
 	pending_confirm_action = "load"
 	confirm_dialog.dialog_text = "Load '%s'?\n\nYour current live V3 session will first be snapshotted to its active slot. A recovery copy of the working checkpoint is created before the switch. Protected V2 remains unchanged." % str(selected.get("name", "selected save"))
 	confirm_dialog.ok_button_text = "LOAD SAVE"
@@ -598,6 +615,9 @@ func _confirm_load() -> void:
 func _confirm_delete() -> void:
 	var selected := _slot_by_id(selected_slot_id)
 	if selected.is_empty() or bool(selected.get("active", false)):
+		return
+	if not bool(desktop_preferences.get("confirm_delete", true)):
+		_post_action("delete", DELETE_URL, {"slot_id": selected_slot_id})
 		return
 	pending_confirm_action = "delete"
 	confirm_dialog.dialog_text = "Delete '%s'?\n\nThe active franchise cannot be deleted. This non-active slot will be copied to Save Manager recovery before removal." % str(selected.get("name", "selected save"))

@@ -16,7 +16,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.17.1"
+API_VERSION = "0.17.2"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -67,6 +67,12 @@ V3_SAVE_MANAGER_ROOT = (
     / "outputs"
     / "runtime"
     / "v3_save_manager"
+)
+V3_DESKTOP_PREFERENCES_PATH = (
+    REPO_ROOT
+    / "outputs"
+    / "runtime"
+    / "v3_desktop_preferences.json"
 )
 
 # V2 checkpoints were serialized with top-level src module names.
@@ -124,6 +130,13 @@ from desktop_bridge.save_manager_foundation import (
     load_slot,
     rename_slot,
     save_current_slot,
+)
+from desktop_bridge.desktop_preferences_foundation import (
+    V3DesktopPreferencesError,
+    build_desktop_preferences_summary,
+    complete_tutorial,
+    reset_desktop_preferences,
+    update_desktop_preferences,
 )
 from desktop_bridge.transaction_foundation import (
     build_draft_advance_candidate,
@@ -2602,6 +2615,7 @@ async def health(_: Request) -> JSONResponse:
             "active_v2_read_only": True,
             "v3_working_save_writable": True,
             "v3_save_manager_available": True,
+            "v3_desktop_preferences_available": True,
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         }
     )
@@ -2618,9 +2632,175 @@ async def project_meta(_: Request) -> JSONResponse:
             "save_access": "active_v2_read_only__v3_working_save_writable",
             "working_save_path": str(V3_WORKING_CHECKPOINT_PATH),
             "save_manager_root": str(V3_SAVE_MANAGER_ROOT),
+            "desktop_preferences_path": str(V3_DESKTOP_PREFERENCES_PATH),
             "api_version": API_VERSION,
         }
     )
+
+
+def _desktop_preferences_safety_payload(
+    active_v3_before: str | None,
+    active_v2_before: str | None,
+) -> dict[str, Any]:
+    active_v3_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    active_v2_after = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+    return {
+        "active_v3_sha256": active_v3_after,
+        "active_v3_unchanged": active_v3_after == active_v3_before,
+        "active_v2_sha256": active_v2_after,
+        "active_v2_unchanged": active_v2_after == active_v2_before,
+        "active_v2_read_only": True,
+        "franchise_save_write_performed": False,
+    }
+
+
+def _desktop_preferences_response(
+    payload: dict[str, Any],
+    active_v3_before: str | None,
+    active_v2_before: str | None,
+) -> JSONResponse:
+    safety = _desktop_preferences_safety_payload(
+        active_v3_before,
+        active_v2_before,
+    )
+    payload = dict(payload)
+    payload.update(safety)
+    payload["api_version"] = API_VERSION
+    if not safety["active_v3_unchanged"] or not safety["active_v2_unchanged"]:
+        return JSONResponse(
+            {
+                "error": "desktop_preferences_changed_franchise_checkpoint",
+                **payload,
+            },
+            status_code=500,
+        )
+    return JSONResponse(payload)
+
+
+async def desktop_preferences_summary(_: Request) -> JSONResponse:
+    active_v3_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    active_v2_before = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+    try:
+        payload = build_desktop_preferences_summary(
+            V3_DESKTOP_PREFERENCES_PATH
+        )
+        return _desktop_preferences_response(
+            payload,
+            active_v3_before,
+            active_v2_before,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "desktop_preferences_summary_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                **_desktop_preferences_safety_payload(
+                    active_v3_before,
+                    active_v2_before,
+                ),
+            },
+            status_code=500,
+        )
+
+
+async def desktop_preferences_update(request: Request) -> JSONResponse:
+    active_v3_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    active_v2_before = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise V3DesktopPreferencesError(
+                "Desktop preference updates must be a JSON object."
+            )
+        payload = update_desktop_preferences(
+            V3_DESKTOP_PREFERENCES_PATH,
+            body,
+        )
+        return _desktop_preferences_response(
+            payload,
+            active_v3_before,
+            active_v2_before,
+        )
+    except V3DesktopPreferencesError as exc:
+        return JSONResponse(
+            {
+                "error": "desktop_preferences_update_blocked",
+                "detail": str(exc),
+                **_desktop_preferences_safety_payload(
+                    active_v3_before,
+                    active_v2_before,
+                ),
+            },
+            status_code=409,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "desktop_preferences_update_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                **_desktop_preferences_safety_payload(
+                    active_v3_before,
+                    active_v2_before,
+                ),
+            },
+            status_code=500,
+        )
+
+
+async def desktop_preferences_reset(_: Request) -> JSONResponse:
+    active_v3_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    active_v2_before = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+    try:
+        payload = reset_desktop_preferences(
+            V3_DESKTOP_PREFERENCES_PATH
+        )
+        return _desktop_preferences_response(
+            payload,
+            active_v3_before,
+            active_v2_before,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "desktop_preferences_reset_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                **_desktop_preferences_safety_payload(
+                    active_v3_before,
+                    active_v2_before,
+                ),
+            },
+            status_code=500,
+        )
+
+
+async def desktop_preferences_tutorial_complete(_: Request) -> JSONResponse:
+    active_v3_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    active_v2_before = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+    try:
+        payload = complete_tutorial(
+            V3_DESKTOP_PREFERENCES_PATH
+        )
+        return _desktop_preferences_response(
+            payload,
+            active_v3_before,
+            active_v2_before,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "desktop_tutorial_completion_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                **_desktop_preferences_safety_payload(
+                    active_v3_before,
+                    active_v2_before,
+                ),
+            },
+            status_code=500,
+        )
 
 
 async def franchise_summary(_: Request) -> JSONResponse:
@@ -4626,6 +4806,10 @@ async def not_found(_: Request, __: Exception) -> JSONResponse:
 routes = [
     Route("/health", health, methods=["GET"]),
     Route("/v3/meta", project_meta, methods=["GET"]),
+    Route("/v3/preferences", desktop_preferences_summary, methods=["GET"]),
+    Route("/v3/preferences", desktop_preferences_update, methods=["POST"]),
+    Route("/v3/preferences/reset", desktop_preferences_reset, methods=["POST"]),
+    Route("/v3/preferences/tutorial-complete", desktop_preferences_tutorial_complete, methods=["POST"]),
     Route("/v3/franchise-summary", franchise_summary, methods=["GET"]),
     Route("/v3/franchise-intelligence", franchise_intelligence, methods=["GET"]),
     Route("/v3/league-intelligence", league_intelligence, methods=["GET"]),

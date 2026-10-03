@@ -277,7 +277,10 @@ def main() -> int:
             and SAVE_MANAGER_VERSION in foundation_text
         ),
         "batch17b_new_franchise_version_present": NEW_FRANCHISE_VERSION in foundation_text,
-        "bridge_api_version_bumped": 'API_VERSION = "0.17.1"' in bridge_text,
+        "bridge_api_version_bumped": any(
+            marker in bridge_text
+            for marker in ('API_VERSION = "0.17.1"', 'API_VERSION = "0.17.2"')
+        ),
         "fresh_home_summary_handles_optional_morale_state": (
             'getattr(state, "franchise_morale_chemistry_v1", {})' in bridge_text
         ),
