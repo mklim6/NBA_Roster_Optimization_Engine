@@ -131,8 +131,22 @@ $CurrentV3Backup = Join-Path $RepoRuntime "v3_godot_working_checkpoint.pkl.gz.ba
 $SaveManager = Join-Path $RepoRuntime "v3_save_manager"
 $Preferences = Join-Path $RepoRuntime "v3_desktop_preferences.json"
 
+$RequiredCbaOutputFiles = @(
+    "mixed_player_pick_team_cba_decision_release_v1.csv",
+    "mixed_player_pick_player_cba_decision_release_v1.csv",
+    "mixed_player_pick_right_legality_decision_release_v1.csv",
+    "mixed_player_pick_final_full_cba_rules_v1.json"
+)
+
 if (-not (Test-Path $ProtectedV2 -PathType Leaf)) {
     throw "Protected V2 checkpoint is missing: $ProtectedV2"
+}
+
+foreach ($requiredName in $RequiredCbaOutputFiles) {
+    $requiredPath = Join-Path (Join-Path $RepoRoot "outputs") $requiredName
+    if (-not (Test-Path $requiredPath -PathType Leaf)) {
+        throw "Required packaged CBA runtime artifact is missing: $requiredPath"
+    }
 }
 
 Write-Host ""
@@ -191,6 +205,18 @@ Copy-Item $ProtectedV2 (Join-Path $BundleAppRuntime "franchise_mode_checkpoint_v
 Copy-OptionalFile `
     -Source $ProtectedV2Backup `
     -Destination (Join-Path $BundleAppRuntime "franchise_mode_checkpoint_v1.backup.pkl.gz")
+
+
+# The production transaction/free-agency runtime reads four certified CBA
+# release artifacts from app\outputs. Package only those explicit dependencies,
+# never the full development outputs tree.
+$BundleOutputsRoot = Join-Path $AppRoot "outputs"
+foreach ($requiredName in $RequiredCbaOutputFiles) {
+    Copy-Item `
+        (Join-Path (Join-Path $RepoRoot "outputs") $requiredName) `
+        (Join-Path $BundleOutputsRoot $requiredName) `
+        -Force
+}
 
 # Creator-save packaging is explicit and opt-in.
 if ($IncludeCurrentSave) {
@@ -269,7 +295,7 @@ $testerReadme | Set-Content -Path (Join-Path $BundleRoot "README_TESTER.txt") -E
 
 $manifestPath = Join-Path $BundleRoot "BUILD_MANIFEST.json"
 $manifest = [ordered]@{
-    bundle_version = "v3-windows-bundle-batch-18d1-v1.1.0-2026-10-03"
+    bundle_version = "v3-windows-bundle-batch-18d2-v1.2.0-2026-10-03"
     source_branch = $branch
     source_commit = $head
     bridge_api = $ApiVersion
@@ -279,7 +305,8 @@ $manifest = [ordered]@{
     app_root = "app"
     launcher = "Start_NBA_Franchise_Simulator_V3.cmd"
     runtime_setup = "Setup_Runtime.cmd"
-    outputs_policy = "minimal-runtime-seed-only"
+    outputs_policy = "minimal-runtime-plus-cba-release-seed"
+    packaged_cba_outputs = $RequiredCbaOutputFiles
     max_bundle_gb = $MaxBundleGB
     bundle_bytes = 0
     bundle_mb = 0

@@ -93,7 +93,7 @@ function Resolve-BasePython {
 function Test-BundleRuntime {
     param([string]$PythonExe)
 
-    $smoke = "import sys; from pathlib import Path; root=Path(r'$AppRoot'); sys.path.insert(0,str(root)); sys.path.insert(0,str(root/'src')); import starlette,uvicorn,cloudpickle; from desktop_bridge import server; from simulation_franchise_checkpoint_v1 import load_franchise_checkpoint; cp=load_franchise_checkpoint(path=Path(r'$ProtectedV2'),allow_backup=False); assert cp is not None; assert server.API_VERSION=='0.18.1'; print('Bundle-local V3 server/checkpoint smoke: PASS')"
+    $smoke = "import sys; from pathlib import Path; root=Path(r'$AppRoot'); sys.path.insert(0,str(root)); sys.path.insert(0,str(root/'src')); import starlette,uvicorn,cloudpickle; from desktop_bridge import server; from simulation_franchise_checkpoint_v1 import load_franchise_checkpoint; from freeform_trade_machine_engine_v3 import load_runtime_data; cp=load_franchise_checkpoint(path=Path(r'$ProtectedV2'),allow_backup=False); assert cp is not None; runtime=load_runtime_data(); assert runtime is not None; assert server.API_VERSION=='0.18.1'; print('Bundle-local V3 server/checkpoint smoke: PASS'); print('Bundle-local V3 transaction runtime-data smoke: PASS')"
     & $PythonExe -c $smoke
     if ($LASTEXITCODE -ne 0) {
         throw "Bundle-local runtime smoke test failed."
