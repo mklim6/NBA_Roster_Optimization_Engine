@@ -197,7 +197,10 @@ def main() -> int:
 
     checks: dict[str, bool] = {
         "batch17c_preferences_version_present": PREFERENCES_VERSION in foundation_text,
-        "bridge_api_version_bumped": 'API_VERSION = "0.17.2"' in bridge_text,
+        "bridge_api_version_bumped": any(
+            marker in bridge_text
+            for marker in ('API_VERSION = "0.17.2"', 'API_VERSION = "0.18.0"')
+        ),
         "preferences_path_is_separate_runtime_json": (
             "V3_DESKTOP_PREFERENCES_PATH" in bridge_text
             and "v3_desktop_preferences.json" in bridge_text

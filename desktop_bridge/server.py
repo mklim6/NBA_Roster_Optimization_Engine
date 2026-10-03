@@ -16,7 +16,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.17.2"
+API_VERSION = "0.18.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -137,6 +137,11 @@ from desktop_bridge.desktop_preferences_foundation import (
     complete_tutorial,
     reset_desktop_preferences,
     update_desktop_preferences,
+)
+from desktop_bridge.runtime_performance_foundation import (
+    RUNTIME_PERFORMANCE,
+    RUNTIME_PERFORMANCE_VERSION,
+    V3RuntimePerformanceMiddleware,
 )
 from desktop_bridge.transaction_foundation import (
     build_draft_advance_candidate,
@@ -2616,6 +2621,8 @@ async def health(_: Request) -> JSONResponse:
             "v3_working_save_writable": True,
             "v3_save_manager_available": True,
             "v3_desktop_preferences_available": True,
+            "v3_runtime_performance_available": True,
+            "v3_read_cache_available": True,
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         }
     )
@@ -2633,6 +2640,8 @@ async def project_meta(_: Request) -> JSONResponse:
             "working_save_path": str(V3_WORKING_CHECKPOINT_PATH),
             "save_manager_root": str(V3_SAVE_MANAGER_ROOT),
             "desktop_preferences_path": str(V3_DESKTOP_PREFERENCES_PATH),
+            "runtime_performance_endpoint": "/v3/runtime/performance",
+            "runtime_performance_version": RUNTIME_PERFORMANCE_VERSION,
             "api_version": API_VERSION,
         }
     )
@@ -4799,6 +4808,21 @@ async def lifecycle_execute(request: Request) -> JSONResponse:
         )
 
 
+async def runtime_performance(_: Request) -> JSONResponse:
+    payload = RUNTIME_PERFORMANCE.snapshot()
+    payload.update(
+        {
+            "status": "ok",
+            "service": SERVICE_NAME,
+            "api_version": API_VERSION,
+            "active_v2_read_only": True,
+            "v3_working_save_writable": True,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    return JSONResponse(payload)
+
+
 async def not_found(_: Request, __: Exception) -> JSONResponse:
     return JSONResponse({"error": "not_found"}, status_code=404)
 
@@ -4806,6 +4830,7 @@ async def not_found(_: Request, __: Exception) -> JSONResponse:
 routes = [
     Route("/health", health, methods=["GET"]),
     Route("/v3/meta", project_meta, methods=["GET"]),
+    Route("/v3/runtime/performance", runtime_performance, methods=["GET"]),
     Route("/v3/preferences", desktop_preferences_summary, methods=["GET"]),
     Route("/v3/preferences", desktop_preferences_update, methods=["POST"]),
     Route("/v3/preferences/reset", desktop_preferences_reset, methods=["POST"]),
@@ -4856,4 +4881,15 @@ app = Starlette(
     debug=False,
     routes=routes,
     exception_handlers={404: not_found},
+)
+
+app.add_middleware(
+    V3RuntimePerformanceMiddleware,
+    registry=RUNTIME_PERFORMANCE,
+    watched_paths=(
+        V3_WORKING_CHECKPOINT_PATH,
+        Path(DEFAULT_CHECKPOINT_PATH),
+        V3_DESKTOP_PREFERENCES_PATH,
+        V3_SAVE_MANAGER_ROOT / "manifest.json",
+    ),
 )

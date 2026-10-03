@@ -1,5 +1,5 @@
 param(
-    [string]$GodotPath = "C:\Users\klima\Downloads\Godot_v4.0-stable_win64.exe\Godot_v4.0-stable_win64.exe",
+    [string]$GodotPath = "C:\Users\klima\Downloads\Godot_v4.0-stable_win64.exe",
     [switch]$RequireBridge
 )
 
@@ -88,9 +88,9 @@ if (Test-Path $GodotPath) {
 }
 
 # Python bridge syntax.
-python -m py_compile ".\desktop_bridge\server.py" ".\desktop_bridge\transaction_foundation.py"
+python -m py_compile ".\desktop_bridge\server.py" ".\desktop_bridge\transaction_foundation.py" ".\desktop_bridge\runtime_performance_foundation.py"
 if ($LASTEXITCODE -eq 0) {
-    Pass "desktop_bridge server + transaction foundation compile"
+    Pass "desktop_bridge server + transaction + runtime performance foundations compile"
 } else {
     Fail "desktop_bridge Python compilation"
 }
@@ -144,6 +144,19 @@ try {
         Pass "V3 working save exists"
     } else {
         Fail "V3 working save is missing"
+    }
+
+    if ($serverText -match '/v3/runtime/performance') {
+        try {
+            $runtime = Invoke-RestMethod "http://127.0.0.1:8765/v3/runtime/performance" -TimeoutSec 5
+            if ($runtime.runtime_version -and $null -ne $runtime.cache.hit_rate) {
+                Pass "Runtime performance telemetry + read cache endpoint"
+            } else {
+                Fail "Runtime performance endpoint returned an incomplete payload"
+            }
+        } catch {
+            Fail "Runtime performance endpoint failed: $($_.Exception.Message)"
+        }
     }
 
     if ($serverText -match '/v3/market-intelligence') {

@@ -35,6 +35,32 @@ function Get-BridgeHealth {
     }
 }
 
+function Warm-V3DesktopReadCache {
+    param([string]$BaseUrl)
+
+    $warmPaths = @(
+        "/v3/franchise-summary",
+        "/v3/roster",
+        "/v3/game-day",
+        "/v3/preferences",
+        "/v3/saves"
+    )
+    $warmed = 0
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
+
+    foreach ($path in $warmPaths) {
+        try {
+            Invoke-RestMethod "$BaseUrl$path" -TimeoutSec 30 | Out-Null
+            $warmed += 1
+        } catch {
+            Write-Host "[WARN] Cache warm-up skipped $path : $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    $timer.Stop()
+    Write-Host ("[WARM] Prepared {0}/{1} core desktop views in {2:N0} ms." -f $warmed, $warmPaths.Count, $timer.Elapsed.TotalMilliseconds) -ForegroundColor DarkCyan
+}
+
 function Resolve-V3Python {
     if ($env:CONDA_DEFAULT_ENV -eq "nba-roster-optimizer") {
         $activePython = (Get-Command python -ErrorAction SilentlyContinue).Source
@@ -157,6 +183,8 @@ try {
             throw "V3 quick gate failed. Godot was not launched."
         }
     }
+
+    Warm-V3DesktopReadCache -BaseUrl $BridgeUrl
 
     $ResolvedGodot = Resolve-GodotExecutable -RequestedPath $GodotPath
     Write-Host "[START] Launching Godot desktop client..."

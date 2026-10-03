@@ -249,6 +249,7 @@ def main() -> int:
                 'API_VERSION = "0.17.0"',
                 'API_VERSION = "0.17.1"',
                 'API_VERSION = "0.17.2"',
+                'API_VERSION = "0.18.0"',
             )
         ),
         "save_manager_summary_endpoint_registered": 'Route("/v3/saves", save_manager_summary' in bridge_text,
