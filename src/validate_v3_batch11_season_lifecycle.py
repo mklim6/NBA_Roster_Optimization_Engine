@@ -267,7 +267,10 @@ def main() -> int:
     lifecycle_gd_text = text(lifecycle_gd)
 
     checks: dict[str, bool] = {
-        "batch11_foundation_version": "batch-11-offseason-progression" in SEASON_LIFECYCLE_FOUNDATION_VERSION,
+        "batch11_foundation_version": (
+            "batch-11-offseason-progression" in SEASON_LIFECYCLE_FOUNDATION_VERSION
+            or "batch-15-cpu-free-agency" in SEASON_LIFECYCLE_FOUNDATION_VERSION
+        ),
         "production_contract_closeout_reused": "build_completed_season_contract_closeout_candidate" in lifecycle_text,
         "production_draft_lottery_reused": "conduct_lottery" in lifecycle_text and "reveal_draft_class" in lifecycle_text,
         "production_draft_night_reused": "start_draft_night" in lifecycle_text,
@@ -287,7 +290,7 @@ def main() -> int:
         "execute_endpoint_registered": 'Route("/v3/lifecycle/execute", lifecycle_execute' in server_text,
         "execute_requires_action_fingerprint": "expected_action_fingerprint is required. Run a fresh lifecycle preview first." in server_text,
         "execute_requires_working_save_sha": "expected_working_save_sha256 is required. Run a fresh lifecycle preview first." in server_text,
-        "v3_only_checkpoint_write": "path=V3_WORKING_CHECKPOINT_PATH" in server_text and "V3 Batch 11 lifecycle action" in server_text,
+        "v3_only_checkpoint_write": "path=V3_WORKING_CHECKPOINT_PATH" in server_text and "lifecycle action" in server_text,
         "lifecycle_recovery_and_rollback": "V3_LIFECYCLE_RECOVERY_DIR" in server_text and "def _rollback()" in server_text,
         "protected_v2_hash_guard": "Protected V2 checkpoint changed during V3 lifecycle execution." in server_text,
         "reload_verification_enabled": "verify_lifecycle_action_persisted" in server_text,

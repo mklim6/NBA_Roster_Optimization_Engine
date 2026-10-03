@@ -531,6 +531,7 @@ def commit_cpu_contract_legal_free_agency_preview_live(
     _verify_bytes_only: bool = False,
     _verified_checkpoint_sink: list[Any] | None = None,
     _defer_durable_write: bool = False,
+    _checkpoint_path: str | Path | None = None,
 ) -> CPUFreeAgencyLiveSigningResult:
     """Commit one accepted CPU signing through the same dual-state FATX stack.
 
@@ -547,7 +548,9 @@ def commit_cpu_contract_legal_free_agency_preview_live(
     )
     from simulation_league_state_v1 import validate_simulation_league_state
 
-    checkpoint_path = Path(DEFAULT_CHECKPOINT_PATH)
+    checkpoint_path = Path(
+        _checkpoint_path if _checkpoint_path is not None else DEFAULT_CHECKPOINT_PATH
+    )
     if not checkpoint_path.exists():
         raise CPUFreeAgencyExecutionError(
             "Durable franchise checkpoint does not exist."
@@ -560,7 +563,11 @@ def commit_cpu_contract_legal_free_agency_preview_live(
         checkpoint = _checkpoint
         checkpoint_hash_before = _checkpoint_hash
     else:
-        checkpoint = load_franchise_checkpoint()
+        checkpoint = (
+            load_franchise_checkpoint()
+            if _checkpoint_path is None
+            else load_franchise_checkpoint(path=checkpoint_path, allow_backup=False)
+        )
         if checkpoint is None:
             raise CPUFreeAgencyExecutionError(
                 "Durable franchise checkpoint could not be loaded."
@@ -710,6 +717,7 @@ def commit_cpu_contract_legal_free_agency_preview_live(
                 _expected_existing_sha256=checkpoint_hash_before,
                 _verify_encoded_bytes_only=_verify_bytes_only,
                 _verified_file_sha256_sink=verified_file_sha256_sink,
+                path=checkpoint_path,
             )
             # The writer has already verified the just-written primary. In batched
             # byte-verification mode, saved is the exact object graph that was
@@ -761,7 +769,11 @@ def commit_cpu_contract_legal_free_agency_preview_live(
         except Exception as exc:
             assert recovery_path is not None
             shutil.copy2(recovery_path, checkpoint_path)
-            restored = load_franchise_checkpoint()
+            restored = (
+                load_franchise_checkpoint()
+                if _checkpoint_path is None
+                else load_franchise_checkpoint(path=checkpoint_path, allow_backup=False)
+            )
             if restored is None:
                 raise CPUFreeAgencyExecutionError(
                     "CPU signing failed and checkpoint recovery could not be loaded."
@@ -838,6 +850,7 @@ def commit_cpu_competing_market_winner_live(
     _verify_bytes_only: bool = False,
     _verified_checkpoint_sink: list[Any] | None = None,
     _defer_durable_write: bool = False,
+    _checkpoint_path: str | Path | None = None,
 ) -> CPUFreeAgencyLiveSigningResult:
     """Re-evaluate and commit one CPU-only market winner on durable state."""
     if not isinstance(result, FreeAgencyCompetingMarketResult) or not result.has_winner:
@@ -850,7 +863,9 @@ def commit_cpu_competing_market_winner_live(
         load_franchise_checkpoint,
     )
 
-    checkpoint_path = Path(DEFAULT_CHECKPOINT_PATH)
+    checkpoint_path = Path(
+        _checkpoint_path if _checkpoint_path is not None else DEFAULT_CHECKPOINT_PATH
+    )
     if _checkpoint is not None:
         checkpoint_hash = _sha256(checkpoint_path)
         if not _checkpoint_hash or checkpoint_hash != _checkpoint_hash:
@@ -860,7 +875,11 @@ def commit_cpu_competing_market_winner_live(
         checkpoint = _checkpoint
         checkpoint_hash = _checkpoint_hash
     else:
-        checkpoint = load_franchise_checkpoint()
+        checkpoint = (
+            load_franchise_checkpoint()
+            if _checkpoint_path is None
+            else load_franchise_checkpoint(path=checkpoint_path, allow_backup=False)
+        )
         if checkpoint is None:
             raise CPUFreeAgencyExecutionError(
                 "The durable franchise checkpoint is unavailable."
@@ -930,6 +949,7 @@ def commit_cpu_competing_market_winner_live(
         _verify_bytes_only=_verify_bytes_only,
         _verified_checkpoint_sink=_verified_checkpoint_sink,
         _defer_durable_write=_defer_durable_write,
+        _checkpoint_path=checkpoint_path,
     )
     return signed
 
@@ -1439,13 +1459,16 @@ def _commit_cpu_sustainable_roster_completion_durably(
     _verify_bytes_only: bool = False,
     _verified_checkpoint_sink: list[Any] | None = None,
     _defer_durable_write: bool = False,
+    _checkpoint_path: str | Path | None = None,
 ) -> CPUFreeAgencyLiveSigningResult:
     from simulation_franchise_checkpoint_v1 import (
         DEFAULT_CHECKPOINT_PATH,
         load_franchise_checkpoint,
     )
 
-    checkpoint_path = Path(DEFAULT_CHECKPOINT_PATH)
+    checkpoint_path = Path(
+        _checkpoint_path if _checkpoint_path is not None else DEFAULT_CHECKPOINT_PATH
+    )
     if _checkpoint is not None:
         if not _checkpoint_hash or _sha256(checkpoint_path) != _checkpoint_hash:
             raise CPUFreeAgencyExecutionError(
@@ -1455,7 +1478,11 @@ def _commit_cpu_sustainable_roster_completion_durably(
         checkpoint_hash = _checkpoint_hash
     else:
         checkpoint_hash = _sha256(checkpoint_path)
-        checkpoint = load_franchise_checkpoint()
+        checkpoint = (
+            load_franchise_checkpoint()
+            if _checkpoint_path is None
+            else load_franchise_checkpoint(path=checkpoint_path, allow_backup=False)
+        )
 
     if checkpoint is None:
         raise CPUFreeAgencyExecutionError(
@@ -1563,6 +1590,7 @@ def _commit_cpu_sustainable_roster_completion_durably(
         _verify_bytes_only=_verify_bytes_only,
         _verified_checkpoint_sink=_verified_checkpoint_sink,
         _defer_durable_write=_defer_durable_write,
+        _checkpoint_path=checkpoint_path,
     )
 
 
@@ -1575,13 +1603,16 @@ def _commit_cpu_roster_floor_rescue_durably(
     _verify_bytes_only: bool = False,
     _verified_checkpoint_sink: list[Any] | None = None,
     _defer_durable_write: bool = False,
+    _checkpoint_path: str | Path | None = None,
 ) -> CPUFreeAgencyLiveSigningResult:
     from simulation_franchise_checkpoint_v1 import (
         DEFAULT_CHECKPOINT_PATH,
         load_franchise_checkpoint,
     )
 
-    checkpoint_path = Path(DEFAULT_CHECKPOINT_PATH)
+    checkpoint_path = Path(
+        _checkpoint_path if _checkpoint_path is not None else DEFAULT_CHECKPOINT_PATH
+    )
     if _checkpoint is not None:
         if not _checkpoint_hash or _sha256(checkpoint_path) != _checkpoint_hash:
             raise CPUFreeAgencyExecutionError(
@@ -1591,7 +1622,11 @@ def _commit_cpu_roster_floor_rescue_durably(
         checkpoint_hash = _checkpoint_hash
     else:
         checkpoint_hash = _sha256(checkpoint_path)
-        checkpoint = load_franchise_checkpoint()
+        checkpoint = (
+            load_franchise_checkpoint()
+            if _checkpoint_path is None
+            else load_franchise_checkpoint(path=checkpoint_path, allow_backup=False)
+        )
     if checkpoint is None:
         raise CPUFreeAgencyExecutionError(
             "The durable franchise checkpoint is unavailable for roster-floor rescue."
@@ -1675,6 +1710,7 @@ def _commit_cpu_roster_floor_rescue_durably(
         _verify_bytes_only=_verify_bytes_only,
         _verified_checkpoint_sink=_verified_checkpoint_sink,
         _defer_durable_write=_defer_durable_write,
+        _checkpoint_path=checkpoint_path,
     )
 
 
@@ -2442,6 +2478,7 @@ def _commit_execution_plan_top_opportunity_durably(
     verify_bytes_only: bool,
     verified_checkpoint_sink: list[Any],
     defer_durable_write: bool = False,
+    checkpoint_path: str | Path | None = None,
 ) -> CPUFreeAgencyLiveSigningResult:
     """Commit the top opportunity from a plan built against current state."""
     if not plan.opportunities:
@@ -2473,6 +2510,7 @@ def _commit_execution_plan_top_opportunity_durably(
         _verify_bytes_only=verify_bytes_only,
         _verified_checkpoint_sink=verified_checkpoint_sink,
         _defer_durable_write=defer_durable_write,
+        _checkpoint_path=checkpoint_path,
     )
 
 
@@ -2550,6 +2588,11 @@ def execute_cpu_free_agency_round_durably(
     max_signings: int = DEFAULT_CPU_FREE_AGENCY_MAX_SIGNINGS_PER_ROUND,
     max_targets_per_team: int = 5,
     recovery_directory: str | Path | None = None,
+    _checkpoint: Any | None = None,
+    _checkpoint_hash: str = "",
+    _checkpoint_path: str | Path | None = None,
+    _defer_durable_write: bool = False,
+    _verified_checkpoint_sink: list[Any] | None = None,
 ) -> CPUFreeAgencyRoundResult:
     """Run a bounded CPU free-agency round with bounded full-market refreshes.
 
@@ -2584,9 +2627,22 @@ def execute_cpu_free_agency_round_durably(
         save_franchise_checkpoint,
     )
 
-    checkpoint_path = Path(DEFAULT_CHECKPOINT_PATH)
+    checkpoint_path = Path(
+        _checkpoint_path if _checkpoint_path is not None else DEFAULT_CHECKPOINT_PATH
+    )
     before = _sha256(checkpoint_path)
-    checkpoint = load_franchise_checkpoint()
+    if _checkpoint is not None:
+        if not _checkpoint_hash or before != _checkpoint_hash:
+            raise CPUFreeAgencyExecutionError(
+                "CPU Free Agency candidate source changed before execution."
+            )
+        checkpoint = _checkpoint
+    else:
+        checkpoint = (
+            load_franchise_checkpoint()
+            if _checkpoint_path is None
+            else load_franchise_checkpoint(path=checkpoint_path, allow_backup=False)
+        )
     if checkpoint is None:
         raise CPUFreeAgencyExecutionError(
             "The durable franchise checkpoint is unavailable."
@@ -2628,6 +2684,14 @@ def execute_cpu_free_agency_round_durably(
         nonlocal durable_batch_number
 
         if len(committed) <= pending_batch_start:
+            return
+
+        if _defer_durable_write:
+            # V3 lifecycle previews and candidate builds keep the authoritative
+            # source file untouched. Every signing above still runs the exact
+            # legality, player-decision, Trade Machine sync, and state validation
+            # stack; the desktop bridge owns the eventual single atomic write.
+            pending_batch_start = len(committed)
             return
 
         expected_sim = free_agency_durable_state_fingerprint(
@@ -2773,6 +2837,7 @@ def execute_cpu_free_agency_round_durably(
                     _verify_bytes_only=True,
                     _verified_checkpoint_sink=verified_sink,
                     _defer_durable_write=True,
+                    _checkpoint_path=checkpoint_path,
                 )
             except Exception as exc:
                 if committed:
@@ -2856,6 +2921,7 @@ def execute_cpu_free_agency_round_durably(
                         _verify_bytes_only=True,
                         _verified_checkpoint_sink=verified_sink,
                         _defer_durable_write=True,
+                        _checkpoint_path=checkpoint_path,
                     )
                 except Exception as exc:
                     if committed:
@@ -2901,6 +2967,7 @@ def execute_cpu_free_agency_round_durably(
                     verify_bytes_only=True,
                     verified_checkpoint_sink=verified_sink,
                     defer_durable_write=True,
+                    checkpoint_path=checkpoint_path,
                 )
             except Exception as exc:
                 if committed:
@@ -2945,6 +3012,7 @@ def execute_cpu_free_agency_round_durably(
                     _verify_bytes_only=True,
                     _verified_checkpoint_sink=verified_sink,
                     _defer_durable_write=True,
+                    _checkpoint_path=checkpoint_path,
                 )
             except Exception as exc:
                 if committed:
@@ -2992,6 +3060,21 @@ def execute_cpu_free_agency_round_durably(
         checkpoint.simulation_state
     )
     expected_trade = trade_state_fingerprint(checkpoint.trade_state)
+
+    if _defer_durable_write:
+        if _verified_checkpoint_sink is not None:
+            _verified_checkpoint_sink.append(checkpoint)
+        return CPUFreeAgencyRoundResult(
+            version=CPU_FREE_AGENCY_EXECUTION_VERSION,
+            status=("committed" if committed else "no_action"),
+            requested_max_signings=max_signings,
+            committed_signing_count=len(committed),
+            signings=tuple(committed),
+            stop_reason=stop_reason,
+            checkpoint_hash_before=before,
+            checkpoint_hash_after=before,
+        )
+
     checkpoint = None
     try:
         verified_sink.clear()
@@ -3023,6 +3106,65 @@ def execute_cpu_free_agency_round_durably(
         checkpoint_hash_before=before,
         checkpoint_hash_after=_sha256(checkpoint_path),
     )
+
+
+def build_cpu_free_agency_round_candidate(
+    checkpoint: Any,
+    *,
+    source_checkpoint_path: str | Path,
+    source_checkpoint_sha256: str,
+    max_signings: int = 15,
+    max_targets_per_team: int = 8,
+) -> tuple[CPUFreeAgencyRoundResult, Any]:
+    """Build a complete CPU-FA round without writing its source checkpoint.
+
+    This is the desktop/V3 integration seam. It intentionally reuses the same
+    production market, player decision, CBA, roster-floor rescue, sustainable
+    completion, and Trade Machine synchronization path as the durable V2 runner.
+    The returned checkpoint is a candidate only; its caller owns persistence.
+    """
+    checkpoint_path = Path(source_checkpoint_path)
+    expected_hash = _clean(source_checkpoint_sha256)
+    if not checkpoint_path.is_file() or not expected_hash:
+        raise CPUFreeAgencyExecutionError(
+            "CPU Free Agency candidate mode requires an existing source checkpoint and SHA-256 token."
+        )
+    if _sha256(checkpoint_path) != expected_hash:
+        raise CPUFreeAgencyExecutionError(
+            "CPU Free Agency candidate source does not match its expected SHA-256 token."
+        )
+
+    source_sim_before = free_agency_durable_state_fingerprint(
+        checkpoint.simulation_state
+    )
+    source_trade_before = trade_state_fingerprint(checkpoint.trade_state)
+    sink: list[Any] = []
+    result = execute_cpu_free_agency_round_durably(
+        max_signings=max_signings,
+        max_targets_per_team=max_targets_per_team,
+        _checkpoint=checkpoint,
+        _checkpoint_hash=expected_hash,
+        _checkpoint_path=checkpoint_path,
+        _defer_durable_write=True,
+        _verified_checkpoint_sink=sink,
+    )
+    if len(sink) != 1:
+        raise CPUFreeAgencyExecutionError(
+            "CPU Free Agency candidate mode did not return exactly one candidate checkpoint."
+        )
+    if _sha256(checkpoint_path) != expected_hash:
+        raise CPUFreeAgencyExecutionError(
+            "CPU Free Agency candidate mode unexpectedly changed its source checkpoint."
+        )
+    if (
+        free_agency_durable_state_fingerprint(checkpoint.simulation_state)
+        != source_sim_before
+        or trade_state_fingerprint(checkpoint.trade_state) != source_trade_before
+    ):
+        raise CPUFreeAgencyExecutionError(
+            "CPU Free Agency candidate mode mutated its source checkpoint in memory."
+        )
+    return result, sink[0]
 
 
 

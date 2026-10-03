@@ -5,6 +5,7 @@ import hashlib
 import json
 import time
 from dataclasses import asdict, dataclass, is_dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping
 
@@ -33,6 +34,7 @@ from franchise_draft_engine_v1 import (
 from franchise_free_agency_cpu_execution_v1 import (
     CPU_FREE_AGENCY_EXECUTION_VERSION,
     CPU_FREE_AGENCY_SUSTAINABLE_ROSTER_TARGET,
+    build_cpu_free_agency_round_candidate,
     cpu_sustainable_roster_deficits,
 )
 from franchise_offseason_market_season_v1 import completed_season_closeout_applied
@@ -51,15 +53,17 @@ from simulation_league_state_v1 import validate_simulation_league_state
 
 
 SEASON_LIFECYCLE_FOUNDATION_VERSION = (
-    "v3-season-lifecycle-foundation-batch-11-offseason-progression-hotfix-11.0.2-2026-10-03"
+    "v3-season-lifecycle-foundation-batch-15-cpu-free-agency-v15.0.0-2026-10-03"
 )
 
 ACTION_CONTRACT_CLOSEOUT = "contract_closeout"
+ACTION_CPU_FREE_AGENCY = "cpu_free_agency"
 ACTION_DRAFT_LOTTERY = "draft_lottery"
 ACTION_DRAFT_NIGHT = "draft_night"
 ACTION_NEXT_SEASON = "next_season"
 SUPPORTED_ACTIONS = (
     ACTION_CONTRACT_CLOSEOUT,
+    ACTION_CPU_FREE_AGENCY,
     ACTION_DRAFT_LOTTERY,
     ACTION_DRAFT_NIGHT,
     ACTION_NEXT_SEASON,
@@ -255,7 +259,7 @@ def _next_action(checkpoint: Any) -> tuple[str, str, tuple[str, ...]]:
         if cpu_deficits:
             total = sum(int(row[2]) for row in cpu_deficits if len(row) >= 3)
             return (
-                "",
+                ACTION_CPU_FREE_AGENCY,
                 "cpu_free_agency_pending",
                 (
                     f"CPU roster construction is incomplete: {len(cpu_deficits)} team(s), {total} roster spot(s) below the sustainable target of {CPU_FREE_AGENCY_SUSTAINABLE_ROSTER_TARGET}.",
@@ -449,6 +453,7 @@ def build_lifecycle_summary(checkpoint: Any) -> dict[str, Any]:
         "next_action": action,
         "next_action_label": {
             ACTION_CONTRACT_CLOSEOUT: "CLOSE OUT CONTRACTS",
+            ACTION_CPU_FREE_AGENCY: "RUN CPU FREE AGENCY",
             ACTION_DRAFT_LOTTERY: "RUN DRAFT LOTTERY",
             ACTION_DRAFT_NIGHT: "OPEN DRAFT NIGHT",
             ACTION_NEXT_SEASON: "OPEN NEXT SEASON",
@@ -498,6 +503,8 @@ def build_lifecycle_action_candidate(
     action: str,
     *,
     active_team: str = "",
+    source_checkpoint_path: str | Path | None = None,
+    source_checkpoint_sha256: str = "",
 ) -> V3LifecycleActionCandidate:
     action = _clean(action).lower()
     source_state = checkpoint.simulation_state
@@ -511,7 +518,6 @@ def build_lifecycle_action_candidate(
     preferences = copy.deepcopy(dict(getattr(checkpoint, "preferences", {}) or {}))
     source_season = _season(source_state)
     source_fp = _source_fingerprint(checkpoint)
-    runtime = load_runtime_data()
 
     if action == ACTION_CONTRACT_CLOSEOUT:
         result = build_completed_season_contract_closeout_candidate(source_state, source_trade)
@@ -531,9 +537,60 @@ def build_lifecycle_action_candidate(
         }
         target_season = source_season
 
+    elif action == ACTION_CPU_FREE_AGENCY:
+        if source_checkpoint_path is None or not _clean(source_checkpoint_sha256):
+            raise V3SeasonLifecycleError(
+                "CPU Free Agency requires the V3 working-save path and a fresh SHA-256 token."
+            )
+        deficits_before = _cpu_deficits(checkpoint)
+        result, candidate_checkpoint = build_cpu_free_agency_round_candidate(
+            checkpoint,
+            source_checkpoint_path=source_checkpoint_path,
+            source_checkpoint_sha256=source_checkpoint_sha256,
+            max_signings=15,
+            max_targets_per_team=8,
+        )
+        state = candidate_checkpoint.simulation_state
+        trade_state = candidate_checkpoint.trade_state
+        candidate_like = _checkpoint_like(checkpoint, state, trade_state)
+        deficits_after = _cpu_deficits(candidate_like)
+        if result.committed_signing_count < 1 and deficits_after:
+            raise V3SeasonLifecycleError(
+                "CPU Free Agency found no legal, player-accepted path for the remaining roster deficits: "
+                + result.stop_reason
+            )
+        signings = [
+            {
+                "transaction_id": row.transaction_id,
+                "player_id": row.player_id,
+                "player_name": row.player_name,
+                "team_abbreviation": row.team_abbreviation,
+                "annual_salary": row.annual_salary,
+                "years": row.years,
+            }
+            for row in result.signings
+        ]
+        detail = {
+            "status": result.status,
+            "committed_signing_count": result.committed_signing_count,
+            "requested_max_signings": result.requested_max_signings,
+            "stop_reason": result.stop_reason,
+            "deficits_before": _json_safe(deficits_before),
+            "deficits_after": _json_safe(deficits_after),
+            "deficit_team_count_before": len(deficits_before),
+            "deficit_team_count_after": len(deficits_after),
+            "total_deficit_before": sum(int(row[2]) for row in deficits_before),
+            "total_deficit_after": sum(int(row[2]) for row in deficits_after),
+            "sustainable_target": CPU_FREE_AGENCY_SUSTAINABLE_ROSTER_TARGET,
+            "round_complete": not bool(deficits_after),
+            "signings": signings,
+        }
+        target_season = source_season
+
     elif action == ACTION_DRAFT_LOTTERY:
         state = copy.deepcopy(source_state)
         trade_state = copy.deepcopy(source_trade)
+        runtime = load_runtime_data()
         controlled = _controlled_teams(checkpoint)
         if active_team:
             controlled = tuple(sorted(set(controlled) | {_clean(active_team).upper()}))
@@ -632,6 +689,8 @@ def build_lifecycle_action_preview(
     action: str,
     *,
     active_team: str = "",
+    source_checkpoint_path: str | Path | None = None,
+    source_checkpoint_sha256: str = "",
 ) -> dict[str, Any]:
     source_fp = _source_fingerprint(checkpoint)
     try:
@@ -639,6 +698,8 @@ def build_lifecycle_action_preview(
             checkpoint,
             action,
             active_team=active_team,
+            source_checkpoint_path=source_checkpoint_path,
+            source_checkpoint_sha256=source_checkpoint_sha256,
         )
     except Exception as exc:
         return {
@@ -698,6 +759,27 @@ def verify_lifecycle_action_persisted(
             "lottery_order_present": bool(current.get("lottery_order")),
             "draft_order_present": bool(current.get("draft_order")),
             "prospects_present": bool(current.get("prospects")),
+        }
+        ok = all(checks.values())
+
+    elif action == ACTION_CPU_FREE_AGENCY:
+        expected_deficits = candidate.detail.get("deficits_after", [])
+        observed_deficits = _json_safe(_cpu_deficits(checkpoint))
+        expected_transactions = {
+            _clean(row.get("transaction_id"))
+            for row in candidate.detail.get("signings", [])
+            if isinstance(row, Mapping) and _clean(row.get("transaction_id"))
+        }
+        observed_transactions = {
+            _clean(row.get("transaction_id"))
+            for row in getattr(state, "free_agency_transaction_history", ()) or ()
+            if isinstance(row, Mapping) and _clean(row.get("transaction_id"))
+        }
+        checks = {
+            "cpu_roster_deficits_match_candidate": observed_deficits == expected_deficits,
+            "cpu_signing_transactions_persisted": expected_transactions.issubset(observed_transactions),
+            "cpu_signing_count_matches": len(expected_transactions)
+            == int(candidate.detail.get("committed_signing_count", 0) or 0),
         }
         ok = all(checks.values())
 

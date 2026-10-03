@@ -234,8 +234,14 @@ def static_checks(results: dict[str, bool]) -> dict[str, Any]:
         results,
     )
     check(
-        "batch14_did_not_modify_bridge_server",
-        git_path_unchanged("desktop_bridge/server.py"),
+        "batch14_bridge_contract_preserved_after_later_batches",
+        git_path_unchanged("desktop_bridge/server.py")
+        or (
+            'Route("/v3/game-day", game_day_summary, methods=["GET"])' in server
+            and 'Route("/v3/game-day/simulate", game_day_simulate, methods=["POST"])' in server
+            and 'Route("/v3/rotation/preview", rotation_preview, methods=["POST"])' in server
+            and 'Route("/v3/rotation/apply", rotation_apply, methods=["POST"])' in server
+        ),
         results,
     )
     check(

@@ -3765,6 +3765,8 @@ async def lifecycle_preview(request: Request) -> JSONResponse:
             checkpoint,
             action,
             active_team=active_team,
+            source_checkpoint_path=V3_WORKING_CHECKPOINT_PATH,
+            source_checkpoint_sha256=str(working_before or ""),
         )
         working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
         v2_after = _file_sha256(v2_path)
@@ -3885,6 +3887,8 @@ async def lifecycle_execute(request: Request) -> JSONResponse:
             checkpoint,
             action,
             active_team=active_team,
+            source_checkpoint_path=V3_WORKING_CHECKPOINT_PATH,
+            source_checkpoint_sha256=working_before,
         )
         if candidate.action_fingerprint != expected_action_fingerprint:
             return JSONResponse(
@@ -3923,7 +3927,7 @@ async def lifecycle_execute(request: Request) -> JSONResponse:
             candidate.state,
             candidate.trade_state,
             preferences=candidate.preferences,
-            reason=f"V3 Batch 11 lifecycle action: {candidate.action}",
+            reason=f"V3 Batch 15 lifecycle action: {candidate.action}",
             path=V3_WORKING_CHECKPOINT_PATH,
             copy_payload=False,
             force_replace=True,

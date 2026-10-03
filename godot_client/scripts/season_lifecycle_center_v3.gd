@@ -457,6 +457,13 @@ func _preview_detail(action: String, detail: Dictionary) -> String:
 				str(detail.get("contracts_expired", 0)),
 				"YES" if bool(detail.get("draft_scouting_preserved", false)) else "N/A"
 			]
+		"cpu_free_agency":
+			return "%s CPU signings • roster deficit %s → %s • %s" % [
+				str(detail.get("committed_signing_count", 0)),
+				str(detail.get("total_deficit_before", 0)),
+				str(detail.get("total_deficit_after", 0)),
+				"ROSTERS READY" if bool(detail.get("round_complete", false)) else "ANOTHER ROUND MAY BE NEEDED"
+			]
 		"draft_lottery":
 			return "Draft year %s • %s picks • %s prospects" % [
 				str(detail.get("draft_year", "")),
@@ -480,6 +487,8 @@ func _action_explanation(action: String) -> String:
 	match action:
 		"contract_closeout":
 			return "Apply the authoritative completed-season contract closeout before the player market advances."
+		"cpu_free_agency":
+			return "Let every CPU front office evaluate team fit, legal contract paths, competing offers, player decisions, and emergency roster needs. Previewing never writes the save."
 		"draft_lottery":
 			return "Initialize the production Draft state, conduct the lottery, and reveal the Draft class."
 		"draft_night":
