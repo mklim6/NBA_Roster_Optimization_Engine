@@ -16,7 +16,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.17.0"
+API_VERSION = "0.17.1"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -119,6 +119,7 @@ from desktop_bridge.save_manager_foundation import (
     bootstrap_save_manager,
     build_save_manager_summary,
     create_slot_copy,
+    create_new_franchise,
     delete_slot,
     load_slot,
     rename_slot,
@@ -2670,7 +2671,7 @@ async def franchise_summary(_: Request) -> JSONResponse:
         rank, conference = _conference_rank(state, active_team)
 
         chemistry = _chemistry_score(
-            state.franchise_morale_chemistry_v1,
+            getattr(state, "franchise_morale_chemistry_v1", {}),
             active_team,
         )
 
@@ -2927,6 +2928,32 @@ async def save_manager_create(request: Request) -> JSONResponse:
     except Exception as exc:
         return JSONResponse(
             {"error": "save_manager_create_failed", "exception_type": type(exc).__name__, "detail": str(exc), "active_v2_read_only": True},
+            status_code=500,
+        )
+
+
+async def save_manager_new_franchise(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Request body must be a JSON object.")
+        payload = create_new_franchise(
+            working_path=V3_WORKING_CHECKPOINT_PATH,
+            v2_path=Path(DEFAULT_CHECKPOINT_PATH),
+            manager_root=V3_SAVE_MANAGER_ROOT,
+            team=str(body.get("team", "") or ""),
+            name=str(body.get("name", "") or ""),
+        )
+        payload["api_version"] = API_VERSION
+        return JSONResponse(payload)
+    except (V3SaveManagerError, ValueError) as exc:
+        return JSONResponse(
+            {"error": "new_franchise_create_blocked", "detail": str(exc), "active_v2_read_only": True},
+            status_code=409,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {"error": "new_franchise_create_failed", "exception_type": type(exc).__name__, "detail": str(exc), "active_v2_read_only": True},
             status_code=500,
         )
 
@@ -4628,6 +4655,7 @@ routes = [
     Route("/v3/saves/bootstrap", save_manager_bootstrap, methods=["POST"]),
     Route("/v3/saves/save-current", save_manager_save_current, methods=["POST"]),
     Route("/v3/saves/create", save_manager_create, methods=["POST"]),
+    Route("/v3/saves/new-franchise", save_manager_new_franchise, methods=["POST"]),
     Route("/v3/saves/rename", save_manager_rename, methods=["POST"]),
     Route("/v3/saves/load", save_manager_load, methods=["POST"]),
     Route("/v3/saves/delete", save_manager_delete, methods=["POST"]),

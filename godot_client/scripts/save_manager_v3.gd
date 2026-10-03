@@ -6,6 +6,7 @@ const SUMMARY_URL := "http://127.0.0.1:8765/v3/saves"
 const BOOTSTRAP_URL := "http://127.0.0.1:8765/v3/saves/bootstrap"
 const SAVE_CURRENT_URL := "http://127.0.0.1:8765/v3/saves/save-current"
 const CREATE_URL := "http://127.0.0.1:8765/v3/saves/create"
+const NEW_FRANCHISE_URL := "http://127.0.0.1:8765/v3/saves/new-franchise"
 const RENAME_URL := "http://127.0.0.1:8765/v3/saves/rename"
 const LOAD_URL := "http://127.0.0.1:8765/v3/saves/load"
 const DELETE_URL := "http://127.0.0.1:8765/v3/saves/delete"
@@ -30,6 +31,8 @@ var selected_slot_id := ""
 var pending_action := ""
 var pending_confirm_action := ""
 var rename_mode := false
+var new_franchise_mode := false
+var pending_new_franchise_body: Dictionary = {}
 
 var status_label: Label
 var active_slot_value: Label
@@ -39,8 +42,14 @@ var season_value: Label
 var slots_box: VBoxContainer
 var selected_title: Label
 var selected_detail: Label
+var name_label: Label
 var name_input: LineEdit
+var name_help: Label
+var team_label: Label
+var team_selector: OptionButton
 var bootstrap_button: Button
+var new_franchise_button: Button
+var create_franchise_button: Button
 var save_current_button: Button
 var create_button: Button
 var rename_button: Button
@@ -65,7 +74,7 @@ func _build_http() -> void:
 	add_child(summary_request)
 
 	action_request = HTTPRequest.new()
-	action_request.timeout = 120.0
+	action_request.timeout = 180.0
 	action_request.request_completed.connect(_on_action_completed)
 	add_child(action_request)
 
@@ -174,7 +183,8 @@ func _build_ui() -> void:
 	selected_detail.custom_minimum_size = Vector2(0, 92)
 	actions_body.add_child(selected_detail)
 
-	actions_body.add_child(_small_label("SAVE NAME / COPY NAME", ACCENT))
+	name_label = _small_label("SAVE NAME / COPY NAME", ACCENT)
+	actions_body.add_child(name_label)
 	name_input = LineEdit.new()
 	name_input.placeholder_text = "Enter franchise save name"
 	name_input.max_length = 48
@@ -186,16 +196,37 @@ func _build_ui() -> void:
 	name_input.text_submitted.connect(_on_name_submitted)
 	actions_body.add_child(name_input)
 
-	var name_help := Label.new()
+	name_help = Label.new()
 	name_help.text = "For a copy, type the new name and choose CREATE COPY. For a rename, choose RENAME SELECTED, edit the highlighted field, then choose APPLY RENAME."
 	name_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	name_help.add_theme_color_override("font_color", MUTED)
 	name_help.add_theme_font_size_override("font_size", 9)
 	actions_body.add_child(name_help)
 
+	team_label = _small_label("NEW FRANCHISE TEAM", ACCENT)
+	team_label.visible = false
+	actions_body.add_child(team_label)
+	team_selector = OptionButton.new()
+	team_selector.custom_minimum_size = Vector2(0, 42)
+	team_selector.visible = false
+	team_selector.add_theme_color_override("font_color", TEXT)
+	team_selector.add_theme_font_size_override("font_size", 11)
+	team_selector.add_theme_stylebox_override("normal", _box(PANEL_ALT, 8, BORDER))
+	team_selector.item_selected.connect(_on_new_franchise_team_selected)
+	actions_body.add_child(team_selector)
+
 	bootstrap_button = _action_button("PROTECT CURRENT FRANCHISE", true)
 	bootstrap_button.pressed.connect(_bootstrap)
 	actions_body.add_child(bootstrap_button)
+
+	new_franchise_button = _action_button("NEW FRANCHISE", false)
+	new_franchise_button.pressed.connect(_toggle_new_franchise_mode)
+	actions_body.add_child(new_franchise_button)
+
+	create_franchise_button = _action_button("CREATE FRANCHISE", true)
+	create_franchise_button.pressed.connect(_confirm_new_franchise)
+	create_franchise_button.visible = false
+	actions_body.add_child(create_franchise_button)
 
 	save_current_button = _action_button("SAVE CURRENT", true)
 	save_current_button.pressed.connect(_save_current)
@@ -232,6 +263,10 @@ func _build_ui() -> void:
 	confirm_dialog.title = "Confirm franchise save action"
 	confirm_dialog.confirmed.connect(_on_confirmed)
 	add_child(confirm_dialog)
+	var confirm_label := confirm_dialog.get_label()
+	confirm_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	confirm_label.custom_minimum_size = Vector2(520, 120)
+	confirm_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	_update_controls()
 
@@ -299,6 +334,7 @@ func _render_summary() -> void:
 		status_label.text = "SAVE LIBRARY HEALTHY • active working session and protected V2 verified."
 		status_label.add_theme_color_override("font_color", GOOD)
 
+	_populate_new_franchise_teams()
 	_render_selected()
 	_update_controls()
 
@@ -344,11 +380,19 @@ func _slot_row(slot: Dictionary) -> Control:
 
 func _select_slot(slot_id: String) -> void:
 	rename_mode = false
+	new_franchise_mode = false
 	selected_slot_id = slot_id
 	_render_summary()
 
 
 func _render_selected() -> void:
+	if new_franchise_mode:
+		var team := _selected_new_franchise_team()
+		selected_title.text = "CREATE NEW FRANCHISE"
+		selected_detail.text = "Start a clean 2026-27 franchise from the certified Sep. 7, 2026 universe.\nChoose any NBA team. Your current franchise is snapshotted before the new slot is activated."
+		if name_input.text.strip_edges().is_empty() and not team.is_empty():
+			name_input.text = "%s Franchise" % _team_name_for_code(team)
+		return
 	var selected := _slot_by_id(selected_slot_id)
 	if selected.is_empty():
 		selected_title.text = "SELECT A SAVE"
@@ -375,17 +419,120 @@ func _update_controls() -> void:
 	var active_selected := bool(selected.get("active", false)) if has_selected else false
 	bootstrap_button.visible = not initialized
 	bootstrap_button.disabled = busy or not bool(payload.get("bootstrap_available", false))
-	save_current_button.visible = initialized
+
+	new_franchise_button.visible = initialized
+	new_franchise_button.text = "CANCEL NEW FRANCHISE" if new_franchise_mode else "NEW FRANCHISE"
+	new_franchise_button.disabled = busy or not initialized or rename_mode
+	create_franchise_button.visible = initialized and new_franchise_mode
+	create_franchise_button.disabled = busy or not new_franchise_mode or _selected_new_franchise_team().is_empty()
+	team_label.visible = new_franchise_mode
+	team_selector.visible = new_franchise_mode
+	name_label.text = "NEW FRANCHISE NAME" if new_franchise_mode else "SAVE NAME / COPY NAME"
+	name_help.text = (
+		"Choose a team and name. CREATE FRANCHISE builds a clean certified 2026-27 universe and protects the current live save before switching."
+		if new_franchise_mode
+		else "For a copy, type the new name and choose CREATE COPY. For a rename, choose RENAME SELECTED, edit the highlighted field, then choose APPLY RENAME."
+	)
+
+	save_current_button.visible = initialized and not new_franchise_mode
 	save_current_button.disabled = busy or not initialized or rename_mode
-	create_button.visible = initialized
+	create_button.visible = initialized and not new_franchise_mode
 	create_button.disabled = busy or not initialized or rename_mode
-	rename_button.visible = initialized
+	rename_button.visible = initialized and not new_franchise_mode
 	rename_button.text = "APPLY RENAME" if rename_mode else "RENAME SELECTED"
 	rename_button.disabled = busy or not has_selected
-	load_button.visible = initialized
+	load_button.visible = initialized and not new_franchise_mode
 	load_button.disabled = busy or rename_mode or not has_selected or active_selected or not bool(selected.get("healthy", false))
-	delete_button.visible = initialized
+	delete_button.visible = initialized and not new_franchise_mode
 	delete_button.disabled = busy or rename_mode or not has_selected or active_selected
+
+
+func _populate_new_franchise_teams() -> void:
+	if team_selector == null:
+		return
+	var prior := _selected_new_franchise_team()
+	team_selector.clear()
+	var options: Array = payload.get("new_franchise_teams", [])
+	var active_team := ""
+	var active := _slot_by_id(str(payload.get("active_slot_id", "")))
+	if not active.is_empty():
+		active_team = str(active.get("team", ""))
+	var select_index := 0
+	for raw_option in options:
+		if typeof(raw_option) != TYPE_DICTIONARY:
+			continue
+		var team := str(raw_option.get("team", ""))
+		var team_name := str(raw_option.get("team_name", team))
+		team_selector.add_item("%s  •  %s" % [team, team_name])
+		var index := team_selector.item_count - 1
+		team_selector.set_item_metadata(index, team)
+		if team == prior or (prior.is_empty() and team == active_team):
+			select_index = index
+	if team_selector.item_count > 0:
+		team_selector.select(select_index)
+
+
+func _selected_new_franchise_team() -> String:
+	if team_selector == null or team_selector.item_count <= 0:
+		return ""
+	var index := team_selector.selected
+	if index < 0:
+		return ""
+	return str(team_selector.get_item_metadata(index))
+
+
+func _team_name_for_code(team: String) -> String:
+	for raw_option in payload.get("new_franchise_teams", []):
+		if typeof(raw_option) == TYPE_DICTIONARY and str(raw_option.get("team", "")) == team:
+			return str(raw_option.get("team_name", team))
+	return team
+
+
+func _on_new_franchise_team_selected(_index: int) -> void:
+	if not new_franchise_mode:
+		return
+	var team := _selected_new_franchise_team()
+	if not team.is_empty():
+		name_input.text = "%s Franchise" % _team_name_for_code(team)
+	_render_selected()
+	_update_controls()
+
+
+func _toggle_new_franchise_mode() -> void:
+	if pending_action != "":
+		return
+	rename_mode = false
+	new_franchise_mode = not new_franchise_mode
+	if new_franchise_mode:
+		var team := _selected_new_franchise_team()
+		if not team.is_empty():
+			name_input.text = "%s Franchise" % _team_name_for_code(team)
+		status_label.text = "NEW FRANCHISE MODE • choose a team and create a clean certified 2026-27 franchise save."
+		status_label.add_theme_color_override("font_color", ACCENT)
+	else:
+		status_label.text = "New franchise creation cancelled. No save was changed."
+		status_label.add_theme_color_override("font_color", MUTED)
+	_render_selected()
+	_update_controls()
+
+
+func _confirm_new_franchise() -> void:
+	if not new_franchise_mode:
+		return
+	var team := _selected_new_franchise_team()
+	if team.is_empty():
+		status_label.text = "Choose an NBA team before creating a franchise."
+		status_label.add_theme_color_override("font_color", GOLD)
+		return
+	var clean_name := name_input.text.strip_edges()
+	if clean_name.is_empty():
+		clean_name = "%s Franchise" % _team_name_for_code(team)
+		name_input.text = clean_name
+	pending_new_franchise_body = {"team": team, "name": clean_name}
+	pending_confirm_action = "new_franchise"
+	confirm_dialog.dialog_text = "Create '%s' as %s?\n\nThis builds a clean 2026-27 franchise from the certified Sep. 7 universe. Your current live session is snapshotted to its existing save before the new franchise becomes active. Protected V2 remains unchanged." % [clean_name, _team_name_for_code(team)]
+	confirm_dialog.ok_button_text = "CREATE FRANCHISE"
+	confirm_dialog.popup_centered(Vector2i(620, 340))
 
 
 func _bootstrap() -> void:
@@ -461,6 +608,9 @@ func _confirm_delete() -> void:
 func _on_confirmed() -> void:
 	if pending_confirm_action == "load":
 		_post_action("load", LOAD_URL, {"slot_id": selected_slot_id})
+	elif pending_confirm_action == "new_franchise":
+		_post_action("new_franchise", NEW_FRANCHISE_URL, pending_new_franchise_body)
+		pending_new_franchise_body = {}
 	elif pending_confirm_action == "delete":
 		_post_action("delete", DELETE_URL, {"slot_id": selected_slot_id})
 	pending_confirm_action = ""
@@ -506,6 +656,9 @@ func _on_action_completed(result: int, response_code: int, _headers: PackedStrin
 	payload = parsed
 	if completed_action == "create":
 		selected_slot_id = str(parsed.get("created_slot_id", selected_slot_id))
+	elif completed_action == "new_franchise":
+		selected_slot_id = str(parsed.get("created_slot_id", parsed.get("loaded_slot_id", selected_slot_id)))
+		new_franchise_mode = false
 	elif completed_action == "rename":
 		rename_mode = false
 	elif completed_action == "load":
@@ -515,7 +668,7 @@ func _on_action_completed(result: int, response_code: int, _headers: PackedStrin
 	_render_summary()
 	status_label.text = "SAVE MANAGER %s • V3 working session verified • protected V2 unchanged." % completed_action.replace("_", " ").to_upper()
 	status_label.add_theme_color_override("font_color", GOOD)
-	if completed_action == "load":
+	if completed_action == "load" or completed_action == "new_franchise":
 		active_save_changed.emit()
 
 

@@ -9,16 +9,23 @@ import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping
 
-from simulation_franchise_checkpoint_v1 import load_franchise_checkpoint
+from simulation_franchise_checkpoint_v1 import (
+    load_franchise_checkpoint,
+    save_franchise_checkpoint,
+)
 
 
 SAVE_MANAGER_VERSION = "v3-save-manager-foundation-batch-17a-v1.0.0-2026-10-03"
+NEW_FRANCHISE_VERSION = "v3-new-franchise-batch-17b-v1.0.0-2026-10-03"
 MANIFEST_FILENAME = "manifest.json"
 SLOTS_DIRNAME = "slots"
 RECOVERY_DIRNAME = "recovery"
 MAX_SLOT_NAME_LENGTH = 48
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RELEASE_FREEZE_PATH = REPO_ROOT / "app_data" / "nba_sep7_release_freeze_v1.json"
 
 TEAM_NAMES = {
     "ATL": "Atlanta Hawks",
@@ -297,6 +304,180 @@ def _safety_hashes(working_path: Path, v2_path: Path) -> tuple[str | None, str |
     return _sha256(Path(working_path)), _sha256(Path(v2_path))
 
 
+def new_franchise_team_options() -> list[dict[str, str]]:
+    return [
+        {"team": team, "team_name": TEAM_NAMES[team]}
+        for team in sorted(TEAM_NAMES, key=lambda value: TEAM_NAMES[value])
+    ]
+
+
+def _clean_new_franchise_team(value: Any) -> str:
+    team = str(value or "").strip().upper()
+    if team not in TEAM_NAMES:
+        raise V3SaveManagerError(
+            f"Unknown NBA franchise team: {team or '<blank>'}."
+        )
+    return team
+
+
+def _fresh_franchise_state_checks(checkpoint: Any, team: str) -> dict[str, Any]:
+    state = getattr(checkpoint, "simulation_state", None)
+    preferences = dict(getattr(checkpoint, "preferences", {}) or {})
+    if state is None:
+        raise V3SaveManagerError("Fresh franchise checkpoint has no SimulationState.")
+    standing = (getattr(state, "standings", {}) or {}).get(team)
+    schedule = dict(getattr(state, "schedule", {}) or {})
+    completed = dict(getattr(state, "completed_games", {}) or {})
+    universe = dict(getattr(state, "franchise_start_universe_v1", {}) or {})
+    draft = getattr(state, "franchise_draft_state_v1", None)
+    phase = _phase_value(state)
+    day_index = int(getattr(state, "current_day_index", 0) or 0)
+    team_games = int(getattr(standing, "games_played", 0) or 0) if standing is not None else -1
+    total_standing_games = sum(
+        int(getattr(row, "games_played", 0) or 0)
+        for row in (getattr(state, "standings", {}) or {}).values()
+    )
+    checks = {
+        "team": team,
+        "season": str(getattr(getattr(state, "settings", None), "season_label", "") or ""),
+        "phase": phase,
+        "day_index": day_index,
+        "schedule_games": len(schedule),
+        "completed_games": len(completed),
+        "team_games_played": team_games,
+        "league_standing_games_played": total_standing_games,
+        "universe_id": str(universe.get("universe_id", "") or ""),
+        "draft_phase": str((draft or {}).get("phase", "") or "") if isinstance(draft, dict) else "",
+        "active_team": str(preferences.get("franchise_pref_active_team", "") or "").upper(),
+        "controlled_teams": [
+            str(value or "").upper()
+            for value in preferences.get("franchise_pref_controlled_teams", ()) or ()
+        ],
+    }
+    ready = (
+        checks["season"] == "2026-27"
+        and phase == "regular_season"
+        and day_index == 0
+        and len(schedule) == 1230
+        and len(completed) == 0
+        and team_games == 0
+        and total_standing_games == 0
+        and checks["universe_id"] == "live-2026-09-07"
+        and checks["draft_phase"] == "season_scouting"
+        and checks["active_team"] == team
+        and checks["controlled_teams"] == [team]
+    )
+    checks["fresh_start_ready"] = ready
+    if not ready:
+        raise V3SaveManagerError(
+            "Certified new-franchise checkpoint failed fresh-start verification: "
+            + json.dumps(checks, sort_keys=True)
+        )
+    return checks
+
+
+def _build_certified_fresh_franchise_checkpoint(
+    *,
+    team: str,
+    target_path: Path,
+) -> dict[str, Any]:
+    """Build the frozen Sep. 7 universe without touching any durable live save."""
+    team = _clean_new_franchise_team(team)
+    if not RELEASE_FREEZE_PATH.is_file():
+        raise V3SaveManagerError(
+            f"Certified Sep. 7 release freeze is missing: {RELEASE_FREEZE_PATH}"
+        )
+    try:
+        freeze = json.loads(RELEASE_FREEZE_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise V3SaveManagerError("Certified Sep. 7 release freeze is unreadable.") from exc
+    expected = dict(freeze.get("expected_live_start", {}) or {})
+    expected_fingerprint = str(expected.get("live_start_fingerprint", "") or "")
+    if freeze.get("immutable") is not True or not expected_fingerprint:
+        raise V3SaveManagerError("Certified Sep. 7 release freeze is incomplete.")
+
+    # Reuse the same mature builders exercised by the protected V2 launch smoke.
+    from freeform_trade_machine_engine_v3 import load_runtime_data
+    from franchise_live_start_v1 import (
+        LIVE_START_VERSION,
+        build_live_starting_franchise,
+        live_start_fingerprint,
+    )
+    from franchise_opening_regular_season_transition_v1 import (
+        build_opening_regular_season_candidate,
+    )
+    from franchise_staff_system_v1 import ensure_franchise_staff_state
+    from franchise_draft_engine_v1 import initialize_regular_season_scouting_state
+    from simulation_league_state_v1 import validate_simulation_league_state
+
+    runtime = load_runtime_data()
+    live = build_live_starting_franchise(runtime)
+    observed_live_fingerprint = live_start_fingerprint(
+        live.simulation_state,
+        live.trade_state,
+    )
+    if observed_live_fingerprint != expected_fingerprint:
+        raise V3SaveManagerError(
+            "Fresh franchise builder no longer matches the certified Sep. 7 release fingerprint."
+        )
+    if str(live.version) != str(expected.get("engine_version", LIVE_START_VERSION)):
+        raise V3SaveManagerError("Fresh franchise builder version no longer matches the release freeze.")
+    if len(getattr(live.simulation_state, "schedule", {}) or {}) != int(
+        expected.get("schedule_game_count", 1230) or 1230
+    ):
+        raise V3SaveManagerError("Fresh franchise builder produced the wrong schedule size.")
+
+    source = SimpleNamespace(
+        simulation_state=live.simulation_state,
+        trade_state=live.trade_state,
+    )
+    state, trade_state, opening_preview = build_opening_regular_season_candidate(source)
+    ensure_franchise_staff_state(state)
+    initialize_regular_season_scouting_state(
+        state,
+        controlled_teams=(team,),
+        class_strength=5,
+    )
+    validate_simulation_league_state(state)
+
+    preferences = {
+        "franchise_pref_controlled_teams": [team],
+        "franchise_pref_active_team": team,
+        "franchise_pref_simulation_policy": "auto_saved_rotations",
+        "franchise_pref_draft_class_strength": 5,
+        "v3_new_franchise_version": NEW_FRANCHISE_VERSION,
+        "release_id": str(freeze.get("release_id", "") or ""),
+        "live_start_universe_id": str(live.universe_id),
+        "live_start_cutoff_date": str(live.cutoff_date),
+    }
+    target_path = Path(target_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    save_franchise_checkpoint(
+        state,
+        trade_state,
+        preferences=preferences,
+        reason=f"V3 Batch 17B new franchise: {team}",
+        path=target_path,
+        copy_payload=True,
+        force_replace=True,
+    )
+    reloaded = load_franchise_checkpoint(path=target_path, allow_backup=False)
+    if reloaded is None:
+        raise V3SaveManagerError("Fresh franchise staging checkpoint could not be reloaded.")
+    fresh = _fresh_franchise_state_checks(reloaded, team)
+    fresh.update(
+        {
+            "new_franchise_version": NEW_FRANCHISE_VERSION,
+            "live_start_version": str(live.version),
+            "opening_transition_version": str(opening_preview.version),
+            "live_start_fingerprint": observed_live_fingerprint,
+            "release_id": str(freeze.get("release_id", "") or ""),
+            "checkpoint_sha256": _sha256(target_path),
+        }
+    )
+    return fresh
+
+
 def build_save_manager_summary(
     *,
     working_path: Path,
@@ -322,6 +503,9 @@ def build_save_manager_summary(
             "active_slot_id": "",
             "slot_count": 0,
             "slots": [],
+            "new_franchise_version": NEW_FRANCHISE_VERSION,
+            "new_franchise_available": False,
+            "new_franchise_teams": new_franchise_team_options(),
         }
 
     active_slot_id = str(manifest.get("active_slot_id", "") or "")
@@ -363,6 +547,9 @@ def build_save_manager_summary(
         "slot_count": len(slots),
         "slots": slots,
         "manifest_updated_at_utc": str(manifest.get("updated_at_utc", "") or ""),
+        "new_franchise_version": NEW_FRANCHISE_VERSION,
+        "new_franchise_available": bool(working_path.exists() and active_slot_id),
+        "new_franchise_teams": new_franchise_team_options(),
     }
 
 
@@ -646,6 +833,134 @@ def load_slot(
             "previous_working_sha256": working_before,
             "loaded_working_sha256": _sha256(working_path),
             "recovery_path": str(working_recovery),
+        }
+    )
+    return summary
+
+
+def create_new_franchise(
+    *,
+    working_path: Path,
+    v2_path: Path,
+    manager_root: Path,
+    team: str,
+    name: str = "",
+) -> dict[str, Any]:
+    """Create and activate a truly fresh certified franchise as a new save slot."""
+    working_path = Path(working_path)
+    v2_path = Path(v2_path)
+    manager_root = Path(manager_root)
+    manifest_path = _manifest_path(manager_root)
+    manifest = _load_manifest(manager_root, required=True)
+    assert manifest is not None
+    if not working_path.is_file():
+        raise V3SaveManagerError("V3 working save does not exist.")
+
+    team = _clean_new_franchise_team(team)
+    clean_name = _clean_slot_name(name or f"{TEAM_NAMES[team]} Franchise")
+    _assert_unique_name(manifest, clean_name)
+    current_slot_id = str(manifest.get("active_slot_id", "") or "")
+    if not current_slot_id:
+        raise V3SaveManagerError("Save Manager has no active slot to protect before creating a franchise.")
+    current_row = _find_slot(manifest, current_slot_id)
+    current_path = _slot_path(manager_root, current_slot_id)
+    if not current_path.is_file():
+        raise V3SaveManagerError("Active save-slot snapshot is missing.")
+
+    working_before, v2_before = _safety_hashes(working_path, v2_path)
+    if not working_before:
+        raise V3SaveManagerError("V3 working save could not be hashed.")
+    if not v2_before:
+        raise V3SaveManagerError("Protected V2 checkpoint could not be hashed.")
+    original_manifest = copy.deepcopy(manifest)
+    new_slot_id = _next_slot_id(manifest)
+    new_slot_path = _slot_path(manager_root, new_slot_id)
+    working_recovery = _recovery_dir(manager_root) / f"pre_new_franchise_working_{_stamp()}.pkl.gz"
+    current_recovery = _recovery_dir(manager_root) / f"pre_new_franchise_snapshot_{current_slot_id}_{_stamp()}.pkl.gz"
+
+    # Build and fully verify the new universe before any live/session bytes change.
+    manager_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="new_franchise_staging_", dir=str(manager_root)) as temp_dir:
+        staged = Path(temp_dir) / "fresh_franchise.pkl.gz"
+        fresh_detail = _build_certified_fresh_franchise_checkpoint(
+            team=team,
+            target_path=staged,
+        )
+        if _sha256(v2_path) != v2_before or _sha256(working_path) != working_before:
+            raise V3SaveManagerError(
+                "Fresh franchise candidate construction changed a protected checkpoint."
+            )
+
+        _atomic_copy_verified(working_path, working_recovery)
+        _atomic_copy_verified(current_path, current_recovery)
+        try:
+            # First snapshot the current live session into its existing named slot.
+            current_sha = _atomic_copy_verified(working_path, current_path)
+            current_updated = _slot_row_from_checkpoint(
+                root=manager_root,
+                slot_id=current_slot_id,
+                name=str(current_row.get("name", "") or "Current Franchise"),
+                created_at_utc=str(current_row.get("created_at_utc", "") or _utc()),
+                checkpoint_path=current_path,
+            )
+            current_updated["sha256"] = current_sha
+            _replace_slot(manifest, current_updated)
+
+            # Promote the already-certified staging checkpoint into a new named slot.
+            new_sha = _atomic_copy_verified(staged, new_slot_path)
+            now = _utc()
+            new_row = _slot_row_from_checkpoint(
+                root=manager_root,
+                slot_id=new_slot_id,
+                name=clean_name,
+                created_at_utc=now,
+                checkpoint_path=new_slot_path,
+            )
+            new_row["sha256"] = new_sha
+            manifest["slots"] = [*_slot_rows(manifest), new_row]
+            manifest["active_slot_id"] = new_slot_id
+            manifest["updated_at_utc"] = _utc()
+
+            _atomic_copy_verified(new_slot_path, working_path)
+            if _sha256(working_path) != new_sha:
+                raise V3SaveManagerError("New franchise working checkpoint does not match its save slot.")
+            loaded = load_franchise_checkpoint(path=working_path, allow_backup=False)
+            if loaded is None:
+                raise V3SaveManagerError("New franchise working checkpoint could not be reloaded.")
+            _fresh_franchise_state_checks(loaded, team)
+            if _sha256(v2_path) != v2_before:
+                raise V3SaveManagerError("Creating a new franchise changed protected V2.")
+
+            _atomic_json_write(manifest_path, manifest)
+            verified_manifest = _load_manifest(manager_root, required=True)
+            if verified_manifest is None or str(verified_manifest.get("active_slot_id", "")) != new_slot_id:
+                raise V3SaveManagerError("New franchise manifest activation failed verification.")
+        except Exception:
+            try:
+                _atomic_copy_verified(working_recovery, working_path)
+                _atomic_copy_verified(current_recovery, current_path)
+                new_slot_path.unlink(missing_ok=True)
+                _atomic_json_write(manifest_path, original_manifest)
+            finally:
+                pass
+            raise
+
+    summary = build_save_manager_summary(
+        working_path=working_path,
+        v2_path=v2_path,
+        manager_root=manager_root,
+    )
+    summary.update(
+        {
+            "status": "new_franchise_created",
+            "created_slot_id": new_slot_id,
+            "loaded_slot_id": new_slot_id,
+            "previous_slot_id": current_slot_id,
+            "previous_working_sha256": working_before,
+            "loaded_working_sha256": _sha256(working_path),
+            "working_recovery_path": str(working_recovery),
+            "previous_slot_recovery_path": str(current_recovery),
+            "fresh_franchise": fresh_detail,
         }
     )
     return summary
