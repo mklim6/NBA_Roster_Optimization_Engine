@@ -12,6 +12,7 @@ const SettingsTutorialV3 = preload("res://scripts/settings_tutorial_v3.gd")
 const RequestCoordinatorV3 = preload("res://scripts/request_coordinator_v3.gd")
 const LongActionManagerV3 = preload("res://scripts/long_action_manager_v3.gd")
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
+const UiComponentsV3 = preload("res://scripts/ui_components_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
@@ -339,24 +340,36 @@ func _build_interface() -> void:
 
 func _build_sidebar() -> Control:
 	var sidebar_panel := PanelContainer.new()
-	sidebar_panel.custom_minimum_size = Vector2(228, 0)
-	sidebar_panel.add_theme_stylebox_override("panel", _box(SIDEBAR, 0, SOFT_BORDER))
+	sidebar_panel.custom_minimum_size = Vector2(244, 0)
+	sidebar_panel.add_theme_stylebox_override(
+		"panel",
+		DesignSystemV3.style_box(SIDEBAR, 0, SOFT_BORDER, 1, 0.12)
+	)
 
 	var margin := MarginContainer.new()
-	_set_margins(margin, 18, 22, 18, 22)
+	_set_margins(margin, 18, 20, 18, 18)
 	sidebar_panel.add_child(margin)
 
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 10)
+	column.add_theme_constant_override("separation", 6)
 	margin.add_child(column)
 
 	var brand_row := HBoxContainer.new()
-	brand_row.add_theme_constant_override("separation", 11)
+	brand_row.add_theme_constant_override("separation", 12)
 	column.add_child(brand_row)
 
 	var mark := PanelContainer.new()
-	mark.custom_minimum_size = Vector2(44, 44)
-	mark.add_theme_stylebox_override("panel", _box(TEAM_PRIMARY, 10, TEAM_PRIMARY))
+	mark.custom_minimum_size = Vector2(48, 48)
+	mark.add_theme_stylebox_override(
+		"panel",
+		DesignSystemV3.style_box(
+			TEAM_PRIMARY,
+			DesignSystemV3.RADIUS_MD,
+			TEAM_PRIMARY_HOVER,
+			1,
+			0.22
+		)
+	)
 	brand_row.add_child(mark)
 
 	var mark_label := Label.new()
@@ -367,31 +380,50 @@ func _build_sidebar() -> Control:
 	mark_label.add_theme_font_size_override("font_size", 16)
 	mark.add_child(mark_label)
 
+	var brand_box := VBoxContainer.new()
+	brand_box.add_theme_constant_override("separation", 1)
+	brand_row.add_child(brand_box)
+
 	var brand := Label.new()
-	brand.text = "FRANCHISE\nSIMULATOR"
+	brand.text = "FRANCHISE SIMULATOR"
 	brand.add_theme_color_override("font_color", TEXT)
-	brand.add_theme_font_size_override("font_size", 19)
-	brand_row.add_child(brand)
+	brand.add_theme_font_size_override("font_size", 17)
+	brand_box.add_child(brand)
+
+	var brand_detail := Label.new()
+	brand_detail.text = "DESKTOP FRONT OFFICE"
+	brand_detail.add_theme_color_override("font_color", MUTED)
+	brand_detail.add_theme_font_size_override("font_size", 9)
+	brand_box.add_child(brand_detail)
 
 	var version := Label.new()
-	version.text = "V3 DESKTOP • FRANCHISE ENGINE"
-	version.add_theme_color_override("font_color", MUTED)
-	version.add_theme_font_size_override("font_size", 10)
+	version.text = "V3 • PRODUCTION ENGINE"
+	version.add_theme_color_override("font_color", DesignSystemV3.ACCENT)
+	version.add_theme_font_size_override("font_size", 9)
 	column.add_child(version)
 
 	var brand_spacer := Control.new()
-	brand_spacer.custom_minimum_size = Vector2(0, 20)
+	brand_spacer.custom_minimum_size = Vector2(0, 10)
 	column.add_child(brand_spacer)
 
+	column.add_child(UiComponentsV3.sidebar_group_label("COMMAND"))
 	column.add_child(_nav_button("HOME", true))
 	column.add_child(_nav_button("FRANCHISES"))
+
+	column.add_child(UiComponentsV3.sidebar_group_label("TEAM"))
 	column.add_child(_nav_button("ROSTER"))
 	column.add_child(_nav_button("GAME DAY"))
+
+	column.add_child(UiComponentsV3.sidebar_group_label("ROSTER BUILDING"))
 	column.add_child(_nav_button("TRADES"))
 	column.add_child(_nav_button("FREE AGENCY"))
 	column.add_child(_nav_button("SCOUTING"))
+
+	column.add_child(UiComponentsV3.sidebar_group_label("LEAGUE"))
 	column.add_child(_nav_button("SEASON"))
 	column.add_child(_nav_button("LEAGUE"))
+
+	column.add_child(UiComponentsV3.sidebar_group_label("ORGANIZATION"))
 	column.add_child(_nav_button("FRONT OFFICE"))
 	column.add_child(_nav_button("SETTINGS"))
 
@@ -404,13 +436,12 @@ func _build_sidebar() -> Control:
 	column.add_child(eras)
 
 	var footer := Label.new()
-	footer.text = "V2 engine preserved\nV3 desktop alpha"
+	footer.text = "V3 working universe\nV2 release protected"
 	footer.add_theme_color_override("font_color", MUTED)
-	footer.add_theme_font_size_override("font_size", 11)
+	footer.add_theme_font_size_override("font_size", 10)
 	column.add_child(footer)
 
 	return sidebar_panel
-
 
 func _build_main_area() -> Control:
 	var outer := MarginContainer.new()
@@ -2636,12 +2667,7 @@ func _on_tutorial_finished(started_from_startup: bool) -> void:
 
 
 func _apply_nav_button_style(button: Button, active: bool) -> void:
-	button.add_theme_color_override("font_color", TEXT if active else MUTED)
-	button.add_theme_stylebox_override(
-		"normal",
-		_box(PANEL_ALT if active else SIDEBAR, 8)
-	)
-
+	UiComponentsV3.apply_nav_state(button, active)
 
 func _build_activity_panel() -> Control:
 	var card := _card(Vector2(0, 0))
@@ -2711,17 +2737,7 @@ func _activity(category: String, text_value: String, age: String) -> Control:
 
 
 func _wide_action(title_text: String, subtitle_text: String) -> Control:
-	var button := Button.new()
-	button.custom_minimum_size = Vector2(0, 64)
-	button.text = "%s
-%s" % [title_text, subtitle_text]
-	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	button.add_theme_font_size_override("font_size", 12)
-	button.add_theme_color_override("font_color", TEXT)
-	button.add_theme_color_override("font_hover_color", TEXT)
-	button.add_theme_stylebox_override("normal", _box(PANEL_ALT, 9, BORDER))
-	button.add_theme_stylebox_override("hover", _box(PANEL_HOVER, 9, ACCENT))
-	button.add_theme_stylebox_override("pressed", _box(PANEL_HOVER, 9, ACCENT))
+	var button := UiComponentsV3.wide_action(title_text, subtitle_text)
 
 	match title_text:
 		"OPEN ROSTER":
@@ -2736,17 +2752,7 @@ func _wide_action(title_text: String, subtitle_text: String) -> Control:
 	return button
 
 func _nav_button(text_value: String, active: bool = false) -> Button:
-	var button := Button.new()
-	button.custom_minimum_size = Vector2(0, 42)
-	button.text = text_value
-	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	button.add_theme_font_size_override("font_size", 12)
-	button.add_theme_color_override("font_hover_color", TEXT)
-	button.add_theme_color_override("font_disabled_color", Color("53647c"))
-	button.add_theme_stylebox_override("hover", _box(PANEL_HOVER, 8))
-	button.add_theme_stylebox_override("pressed", _box(PANEL_ALT, 8))
-	button.add_theme_stylebox_override("disabled", _box(SIDEBAR, 8))
-	_apply_nav_button_style(button, active)
+	var button := UiComponentsV3.nav_button(text_value, active)
 
 	if text_value in [
 		"HOME",
@@ -2767,58 +2773,22 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 	return button
 
 func _action_button(text_value: String, primary: bool = false) -> Button:
-	var button := Button.new()
-	button.custom_minimum_size = Vector2(124, 38)
-	button.text = text_value
-	button.add_theme_font_size_override("font_size", 11)
-	button.add_theme_color_override("font_color", TEXT)
-	button.add_theme_color_override("font_hover_color", TEXT)
-	var normal_color := TEAM_PRIMARY if primary else PANEL_ALT
-	var hover_color := TEAM_PRIMARY_HOVER if primary else PANEL_HOVER
-	button.add_theme_stylebox_override("normal", _box(normal_color, 10, normal_color if primary else BORDER))
-	button.add_theme_stylebox_override("hover", _box(hover_color, 10, hover_color if primary else ACCENT))
-	button.add_theme_stylebox_override("pressed", _box(hover_color, 10, hover_color))
-	return button
-
+	return UiComponentsV3.action_button(text_value, primary)
 
 func _pill(text_value: String, color: Color) -> Label:
-	var pill := Label.new()
-	pill.text = "  %s  " % text_value
-	pill.add_theme_color_override("font_color", color)
-	pill.add_theme_font_size_override("font_size", 11)
-	pill.add_theme_stylebox_override("normal", _box(Color(color, 0.10), 7, Color(color, 0.35)))
-	return pill
-
+	return UiComponentsV3.pill(text_value, color)
 
 func _section_title(text_value: String) -> Label:
-	var label := Label.new()
-	label.text = text_value
-	label.add_theme_color_override("font_color", TEXT)
-	label.add_theme_font_size_override("font_size", 16)
-	return label
-
+	return UiComponentsV3.section_title(text_value)
 
 func _small_label(text_value: String, color: Color) -> Label:
-	var label := Label.new()
-	label.text = text_value
-	label.add_theme_color_override("font_color", color)
-	label.add_theme_font_size_override("font_size", 11)
-	return label
-
+	return UiComponentsV3.small_label(text_value, color)
 
 func _divider() -> HSeparator:
-	var line := HSeparator.new()
-	line.add_theme_constant_override("separation", 10)
-	line.modulate = Color(1, 1, 1, 0.12)
-	return line
-
+	return UiComponentsV3.divider()
 
 func _card(minimum: Vector2) -> PanelContainer:
-	var card := PanelContainer.new()
-	card.custom_minimum_size = minimum
-	card.add_theme_stylebox_override("panel", _box(PANEL, 16, BORDER))
-	return card
-
+	return UiComponentsV3.card(minimum)
 
 func _card_body(card: PanelContainer, margin_size: int) -> VBoxContainer:
 	var margin := MarginContainer.new()
