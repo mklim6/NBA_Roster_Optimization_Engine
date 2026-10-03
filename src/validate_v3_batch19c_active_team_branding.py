@@ -14,7 +14,7 @@ BRANDING = ROOT / "godot_client" / "scripts" / "team_branding_v3.gd"
 V3 = ROOT / "outputs" / "runtime" / "v3_godot_working_checkpoint.pkl.gz"
 V2 = ROOT / "outputs" / "runtime" / "franchise_mode_checkpoint_v1.pkl.gz"
 
-VERSION = "v3-batch19c-active-team-branding-validator-v1.0.0-2026-10-03"
+VERSION = "v3-batch19c-active-team-branding-validator-v1.0.1-2026-10-03"
 
 
 def sha256(path: Path) -> str | None:
@@ -154,13 +154,24 @@ def main() -> int:
         "primary_actions_use_runtime_team_color",
         results,
     )
+
+    broadcast_hook_present = (
+        "func _broadcast_team_brand() -> void:" in main
+        and 'page.has_method("apply_team_brand")' in main
+        and '"apply_team_brand"' in main
+        and "active_team_abbreviation" in main
+        and "active_team_primary" in main
+        and "active_team_secondary" in main
+    )
     check(
-        'page.call("apply_team_brand"' in main,
+        broadcast_hook_present,
         "future_page_brand_broadcast_hook_present",
         results,
     )
+
+    design_text = DESIGN.read_text(encoding="utf-8") if DESIGN.exists() else ""
     check(
-        all(code in DESIGN.read_text(encoding="utf-8") for code in ('"CHI":', '"BOS":', '"LAL":', '"GSW":')),
+        all(code in design_text for code in ('"CHI":', '"BOS":', '"LAL":', '"GSW":')),
         "team_palette_foundation_preserved",
         results,
     )
@@ -177,15 +188,27 @@ def main() -> int:
         "/v3/market-intelligence",
         "/v3/transaction-foundation",
     )
-    check(all(endpoint in main for endpoint in endpoints), "bridge_endpoint_contract_preserved", results)
+    check(
+        all(endpoint in main for endpoint in endpoints),
+        "bridge_endpoint_contract_preserved",
+        results,
+    )
 
     parse_ok, parse_tail = godot_parse()
     check(parse_ok, "godot_headless_parse", results)
     if not parse_ok:
         print(parse_tail)
 
-    check(sha256(V3) == v3_before, "validator_never_changes_active_v3_save", results)
-    check(sha256(V2) == v2_before, "validator_never_changes_active_v2_save", results)
+    check(
+        sha256(V3) == v3_before,
+        "validator_never_changes_active_v3_save",
+        results,
+    )
+    check(
+        sha256(V2) == v2_before,
+        "validator_never_changes_active_v2_save",
+        results,
+    )
 
     report_dir = ROOT / "outputs" / "v3_batch19c_active_team_branding"
     report_dir.mkdir(parents=True, exist_ok=True)
