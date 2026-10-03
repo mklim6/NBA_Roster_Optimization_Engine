@@ -240,10 +240,13 @@ func _render_summary() -> void:
 	var total_games: int = _safe_int(schedule.get("total", 0))
 	var completed_games: int = _safe_int(schedule.get("completed", 0))
 	var postseason_stage: String = _safe_string(postseason.get("stage", ""))
-	if total_games > 0:
+	var postseason_games: int = _safe_int(postseason.get("completed_games", 0))
+	if not postseason_stage.is_empty() and postseason_stage != "complete":
+		progress_value.text = "%s • %d GAMES" % [_pretty(postseason_stage), postseason_games]
+	elif postseason_stage == "complete":
+		progress_value.text = "POSTSEASON COMPLETE"
+	elif total_games > 0:
 		progress_value.text = "%d / %d GAMES" % [completed_games, total_games]
-	elif not postseason_stage.is_empty():
-		progress_value.text = _pretty(postseason_stage)
 	else:
 		progress_value.text = "OFFSEASON"
 
@@ -261,6 +264,15 @@ func _render_summary() -> void:
 			detail_parts.append(str(blocker))
 	else:
 		detail_parts.append(_action_explanation(latest_action))
+	if bool(postseason.get("initialized", false)):
+		var champion: String = _safe_string(postseason.get("champion", ""))
+		if not champion.is_empty():
+			detail_parts.append("Champion: %s • Runner-up: %s" % [
+				champion, _safe_string(postseason.get("runner_up", "--"), "--")
+			])
+		else:
+			detail_parts.append("East seeds: %s" % _seed_summary(postseason.get("east_seeds", [])))
+			detail_parts.append("West seeds: %s" % _seed_summary(postseason.get("west_seeds", [])))
 	if _safe_int(cpu_fa.get("deficit_team_count", 0)) > 0:
 		detail_parts.append("CPU roster deficits: %s team(s), %s total spot(s)." % [
 			str(cpu_fa.get("deficit_team_count", 0)),
@@ -284,7 +296,8 @@ func _render_summary() -> void:
 			timeline_rows.add_child(_timeline_row(item))
 
 	var versions: Dictionary = summary_payload.get("engine_versions", {})
-	engine_detail.text = "Closeout %s\nDraft %s\nPost-Draft trim %s\nSeason boundary %s" % [
+	engine_detail.text = "Postseason %s\nCloseout %s\nDraft %s\nPost-Draft trim %s\nSeason boundary %s" % [
+		str(versions.get("postseason", "production")),
 		str(versions.get("closeout", "production")),
 		str(versions.get("draft", "production")),
 		str(versions.get("post_draft_trim", "production")),
@@ -451,6 +464,14 @@ func _timeline_row(item: Dictionary) -> Control:
 
 func _preview_detail(action: String, detail: Dictionary) -> String:
 	match action:
+		"postseason_initialize":
+			return "Official bracket candidate ready • %s\nEast: %s\nWest: %s" % [
+				_pretty(str(detail.get("stage", ""))),
+				_seed_summary(detail.get("east_seeds", [])),
+				_seed_summary(detail.get("west_seeds", []))
+			]
+		"postseason_simulate":
+			return "Certified postseason candidate built • %s game(s) simulated to a champion. The champion is revealed only after commit." % str(detail.get("games_simulated", 0))
 		"contract_closeout":
 			return "Contracts decremented %s • expired %s • Draft scouting preserved %s" % [
 				str(detail.get("contracts_decremented", 0)),
@@ -485,6 +506,10 @@ func _preview_detail(action: String, detail: Dictionary) -> String:
 
 func _action_explanation(action: String) -> String:
 	match action:
+		"postseason_initialize":
+			return "Create the official production Play-In and playoff bracket from the final regular-season standings. Preview the East and West seeds before committing."
+		"postseason_simulate":
+			return "Run the proven production postseason engine through the NBA Finals. The result is isolated until the confirmed V3 lifecycle commit."
 		"contract_closeout":
 			return "Apply the authoritative completed-season contract closeout before the player market advances."
 		"cpu_free_agency":
@@ -496,6 +521,19 @@ func _action_explanation(action: String) -> String:
 		"next_season":
 			return "Run certified post-Draft roster preparation, season transition, rookie activation, schedule generation, and the atomic season boundary."
 	return "No certified automatic action is available."
+
+
+func _seed_summary(rows_variant: Variant) -> String:
+	if typeof(rows_variant) != TYPE_ARRAY:
+		return "--"
+	var rows: Array = rows_variant
+	var parts: Array[String] = []
+	for row_variant in rows:
+		if typeof(row_variant) != TYPE_DICTIONARY:
+			continue
+		var row: Dictionary = row_variant
+		parts.append("%s %s" % [str(row.get("Seed", "?")), str(row.get("Team", "--"))])
+	return " • ".join(parts) if not parts.is_empty() else "--"
 
 
 func _pretty(value: String) -> String:

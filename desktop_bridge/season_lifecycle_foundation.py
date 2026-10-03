@@ -50,18 +50,31 @@ from regular_season_schedule_v1 import (
     install_regular_season_schedule,
 )
 from simulation_league_state_v1 import validate_simulation_league_state
+from simulation_postseason_v1 import (
+    POSTSEASON_VERSION,
+    PostseasonSimulationScope,
+    advance_postseason,
+    get_postseason_state,
+    initialize_postseason,
+    postseason_seed_rows,
+    postseason_series_rows,
+)
 
 
 SEASON_LIFECYCLE_FOUNDATION_VERSION = (
-    "v3-season-lifecycle-foundation-batch-15-cpu-free-agency-v15.0.0-2026-10-03"
+    "v3-season-lifecycle-foundation-batch-15-cpu-free-agency-plus-15-1-postseason-continuity-v15.1.0-2026-10-03"
 )
 
+ACTION_POSTSEASON_INITIALIZE = "postseason_initialize"
+ACTION_POSTSEASON_SIMULATE = "postseason_simulate"
 ACTION_CONTRACT_CLOSEOUT = "contract_closeout"
 ACTION_CPU_FREE_AGENCY = "cpu_free_agency"
 ACTION_DRAFT_LOTTERY = "draft_lottery"
 ACTION_DRAFT_NIGHT = "draft_night"
 ACTION_NEXT_SEASON = "next_season"
 SUPPORTED_ACTIONS = (
+    ACTION_POSTSEASON_INITIALIZE,
+    ACTION_POSTSEASON_SIMULATE,
     ACTION_CONTRACT_CLOSEOUT,
     ACTION_CPU_FREE_AGENCY,
     ACTION_DRAFT_LOTTERY,
@@ -107,6 +120,35 @@ def _postseason_stage(state: Any) -> str:
 def _postseason_champion(state: Any) -> str:
     postseason = getattr(state, "postseason_state", None)
     return _clean(getattr(postseason, "champion", "")) if postseason is not None else ""
+
+
+def _postseason_summary_payload(state: Any) -> dict[str, Any]:
+    postseason = get_postseason_state(state, required=False)
+    if postseason is None:
+        return {
+            "initialized": False,
+            "stage": "",
+            "champion": "",
+            "runner_up": "",
+            "completed_games": 0,
+            "conference_champions": {},
+            "east_seeds": [],
+            "west_seeds": [],
+            "series": [],
+        }
+    return {
+        "initialized": True,
+        "stage": _postseason_stage(state),
+        "champion": _clean(getattr(postseason, "champion", "")),
+        "runner_up": _clean(getattr(postseason, "runner_up", "")),
+        "completed_games": len(getattr(postseason, "completed_games", {}) or {}),
+        "conference_champions": _json_safe(
+            getattr(postseason, "conference_champions", {}) or {}
+        ),
+        "east_seeds": _json_safe(postseason_seed_rows(state, "East")[:10]),
+        "west_seeds": _json_safe(postseason_seed_rows(state, "West")[:10]),
+        "series": _json_safe(postseason_series_rows(state)),
+    }
 
 
 def _draft_payload(state: Any) -> dict[str, Any]:
@@ -235,19 +277,12 @@ def _next_action(checkpoint: Any) -> tuple[str, str, tuple[str, ...]]:
                 "regular_season_in_progress",
                 (f"{schedule['remaining']} regular-season games remain.",),
             )
-        return (
-            "",
-            "postseason_pending",
-            ("The regular season is complete. Postseason progression is the next lifecycle gate.",),
-        )
+        if not _postseason_stage(state):
+            return (ACTION_POSTSEASON_INITIALIZE, "postseason_setup_ready", ())
 
     postseason_stage = _postseason_stage(state)
     if postseason_stage and postseason_stage != "complete":
-        return (
-            "",
-            "postseason_in_progress",
-            ("The postseason must reach a champion before offseason transactions can advance.",),
-        )
+        return (ACTION_POSTSEASON_SIMULATE, "postseason_in_progress", ())
 
     champion = _postseason_champion(state)
     if phase == "offseason" and postseason_stage == "complete" and champion:
@@ -383,7 +418,15 @@ def build_lifecycle_summary(checkpoint: Any) -> dict[str, Any]:
         {
             "key": "postseason",
             "label": "POSTSEASON",
-            "status": "complete" if postseason_stage == "complete" else ("current" if postseason_stage else "locked"),
+            "status": (
+                "complete"
+                if postseason_stage == "complete"
+                else (
+                    "current"
+                    if stage in {"postseason_setup_ready", "postseason_in_progress"}
+                    else "locked"
+                )
+            ),
         },
         {
             "key": "closeout",
@@ -433,10 +476,7 @@ def build_lifecycle_summary(checkpoint: Any) -> dict[str, Any]:
             "day_index": int(getattr(state, "current_day_index", 0) or 0),
         },
         "schedule": schedule,
-        "postseason": {
-            "stage": postseason_stage,
-            "champion": _postseason_champion(state),
-        },
+        "postseason": _postseason_summary_payload(state),
         "closeout": {
             "applied": closeout_applied,
             "version": COMPLETED_SEASON_CONTRACT_CLOSEOUT_VERSION,
@@ -452,6 +492,8 @@ def build_lifecycle_summary(checkpoint: Any) -> dict[str, Any]:
         "stage": stage,
         "next_action": action,
         "next_action_label": {
+            ACTION_POSTSEASON_INITIALIZE: "CREATE PLAYOFF BRACKET",
+            ACTION_POSTSEASON_SIMULATE: "SIMULATE POSTSEASON",
             ACTION_CONTRACT_CLOSEOUT: "CLOSE OUT CONTRACTS",
             ACTION_CPU_FREE_AGENCY: "RUN CPU FREE AGENCY",
             ACTION_DRAFT_LOTTERY: "RUN DRAFT LOTTERY",
@@ -461,6 +503,7 @@ def build_lifecycle_summary(checkpoint: Any) -> dict[str, Any]:
         "blockers": list(dict.fromkeys(blockers)),
         "timeline": timeline,
         "engine_versions": {
+            "postseason": POSTSEASON_VERSION,
             "draft": DRAFT_ENGINE_VERSION,
             "post_draft_trim": LIVE_TRIM_VERSION,
             "season_boundary": SEASON_BOUNDARY_DURABLE_TRANSITION_VERSION,
@@ -519,7 +562,63 @@ def build_lifecycle_action_candidate(
     source_season = _season(source_state)
     source_fp = _source_fingerprint(checkpoint)
 
-    if action == ACTION_CONTRACT_CLOSEOUT:
+    if action == ACTION_POSTSEASON_INITIALIZE:
+        state = copy.deepcopy(source_state)
+        trade_state = copy.deepcopy(source_trade)
+        postseason = initialize_postseason(state)
+        detail = {
+            "status": "bracket_ready",
+            "stage": _postseason_stage(state),
+            "play_in_enabled": bool(getattr(state.settings, "play_in_enabled", False)),
+            "east_seeds": _json_safe(postseason_seed_rows(state, "East")[:10]),
+            "west_seeds": _json_safe(postseason_seed_rows(state, "West")[:10]),
+            "scheduled_opening_games": len(
+                [
+                    game
+                    for game in (getattr(postseason, "games", {}) or {}).values()
+                    if _clean(getattr(getattr(game, "status", ""), "value", getattr(game, "status", ""))).lower()
+                    == "scheduled"
+                ]
+            ),
+        }
+        target_season = source_season
+
+    elif action == ACTION_POSTSEASON_SIMULATE:
+        deterministic_seed = (
+            int(getattr(getattr(source_state, "settings", None), "random_seed", 0) or 0)
+            + int(getattr(source_state, "current_day_index", 0) or 0)
+            + 15100
+        )
+        state, result = advance_postseason(
+            source_state,
+            scope=PostseasonSimulationScope.TO_CHAMPION,
+            controlled_teams=(),
+            policy="free_simulation",
+            seed=deterministic_seed,
+            max_games=140,
+        )
+        trade_state = copy.deepcopy(source_trade)
+        postseason = get_postseason_state(state)
+        if result.stopped_at_game_limit or _postseason_stage(state) != "complete":
+            raise V3SeasonLifecycleError(
+                "Postseason simulation did not reach a champion within the certified game limit."
+            )
+        if not _clean(getattr(postseason, "champion", "")):
+            raise V3SeasonLifecycleError("Postseason simulation completed without a champion.")
+        detail = {
+            "status": "champion_crowned",
+            "games_simulated": int(result.games_simulated),
+            "stage_before": _clean(getattr(result.stage_before, "value", result.stage_before)),
+            "stage_after": _clean(getattr(result.stage_after, "value", result.stage_after)),
+            "champion": _clean(postseason.champion),
+            "runner_up": _clean(postseason.runner_up),
+            "conference_champions": _json_safe(postseason.conference_champions),
+            "completed_postseason_games": len(postseason.completed_games),
+            "simulation_seed": deterministic_seed,
+        }
+        target_season = source_season
+
+    elif action == ACTION_CONTRACT_CLOSEOUT:
         result = build_completed_season_contract_closeout_candidate(source_state, source_trade)
         state = result.simulation_state
         trade_state = result.trade_state
@@ -742,7 +841,52 @@ def verify_lifecycle_action_persisted(
     ok = False
     checks: dict[str, bool] = {}
 
-    if action == ACTION_CONTRACT_CLOSEOUT:
+    if action == ACTION_POSTSEASON_INITIALIZE:
+        postseason = get_postseason_state(state, required=False)
+        expected_east = candidate.detail.get("east_seeds", [])
+        expected_west = candidate.detail.get("west_seeds", [])
+        checks = {
+            "postseason_initialized": postseason is not None,
+            "postseason_stage_matches_candidate": _postseason_stage(state)
+            == _clean(candidate.detail.get("stage")).lower(),
+            "east_seed_order_persisted": (
+                _json_safe(postseason_seed_rows(state, "East")[:10]) == expected_east
+                if postseason is not None
+                else False
+            ),
+            "west_seed_order_persisted": (
+                _json_safe(postseason_seed_rows(state, "West")[:10]) == expected_west
+                if postseason is not None
+                else False
+            ),
+            "regular_season_phase_closed": _phase(state) in {"play_in", "playoffs"},
+        }
+        ok = all(checks.values())
+
+    elif action == ACTION_POSTSEASON_SIMULATE:
+        postseason = get_postseason_state(state, required=False)
+        checks = {
+            "postseason_complete": _postseason_stage(state) == "complete",
+            "offseason_phase_active": _phase(state) == "offseason",
+            "champion_persisted": bool(
+                postseason is not None
+                and _clean(getattr(postseason, "champion", ""))
+                == _clean(candidate.detail.get("champion"))
+            ),
+            "runner_up_persisted": bool(
+                postseason is not None
+                and _clean(getattr(postseason, "runner_up", ""))
+                == _clean(candidate.detail.get("runner_up"))
+            ),
+            "postseason_game_count_persisted": bool(
+                postseason is not None
+                and len(getattr(postseason, "completed_games", {}) or {})
+                == int(candidate.detail.get("completed_postseason_games", -1) or -1)
+            ),
+        }
+        ok = all(checks.values())
+
+    elif action == ACTION_CONTRACT_CLOSEOUT:
         checks["closeout_applied"] = completed_season_closeout_applied(
             state,
             candidate.source_season,
