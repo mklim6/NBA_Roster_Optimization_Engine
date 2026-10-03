@@ -16,7 +16,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.15.0"
+API_VERSION = "0.17.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -61,6 +61,12 @@ V3_LIFECYCLE_RECOVERY_DIR = (
     / "outputs"
     / "runtime"
     / "v3_lifecycle_recovery"
+)
+V3_SAVE_MANAGER_ROOT = (
+    REPO_ROOT
+    / "outputs"
+    / "runtime"
+    / "v3_save_manager"
 )
 
 # V2 checkpoints were serialized with top-level src module names.
@@ -108,6 +114,16 @@ from desktop_bridge.season_lifecycle_foundation import (
 )
 from desktop_bridge.league_intelligence_foundation import build_league_intelligence_payload
 from desktop_bridge.front_office_foundation import build_front_office_intelligence_payload
+from desktop_bridge.save_manager_foundation import (
+    V3SaveManagerError,
+    bootstrap_save_manager,
+    build_save_manager_summary,
+    create_slot_copy,
+    delete_slot,
+    load_slot,
+    rename_slot,
+    save_current_slot,
+)
 from desktop_bridge.transaction_foundation import (
     build_draft_advance_candidate,
     build_draft_advance_preview_payload,
@@ -2584,6 +2600,7 @@ async def health(_: Request) -> JSONResponse:
             "read_only": True,
             "active_v2_read_only": True,
             "v3_working_save_writable": True,
+            "v3_save_manager_available": True,
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         }
     )
@@ -2599,6 +2616,7 @@ async def project_meta(_: Request) -> JSONResponse:
             "simulation_source": "validated V2 engine",
             "save_access": "active_v2_read_only__v3_working_save_writable",
             "working_save_path": str(V3_WORKING_CHECKPOINT_PATH),
+            "save_manager_root": str(V3_SAVE_MANAGER_ROOT),
             "api_version": API_VERSION,
         }
     )
@@ -2801,6 +2819,190 @@ async def roster_summary(_: Request) -> JSONResponse:
                 "detail": str(exc),
                 "active_v2_read_only": True,
             },
+            status_code=500,
+        )
+
+
+async def save_manager_summary(_: Request) -> JSONResponse:
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_before = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+    try:
+        payload = build_save_manager_summary(
+            working_path=V3_WORKING_CHECKPOINT_PATH,
+            v2_path=Path(DEFAULT_CHECKPOINT_PATH),
+            manager_root=V3_SAVE_MANAGER_ROOT,
+        )
+        payload["api_version"] = API_VERSION
+        payload["working_save_unchanged"] = (
+            working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        )
+        payload["active_v2_unchanged"] = (
+            v2_before == _file_sha256(DEFAULT_CHECKPOINT_PATH)
+        )
+        if not payload["working_save_unchanged"] or not payload["active_v2_unchanged"]:
+            return JSONResponse(
+                {"error": "save_manager_summary_changed_protected_checkpoint", **payload},
+                status_code=500,
+            )
+        return JSONResponse(payload)
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "save_manager_summary_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+                "active_v2_unchanged": v2_before == _file_sha256(DEFAULT_CHECKPOINT_PATH),
+                "active_v2_read_only": True,
+            },
+            status_code=500,
+        )
+
+
+async def save_manager_bootstrap(request: Request) -> JSONResponse:
+    try:
+        body = await request.json() if request.headers.get("content-length") not in (None, "0") else {}
+        if not isinstance(body, dict):
+            raise ValueError("Request body must be a JSON object.")
+        payload = bootstrap_save_manager(
+            working_path=V3_WORKING_CHECKPOINT_PATH,
+            v2_path=Path(DEFAULT_CHECKPOINT_PATH),
+            manager_root=V3_SAVE_MANAGER_ROOT,
+            default_name=str(body.get("name", "") or ""),
+        )
+        payload["api_version"] = API_VERSION
+        payload["status"] = "initialized"
+        return JSONResponse(payload)
+    except V3SaveManagerError as exc:
+        return JSONResponse(
+            {"error": "save_manager_bootstrap_blocked", "detail": str(exc), "active_v2_read_only": True},
+            status_code=409,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {"error": "save_manager_bootstrap_failed", "exception_type": type(exc).__name__, "detail": str(exc), "active_v2_read_only": True},
+            status_code=500,
+        )
+
+
+async def save_manager_save_current(_: Request) -> JSONResponse:
+    try:
+        payload = save_current_slot(
+            working_path=V3_WORKING_CHECKPOINT_PATH,
+            v2_path=Path(DEFAULT_CHECKPOINT_PATH),
+            manager_root=V3_SAVE_MANAGER_ROOT,
+        )
+        payload["api_version"] = API_VERSION
+        return JSONResponse(payload)
+    except V3SaveManagerError as exc:
+        return JSONResponse(
+            {"error": "save_manager_save_blocked", "detail": str(exc), "active_v2_read_only": True},
+            status_code=409,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {"error": "save_manager_save_failed", "exception_type": type(exc).__name__, "detail": str(exc), "active_v2_read_only": True},
+            status_code=500,
+        )
+
+
+async def save_manager_create(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Request body must be a JSON object.")
+        payload = create_slot_copy(
+            working_path=V3_WORKING_CHECKPOINT_PATH,
+            v2_path=Path(DEFAULT_CHECKPOINT_PATH),
+            manager_root=V3_SAVE_MANAGER_ROOT,
+            name=str(body.get("name", "") or ""),
+        )
+        payload["api_version"] = API_VERSION
+        return JSONResponse(payload)
+    except (V3SaveManagerError, ValueError) as exc:
+        return JSONResponse(
+            {"error": "save_manager_create_blocked", "detail": str(exc), "active_v2_read_only": True},
+            status_code=409,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {"error": "save_manager_create_failed", "exception_type": type(exc).__name__, "detail": str(exc), "active_v2_read_only": True},
+            status_code=500,
+        )
+
+
+async def save_manager_rename(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Request body must be a JSON object.")
+        payload = rename_slot(
+            working_path=V3_WORKING_CHECKPOINT_PATH,
+            v2_path=Path(DEFAULT_CHECKPOINT_PATH),
+            manager_root=V3_SAVE_MANAGER_ROOT,
+            slot_id=str(body.get("slot_id", "") or ""),
+            name=str(body.get("name", "") or ""),
+        )
+        payload["api_version"] = API_VERSION
+        return JSONResponse(payload)
+    except (V3SaveManagerError, ValueError) as exc:
+        return JSONResponse(
+            {"error": "save_manager_rename_blocked", "detail": str(exc), "active_v2_read_only": True},
+            status_code=409,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {"error": "save_manager_rename_failed", "exception_type": type(exc).__name__, "detail": str(exc), "active_v2_read_only": True},
+            status_code=500,
+        )
+
+
+async def save_manager_load(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Request body must be a JSON object.")
+        payload = load_slot(
+            working_path=V3_WORKING_CHECKPOINT_PATH,
+            v2_path=Path(DEFAULT_CHECKPOINT_PATH),
+            manager_root=V3_SAVE_MANAGER_ROOT,
+            slot_id=str(body.get("slot_id", "") or ""),
+        )
+        payload["api_version"] = API_VERSION
+        return JSONResponse(payload)
+    except (V3SaveManagerError, ValueError) as exc:
+        return JSONResponse(
+            {"error": "save_manager_load_blocked", "detail": str(exc), "active_v2_read_only": True},
+            status_code=409,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {"error": "save_manager_load_failed", "exception_type": type(exc).__name__, "detail": str(exc), "active_v2_read_only": True},
+            status_code=500,
+        )
+
+
+async def save_manager_delete(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Request body must be a JSON object.")
+        payload = delete_slot(
+            working_path=V3_WORKING_CHECKPOINT_PATH,
+            v2_path=Path(DEFAULT_CHECKPOINT_PATH),
+            manager_root=V3_SAVE_MANAGER_ROOT,
+            slot_id=str(body.get("slot_id", "") or ""),
+        )
+        payload["api_version"] = API_VERSION
+        return JSONResponse(payload)
+    except (V3SaveManagerError, ValueError) as exc:
+        return JSONResponse(
+            {"error": "save_manager_delete_blocked", "detail": str(exc), "active_v2_read_only": True},
+            status_code=409,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {"error": "save_manager_delete_failed", "exception_type": type(exc).__name__, "detail": str(exc), "active_v2_read_only": True},
             status_code=500,
         )
 
@@ -4422,6 +4624,13 @@ routes = [
     Route("/v3/lifecycle/preview", lifecycle_preview, methods=["POST"]),
     Route("/v3/lifecycle/execute", lifecycle_execute, methods=["POST"]),
     Route("/v3/roster", roster_summary, methods=["GET"]),
+    Route("/v3/saves", save_manager_summary, methods=["GET"]),
+    Route("/v3/saves/bootstrap", save_manager_bootstrap, methods=["POST"]),
+    Route("/v3/saves/save-current", save_manager_save_current, methods=["POST"]),
+    Route("/v3/saves/create", save_manager_create, methods=["POST"]),
+    Route("/v3/saves/rename", save_manager_rename, methods=["POST"]),
+    Route("/v3/saves/load", save_manager_load, methods=["POST"]),
+    Route("/v3/saves/delete", save_manager_delete, methods=["POST"]),
     Route("/v3/working-save/status", working_save_status, methods=["GET"]),
     Route("/v3/working-save/reset", reset_working_save, methods=["POST"]),
     Route("/v3/rotation/preview", rotation_preview, methods=["POST"]),

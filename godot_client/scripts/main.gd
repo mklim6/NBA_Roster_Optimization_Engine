@@ -7,6 +7,7 @@ const SeasonLifecycleCenterV3 = preload("res://scripts/season_lifecycle_center_v
 const LeagueIntelligenceCenterV3 = preload("res://scripts/league_intelligence_center_v3.gd")
 const FrontOfficeCenterV3 = preload("res://scripts/front_office_center_v3.gd")
 const GameDayCenterV3 = preload("res://scripts/game_day_center_v3.gd")
+const SaveManagerV3 = preload("res://scripts/save_manager_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
@@ -57,6 +58,7 @@ var season_page: Control
 var league_page: Control
 var front_office_page: Control
 var game_day_page: Control
+var save_manager_page: Control
 var current_page := "HOME"
 var nav_buttons := {}
 var roster_payload := {}
@@ -166,6 +168,12 @@ func _build_interface() -> void:
 	content_stack.add_child(home_page)
 	home_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	save_manager_page = SaveManagerV3.new()
+	content_stack.add_child(save_manager_page)
+	save_manager_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if save_manager_page.has_signal("active_save_changed"):
+		save_manager_page.connect("active_save_changed", _on_active_save_changed)
+
 	roster_page = _build_roster_area()
 	content_stack.add_child(roster_page)
 	roster_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -247,6 +255,7 @@ func _build_sidebar() -> Control:
 	column.add_child(brand_spacer)
 
 	column.add_child(_nav_button("HOME", true))
+	column.add_child(_nav_button("FRANCHISES"))
 	column.add_child(_nav_button("ROSTER"))
 	column.add_child(_nav_button("GAME DAY"))
 	column.add_child(_nav_button("TRADES"))
@@ -2402,6 +2411,9 @@ func _show_page(page_name: String) -> void:
 	if home_page != null:
 		home_page.visible = page_name == "HOME"
 
+	if save_manager_page != null:
+		save_manager_page.visible = page_name == "FRANCHISES"
+
 	if roster_page != null:
 		roster_page.visible = page_name == "ROSTER"
 	if game_day_page != null:
@@ -2430,6 +2442,9 @@ func _show_page(page_name: String) -> void:
 			game_day_page.call("refresh")
 	elif page_name == "HOME":
 		_request_franchise_summary()
+	elif page_name == "FRANCHISES":
+		if save_manager_page != null and save_manager_page.has_method("refresh"):
+			save_manager_page.call("refresh")
 	elif page_name in ["LEAGUE", "FRONT OFFICE"]:
 		_request_franchise_intelligence()
 	elif page_name == "SCOUTING":
@@ -2444,6 +2459,13 @@ func _show_page(page_name: String) -> void:
 	elif page_name == "FREE AGENCY":
 		if free_agency_page != null and free_agency_page.has_method("refresh"):
 			free_agency_page.call("refresh")
+
+
+func _on_active_save_changed() -> void:
+	# Every data page reloads from the bridge on navigation. Returning Home after
+	# a slot switch guarantees all visible franchise identity cards come from
+	# the newly activated V3 working checkpoint rather than stale UI state.
+	_show_page("HOME")
 
 
 func _apply_nav_button_style(button: Button, active: bool) -> void:
@@ -2561,6 +2583,7 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 
 	if text_value in [
 		"HOME",
+		"FRANCHISES",
 		"ROSTER",
 		"GAME DAY",
 		"TRADES",
