@@ -13,6 +13,7 @@ const RequestCoordinatorV3 = preload("res://scripts/request_coordinator_v3.gd")
 const LongActionManagerV3 = preload("res://scripts/long_action_manager_v3.gd")
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const UiComponentsV3 = preload("res://scripts/ui_components_v3.gd")
+const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
@@ -84,6 +85,18 @@ var long_action_detail_label: Label
 var long_action_elapsed_label: Label
 var long_action_spinner_label: Label
 var nav_buttons := {}
+var active_team_abbreviation := "CHI"
+var active_team_primary := DesignSystemV3.TEAM_PRIMARY
+var active_team_secondary := Color("000000")
+var active_team_hover := DesignSystemV3.TEAM_PRIMARY_HOVER
+var active_team_foreground := DesignSystemV3.TEXT
+var branded_primary_buttons: Array = []
+var background_top_band: ColorRect
+var background_accent_line: ColorRect
+var header_eyebrow_label: Label
+var team_card_panel: PanelContainer
+var team_badge_panel: PanelContainer
+var team_card_eyebrow_label: Label
 var roster_payload := {}
 var feature_status_labels := {}
 var feature_module_labels := {}
@@ -254,20 +267,19 @@ func _build_background() -> void:
 	add_child(background)
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	var top_band := ColorRect.new()
-	top_band.color = Color(TEAM_PRIMARY, 0.055)
-	top_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(top_band)
-	top_band.anchor_right = 1.0
-	top_band.offset_bottom = 185.0
+	background_top_band = ColorRect.new()
+	background_top_band.color = Color(active_team_primary, 0.075)
+	background_top_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(background_top_band)
+	background_top_band.anchor_right = 1.0
+	background_top_band.offset_bottom = 185.0
 
-	var accent_line := ColorRect.new()
-	accent_line.color = TEAM_PRIMARY
-	accent_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(accent_line)
-	accent_line.anchor_right = 1.0
-	accent_line.offset_bottom = 3.0
-
+	background_accent_line = ColorRect.new()
+	background_accent_line.color = active_team_primary
+	background_accent_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(background_accent_line)
+	background_accent_line.anchor_right = 1.0
+	background_accent_line.offset_bottom = 3.0
 
 func _build_interface() -> void:
 	var shell := HBoxContainer.new()
@@ -491,7 +503,8 @@ func _build_header() -> Control:
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	titles.add_theme_constant_override("separation", 3)
 
-	var eyebrow := Label.new()
+	header_eyebrow_label = Label.new()
+	var eyebrow := header_eyebrow_label
 	eyebrow.text = "NBA FRANCHISE OPERATIONS"
 	eyebrow.add_theme_color_override("font_color", TEAM_PRIMARY_HOVER)
 	eyebrow.add_theme_font_size_override("font_size", 10)
@@ -517,14 +530,16 @@ func _build_header() -> Control:
 	return row
 
 func _build_team_card() -> Control:
-	var card := _card(Vector2(330, 220))
-	card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(TEAM_PRIMARY, 0.72)))
+	team_card_panel = _card(Vector2(330, 220))
+	var card := team_card_panel
+	card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(active_team_primary, 0.72)))
 	var body := _card_body(card, 20)
 	body.add_theme_constant_override("separation", 12)
 
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 10)
-	top.add_child(_small_label("YOUR FRANCHISE", TEAM_PRIMARY_HOVER))
+	team_card_eyebrow_label = _small_label("YOUR FRANCHISE", active_team_hover)
+	top.add_child(team_card_eyebrow_label)
 	var top_spacer := Control.new()
 	top_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(top_spacer)
@@ -535,9 +550,10 @@ func _build_team_card() -> Control:
 	identity.add_theme_constant_override("separation", 15)
 	body.add_child(identity)
 
-	var badge := PanelContainer.new()
+	team_badge_panel = PanelContainer.new()
+	var badge := team_badge_panel
 	badge.custom_minimum_size = Vector2(72, 72)
-	badge.add_theme_stylebox_override("panel", _box(TEAM_PRIMARY, 16, TEAM_PRIMARY_HOVER))
+	badge.add_theme_stylebox_override("panel", _box(active_team_primary, 16, active_team_hover))
 	identity.add_child(badge)
 
 	team_abbr_badge = Label.new()
@@ -2667,7 +2683,94 @@ func _on_tutorial_finished(started_from_startup: bool) -> void:
 
 
 func _apply_nav_button_style(button: Button, active: bool) -> void:
-	UiComponentsV3.apply_nav_state(button, active)
+	UiComponentsV3.apply_nav_state(button, active, active_team_primary)
+
+
+func _apply_active_team_brand(team_abbreviation: String) -> void:
+	var team_key := team_abbreviation.strip_edges().to_upper()
+	if team_key == "":
+		return
+
+	var palette: Dictionary = DesignSystemV3.team_palette(team_key)
+	active_team_abbreviation = team_key
+	active_team_primary = palette.get("primary", DesignSystemV3.TEAM_PRIMARY)
+	active_team_secondary = palette.get("secondary", DesignSystemV3.TEXT)
+	active_team_hover = TeamBrandingV3.hover_color(active_team_primary)
+	active_team_foreground = TeamBrandingV3.readable_foreground(active_team_primary)
+
+	if background_top_band != null:
+		background_top_band.color = Color(active_team_primary, 0.075)
+	if background_accent_line != null:
+		background_accent_line.color = active_team_primary
+
+	if header_eyebrow_label != null:
+		header_eyebrow_label.add_theme_color_override("font_color", active_team_hover)
+	if team_card_eyebrow_label != null:
+		team_card_eyebrow_label.add_theme_color_override("font_color", active_team_hover)
+
+	if team_card_panel != null:
+		team_card_panel.add_theme_stylebox_override(
+			"panel",
+			DesignSystemV3.style_box(
+				PANEL,
+				DesignSystemV3.RADIUS_LG,
+				Color(active_team_primary, 0.76),
+				1,
+				0.16
+			)
+		)
+
+	if team_badge_panel != null:
+		team_badge_panel.add_theme_stylebox_override(
+			"panel",
+			DesignSystemV3.style_box(
+				active_team_primary,
+				DesignSystemV3.RADIUS_LG,
+				active_team_hover,
+				1,
+				0.22
+			)
+		)
+
+	if team_abbr_badge != null:
+		team_abbr_badge.add_theme_color_override("font_color", active_team_foreground)
+
+	for key in nav_buttons.keys():
+		var button: Button = nav_buttons[key]
+		UiComponentsV3.apply_nav_state(
+			button,
+			str(key) == current_page,
+			active_team_primary
+		)
+
+	for button in branded_primary_buttons:
+		if button is Button and is_instance_valid(button):
+			TeamBrandingV3.apply_primary_button(button, active_team_primary)
+
+	_broadcast_team_brand()
+
+
+func _broadcast_team_brand() -> void:
+	for page in [
+		home_page,
+		roster_page,
+		game_day_page,
+		trades_page,
+		free_agency_page,
+		scouting_page,
+		season_page,
+		league_page,
+		front_office_page,
+		save_manager_page,
+		settings_page
+	]:
+		if page != null and page.has_method("apply_team_brand"):
+			page.call(
+				"apply_team_brand",
+				active_team_abbreviation,
+				active_team_primary,
+				active_team_secondary
+			)
 
 func _build_activity_panel() -> Control:
 	var card := _card(Vector2(0, 0))
@@ -2752,7 +2855,11 @@ func _wide_action(title_text: String, subtitle_text: String) -> Control:
 	return button
 
 func _nav_button(text_value: String, active: bool = false) -> Button:
-	var button := UiComponentsV3.nav_button(text_value, active)
+	var button := UiComponentsV3.nav_button(
+		text_value,
+		active,
+		active_team_primary
+	)
 
 	if text_value in [
 		"HOME",
@@ -2773,7 +2880,11 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 	return button
 
 func _action_button(text_value: String, primary: bool = false) -> Button:
-	return UiComponentsV3.action_button(text_value, primary)
+	var button := UiComponentsV3.action_button(text_value, primary)
+	if primary:
+		branded_primary_buttons.append(button)
+		TeamBrandingV3.apply_primary_button(button, active_team_primary)
+	return button
 
 func _pill(text_value: String, color: Color) -> Label:
 	return UiComponentsV3.pill(text_value, color)
@@ -3560,6 +3671,7 @@ func _on_summary_completed(
 
 func _apply_franchise_summary(payload: Dictionary) -> void:
 	var team = payload.get("team", {})
+	_apply_active_team_brand(str(team.get("abbreviation", "")))
 	var season = payload.get("season", {})
 	var record = payload.get("record", {})
 	var chemistry = payload.get("chemistry", {})

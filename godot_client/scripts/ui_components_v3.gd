@@ -2,6 +2,7 @@ class_name UiComponentsV3
 extends RefCounted
 
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
+const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
 const VERSION := "v3-ui-components-batch-19b-v1.0.0-2026-10-03"
 
 
@@ -130,7 +131,11 @@ static func _nav_box(fill: Color, border: Color, active: bool, focus: bool = fal
 	return box
 
 
-static func nav_button(text_value: String, active: bool = false) -> Button:
+static func nav_button(
+	text_value: String,
+	active: bool = false,
+	brand_color: Color = DesignSystemV3.TEAM_PRIMARY_HOVER
+) -> Button:
 	var button := Button.new()
 	button.custom_minimum_size = Vector2(0, 39)
 	button.text = text_value
@@ -156,25 +161,16 @@ static func nav_button(text_value: String, active: bool = false) -> Button:
 		"disabled",
 		_nav_box(DesignSystemV3.SIDEBAR, DesignSystemV3.SIDEBAR, false)
 	)
-	apply_nav_state(button, active)
+	apply_nav_state(button, active, brand_color)
 	return button
 
 
-static func apply_nav_state(button: Button, active: bool) -> void:
-	if button == null:
-		return
-	button.add_theme_color_override(
-		"font_color",
-		DesignSystemV3.TEXT_STRONG if active else DesignSystemV3.MUTED
-	)
-	button.add_theme_stylebox_override(
-		"normal",
-		_nav_box(
-			Color(DesignSystemV3.PANEL_ALT, 0.92) if active else DesignSystemV3.SIDEBAR,
-			DesignSystemV3.SOFT_BORDER if active else DesignSystemV3.SIDEBAR,
-			active
-		)
-	)
+static func apply_nav_state(
+	button: Button,
+	active: bool,
+	brand_color: Color = DesignSystemV3.TEAM_PRIMARY_HOVER
+) -> void:
+	TeamBrandingV3.apply_nav_state(button, active, brand_color)
 
 
 static func pill(text_value: String, color: Color) -> Label:
