@@ -165,8 +165,17 @@ def build_completed_season_contract_closeout_candidate(
         return _result_from_existing(state, trade_state)
 
     # A historical prior Draft is filtered out by franchise_draft_engine_v1.draft_state().
-    # Any remaining Draft is active for this offseason and must not precede contract expiry.
-    if draft_state(state) is not None:
+    # Season-long scouting is intentionally initialized during the regular season and
+    # must survive into the offseason.  It is not an offseason Draft transaction yet,
+    # so it is safe to preserve through the authoritative contract closeout.  Once the
+    # class advances to the lottery or later, closeout must remain blocked.
+    active_draft = draft_state(state)
+    active_draft_phase = (
+        str(active_draft.get("phase", "") or "").strip().lower()
+        if isinstance(active_draft, dict)
+        else ""
+    )
+    if active_draft is not None and active_draft_phase != "season_scouting":
         raise CompletedSeasonContractCloseoutError(
             "Contract closeout must occur before the active offseason Draft begins."
         )

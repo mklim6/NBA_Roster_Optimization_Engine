@@ -3,6 +3,7 @@ extends Control
 const TradeCenterV3 = preload("res://scripts/trade_center_v3.gd")
 const FreeAgencyCenterV3 = preload("res://scripts/free_agency_center_v3.gd")
 const ScoutingDraftCenterV3 = preload("res://scripts/scouting_draft_center_v3.gd")
+const SeasonLifecycleCenterV3 = preload("res://scripts/season_lifecycle_center_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/franchise-summary"
@@ -49,6 +50,7 @@ var roster_page: Control
 var trades_page: Control
 var free_agency_page: Control
 var scouting_page: Control
+var season_page: Control
 var league_page: Control
 var front_office_page: Control
 var current_page := "HOME"
@@ -176,6 +178,10 @@ func _build_interface() -> void:
 	content_stack.add_child(scouting_page)
 	scouting_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	season_page = SeasonLifecycleCenterV3.new()
+	content_stack.add_child(season_page)
+	season_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
 	league_page = _build_feature_area(
 		"LEAGUE HUB",
 		"Standings, awards races, transactions, schedule context, and league-wide franchise intelligence.",
@@ -256,6 +262,7 @@ func _build_sidebar() -> Control:
 	column.add_child(_nav_button("TRADES"))
 	column.add_child(_nav_button("FREE AGENCY"))
 	column.add_child(_nav_button("SCOUTING"))
+	column.add_child(_nav_button("SEASON"))
 	column.add_child(_nav_button("LEAGUE"))
 	column.add_child(_nav_button("FRONT OFFICE"))
 
@@ -2413,6 +2420,8 @@ func _show_page(page_name: String) -> void:
 		free_agency_page.visible = page_name == "FREE AGENCY"
 	if scouting_page != null:
 		scouting_page.visible = page_name == "SCOUTING"
+	if season_page != null:
+		season_page.visible = page_name == "SEASON"
 	if league_page != null:
 		league_page.visible = page_name == "LEAGUE"
 	if front_office_page != null:
@@ -2431,6 +2440,9 @@ func _show_page(page_name: String) -> void:
 	elif page_name == "SCOUTING":
 		if scouting_page != null and scouting_page.has_method("refresh"):
 			scouting_page.call("refresh")
+	elif page_name == "SEASON":
+		if season_page != null and season_page.has_method("refresh"):
+			season_page.call("refresh")
 	elif page_name == "TRADES":
 		if trades_page != null and trades_page.has_method("refresh"):
 			trades_page.call("refresh")
@@ -2558,6 +2570,7 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 		"TRADES",
 		"FREE AGENCY",
 		"SCOUTING",
+		"SEASON",
 		"LEAGUE",
 		"FRONT OFFICE"
 	]:

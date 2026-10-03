@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 import copy
 import hashlib
+import json
 import shutil
 import sys
 
@@ -15,7 +16,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.13.0"
+API_VERSION = "0.14.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -49,6 +50,12 @@ V3_DRAFT_RECOVERY_DIR = (
     / "runtime"
     / "v3_draft_recovery"
 )
+V3_LIFECYCLE_RECOVERY_DIR = (
+    REPO_ROOT
+    / "outputs"
+    / "runtime"
+    / "v3_lifecycle_recovery"
+)
 
 # V2 checkpoints were serialized with top-level src module names.
 # Keep src directly importable so cloudpickle can resolve them.
@@ -57,6 +64,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from simulation_franchise_checkpoint_v1 import (
     DEFAULT_CHECKPOINT_PATH,
+    checkpoint_backup_path,
     load_franchise_checkpoint,
     save_franchise_checkpoint,
 )
@@ -84,6 +92,13 @@ from franchise_trade_transaction_v1 import (
 )
 from franchise_free_agency_transaction_v1 import (
     FreeAgencyTransactionError,
+)
+from desktop_bridge.season_lifecycle_foundation import (
+    V3SeasonLifecycleError,
+    build_lifecycle_action_candidate,
+    build_lifecycle_action_preview,
+    build_lifecycle_summary,
+    verify_lifecycle_action_persisted,
 )
 from desktop_bridge.transaction_foundation import (
     build_draft_selection_candidate,
@@ -3540,6 +3555,302 @@ async def draft_selection_execute(request: Request) -> JSONResponse:
             **_safety_payload(),
         }, status_code=500)
 
+
+async def lifecycle_summary(_: Request) -> JSONResponse:
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse(
+                {
+                    "error": "v3_working_save_not_initialized",
+                    "active_v2_read_only": True,
+                },
+                status_code=409,
+            )
+        payload = build_lifecycle_summary(checkpoint)
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_after = _file_sha256(v2_path)
+        payload.update(
+            {
+                "api_version": API_VERSION,
+                "working_save_sha256": working_after,
+                "working_save_unchanged": working_before == working_after,
+                "active_v2_sha256": v2_after,
+                "active_v2_unchanged": v2_before is not None and v2_before == v2_after,
+            }
+        )
+        if not payload["working_save_unchanged"] or not payload["active_v2_unchanged"]:
+            raise RuntimeError("Lifecycle summary unexpectedly changed a protected checkpoint.")
+        return JSONResponse(payload)
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "lifecycle_summary_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "read_only": True,
+                "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+                "active_v2_unchanged": v2_before == _file_sha256(v2_path),
+            },
+            status_code=500,
+        )
+
+
+async def lifecycle_preview(request: Request) -> JSONResponse:
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized"}, status_code=409)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Request body must be a JSON object.")
+        action = str(body.get("action", "") or "").strip().lower()
+        active_team = _active_team_from_checkpoint(checkpoint)
+        payload = build_lifecycle_action_preview(
+            checkpoint,
+            action,
+            active_team=active_team,
+        )
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_after = _file_sha256(v2_path)
+        payload.update(
+            {
+                "api_version": API_VERSION,
+                "working_save_sha256": working_after,
+                "working_save_unchanged": working_before == working_after,
+                "active_v2_sha256": v2_after,
+                "active_v2_unchanged": v2_before is not None and v2_before == v2_after,
+            }
+        )
+        if not payload["working_save_unchanged"] or not payload["active_v2_unchanged"]:
+            raise RuntimeError("Lifecycle preview unexpectedly changed a protected checkpoint.")
+        return JSONResponse(payload)
+    except (ValueError, V3SeasonLifecycleError) as exc:
+        return JSONResponse(
+            {
+                "error": "lifecycle_preview_rejected",
+                "detail": str(exc),
+                "read_only": True,
+                "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+                "active_v2_unchanged": v2_before == _file_sha256(v2_path),
+            },
+            status_code=409,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "lifecycle_preview_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "read_only": True,
+                "working_save_unchanged": working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+                "active_v2_unchanged": v2_before == _file_sha256(v2_path),
+            },
+            status_code=500,
+        )
+
+
+async def lifecycle_execute(request: Request) -> JSONResponse:
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    recovery_primary: Path | None = None
+    recovery_backup: Path | None = None
+    write_started = False
+    backup_path = Path(checkpoint_backup_path(V3_WORKING_CHECKPOINT_PATH))
+    backup_existed_before = backup_path.exists()
+    backup_sha_before = _file_sha256(backup_path) if backup_existed_before else None
+
+    def _safety_payload() -> dict[str, Any]:
+        return {
+            "working_save_sha256": _file_sha256(V3_WORKING_CHECKPOINT_PATH),
+            "active_v2_sha256": _file_sha256(v2_path),
+            "active_v2_read_only": True,
+            "active_v2_unchanged": v2_before is not None and v2_before == _file_sha256(v2_path),
+        }
+
+    def _rollback() -> tuple[bool, str]:
+        if not write_started or recovery_primary is None or not recovery_primary.exists():
+            return True, ""
+        try:
+            shutil.copy2(recovery_primary, V3_WORKING_CHECKPOINT_PATH)
+            if backup_existed_before:
+                if recovery_backup is None or not recovery_backup.exists():
+                    return False, "pre-action automatic-backup recovery copy is missing"
+                shutil.copy2(recovery_backup, backup_path)
+            elif backup_path.exists():
+                backup_path.unlink()
+            restored = _working_checkpoint()
+            primary_ok = (
+                restored is not None
+                and _file_sha256(V3_WORKING_CHECKPOINT_PATH) == working_before
+            )
+            backup_ok = (
+                (_file_sha256(backup_path) == backup_sha_before)
+                if backup_existed_before
+                else not backup_path.exists()
+            )
+            return bool(primary_ok and backup_ok), ""
+        except Exception as rollback_exc:
+            return False, f"{type(rollback_exc).__name__}: {rollback_exc}"
+
+    try:
+        if working_before is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized"}, status_code=409)
+        if v2_before is None:
+            return JSONResponse({"error": "active_v2_checkpoint_not_found"}, status_code=409)
+
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Request body must be a JSON object.")
+        action = str(body.get("action", "") or "").strip().lower()
+        expected_action_fingerprint = str(body.get("expected_action_fingerprint", "") or "").strip()
+        expected_working_sha = str(body.get("expected_working_save_sha256", "") or "").strip()
+        if not expected_action_fingerprint:
+            raise ValueError("expected_action_fingerprint is required. Run a fresh lifecycle preview first.")
+        if not expected_working_sha:
+            raise ValueError("expected_working_save_sha256 is required. Run a fresh lifecycle preview first.")
+        if expected_working_sha != working_before:
+            return JSONResponse(
+                {
+                    "error": "stale_lifecycle_preview",
+                    "detail": "The V3 working save changed after the lifecycle preview. Refresh and preview again.",
+                    "expected_working_save_sha256": expected_working_sha,
+                    "observed_working_save_sha256": working_before,
+                    **_safety_payload(),
+                },
+                status_code=409,
+            )
+
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized"}, status_code=409)
+        active_team = _active_team_from_checkpoint(checkpoint)
+        candidate = build_lifecycle_action_candidate(
+            checkpoint,
+            action,
+            active_team=active_team,
+        )
+        if candidate.action_fingerprint != expected_action_fingerprint:
+            return JSONResponse(
+                {
+                    "error": "stale_lifecycle_preview",
+                    "detail": "The certified lifecycle action changed after preview. Refresh and preview again.",
+                    "expected_action_fingerprint": expected_action_fingerprint,
+                    "observed_action_fingerprint": candidate.action_fingerprint,
+                    **_safety_payload(),
+                },
+                status_code=409,
+            )
+        if _file_sha256(V3_WORKING_CHECKPOINT_PATH) != working_before:
+            raise RuntimeError("V3 working checkpoint changed while the lifecycle candidate was being built.")
+        if _file_sha256(v2_path) != v2_before:
+            raise RuntimeError("Protected V2 checkpoint changed while the lifecycle candidate was being built.")
+
+        V3_LIFECYCLE_RECOVERY_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        recovery_primary = V3_LIFECYCLE_RECOVERY_DIR / (
+            f"pre_{candidate.action}_{stamp}_{V3_WORKING_CHECKPOINT_PATH.name}"
+        )
+        shutil.copy2(V3_WORKING_CHECKPOINT_PATH, recovery_primary)
+        if _file_sha256(recovery_primary) != working_before:
+            raise RuntimeError("V3 lifecycle recovery copy does not match the working checkpoint.")
+        if backup_existed_before:
+            recovery_backup = V3_LIFECYCLE_RECOVERY_DIR / (
+                f"pre_{candidate.action}_{stamp}_{backup_path.name}"
+            )
+            shutil.copy2(backup_path, recovery_backup)
+            if _file_sha256(recovery_backup) != backup_sha_before:
+                raise RuntimeError("V3 lifecycle backup recovery copy does not match the source backup.")
+
+        write_started = True
+        save_franchise_checkpoint(
+            candidate.state,
+            candidate.trade_state,
+            preferences=candidate.preferences,
+            reason=f"V3 Batch 11 lifecycle action: {candidate.action}",
+            path=V3_WORKING_CHECKPOINT_PATH,
+            copy_payload=False,
+            force_replace=True,
+        )
+        verified = _working_checkpoint()
+        if verified is None:
+            raise RuntimeError("Saved V3 lifecycle checkpoint could not be reloaded.")
+        verification = verify_lifecycle_action_persisted(verified, candidate)
+        if not verification.get("persisted"):
+            raise RuntimeError(
+                "V3 lifecycle action failed post-reload verification: "
+                + json.dumps(verification, sort_keys=True, default=str)
+            )
+        v2_after = _file_sha256(v2_path)
+        if v2_after != v2_before:
+            raise RuntimeError("Protected V2 checkpoint changed during V3 lifecycle execution.")
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        if working_after is None or working_after == working_before:
+            raise RuntimeError("Lifecycle execution did not produce a new durable V3 working checkpoint.")
+
+        return JSONResponse(
+            {
+                "status": "applied",
+                "api_version": API_VERSION,
+                "action": candidate.action,
+                "action_fingerprint": candidate.action_fingerprint,
+                "source_season": candidate.source_season,
+                "target_season": candidate.target_season,
+                "detail": candidate.detail,
+                "verification": verification,
+                "persisted_after_reload": True,
+                "working_save_only": True,
+                "working_save_write_performed": True,
+                "working_save_sha256_before": working_before,
+                "working_save_sha256": working_after,
+                "recovery_checkpoint_path": str(recovery_primary),
+                "active_v2_read_only": True,
+                "active_v2_unchanged": True,
+                "active_v2_sha256": v2_after,
+                "lifecycle": build_lifecycle_summary(verified),
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    except (ValueError, V3SeasonLifecycleError) as exc:
+        rollback_verified, rollback_error = _rollback()
+        return JSONResponse(
+            {
+                "error": "lifecycle_execution_rejected",
+                "detail": str(exc),
+                "rollback_performed": bool(write_started),
+                "rollback_verified": rollback_verified,
+                "rollback_error": rollback_error,
+                "recovery_checkpoint_path": str(recovery_primary or ""),
+                "working_save_write_performed": bool(write_started),
+                **_safety_payload(),
+            },
+            status_code=409,
+        )
+    except Exception as exc:
+        rollback_verified, rollback_error = _rollback()
+        return JSONResponse(
+            {
+                "error": "lifecycle_execution_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "rollback_performed": bool(write_started),
+                "rollback_verified": rollback_verified,
+                "rollback_error": rollback_error,
+                "recovery_checkpoint_path": str(recovery_primary or ""),
+                "working_save_write_performed": bool(write_started),
+                **_safety_payload(),
+            },
+            status_code=500,
+        )
+
+
 async def not_found(_: Request, __: Exception) -> JSONResponse:
     return JSONResponse({"error": "not_found"}, status_code=404)
 
@@ -3562,6 +3873,9 @@ routes = [
     Route("/v3/scouting/advance", scouting_advance, methods=["POST"]),
     Route("/v3/draft/selection/preview", draft_selection_preview, methods=["POST"]),
     Route("/v3/draft/selection/execute", draft_selection_execute, methods=["POST"]),
+    Route("/v3/lifecycle", lifecycle_summary, methods=["GET"]),
+    Route("/v3/lifecycle/preview", lifecycle_preview, methods=["POST"]),
+    Route("/v3/lifecycle/execute", lifecycle_execute, methods=["POST"]),
     Route("/v3/roster", roster_summary, methods=["GET"]),
     Route("/v3/working-save/status", working_save_status, methods=["GET"]),
     Route("/v3/working-save/reset", reset_working_save, methods=["POST"]),
