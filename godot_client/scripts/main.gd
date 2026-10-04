@@ -64,6 +64,7 @@ var intelligence_request: HTTPRequest
 var market_intelligence_request: HTTPRequest
 var transaction_foundation_request: HTTPRequest
 
+var hq_story: VBoxContainer
 var home_page: Control
 var roster_page: Control
 var trades_page: Control
@@ -481,6 +482,9 @@ func _build_sidebar() -> Control:
 	return sidebar_panel
 
 func _build_main_area() -> Control:
+	var scroll := ScrollContainer.new()
+	scroll.name = "FranchiseHQScroll"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	var outer := MarginContainer.new()
 	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	outer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -499,6 +503,9 @@ func _build_main_area() -> Control:
 	column.add_child(hero_row)
 
 	column.add_child(_build_engine_status_strip())
+	hq_story = preload("res://scripts/franchise_story_hq_v3.gd").new()
+	hq_story.navigate.connect(_show_page)
+	column.add_child(hq_story)
 
 	var metrics := GridContainer.new()
 	metrics.columns = 4
@@ -510,14 +517,8 @@ func _build_main_area() -> Control:
 	metrics.add_child(_metric_card("DRAFT CLASS", "LOADING...", "Waiting for V3 save"))
 	column.add_child(metrics)
 
-	var lower := HBoxContainer.new()
-	lower.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	lower.add_theme_constant_override("separation", 16)
-	lower.add_child(_build_activity_panel())
-	lower.add_child(_build_quick_actions_panel())
-	column.add_child(lower)
-
-	return outer
+	scroll.add_child(outer)
+	return scroll
 
 
 func _build_header() -> Control:
@@ -2534,6 +2535,7 @@ func _request_franchise_intelligence() -> void:
 
 	var error := intelligence_request.request(INTELLIGENCE_URL)
 	if error != OK:
+		hq_story.set_report_unavailable()
 		for section in ["SCOUTING", "LEAGUE", "OPERATIONS"]:
 			var label = feature_status_labels.get(section)
 			if label is Label:
@@ -2578,6 +2580,7 @@ func _on_intelligence_completed(
 	body: PackedByteArray
 ) -> void:
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		hq_story.set_report_unavailable()
 		for section in ["SCOUTING", "LEAGUE", "OPERATIONS"]:
 			var failed_label = feature_status_labels.get(section)
 			if failed_label is Label:
@@ -2586,8 +2589,10 @@ func _on_intelligence_completed(
 
 	var payload = JSON.parse_string(body.get_string_from_utf8())
 	if typeof(payload) != TYPE_DICTIONARY:
+		hq_story.set_report_unavailable()
 		return
 
+	hq_story.configure_intelligence(payload)
 	var season = payload.get("season", {})
 	var season_text := "%s • League Day %s • %s" % [
 		str(season.get("label", "")),
@@ -2944,23 +2949,6 @@ func _broadcast_team_brand() -> void:
 				active_team_primary,
 				active_team_secondary
 			)
-
-func _build_activity_panel() -> Control:
-	var card := _card(Vector2(0, 0))
-	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var body := _card_body(card, 20)
-
-	body.add_child(_section_title("LEAGUE PULSE"))
-	body.add_child(_activity("TRADE MARKET", "Multiple teams are evaluating early-season roster changes.", "2m"))
-	body.add_child(_divider())
-	body.add_child(_activity("ROOKIE WATCH", "The 2026 class is beginning to separate after the first month.", "18m"))
-	body.add_child(_divider())
-	body.add_child(_activity("TEAM UPDATE", "Rotation workload and chemistry are both trending positively.", "1h"))
-	body.add_child(_divider())
-	body.add_child(_activity("SCOUTING", "Your staff has new evaluations ready on the upcoming draft class.", "3h"))
-	return card
-
 
 func _build_quick_actions_panel() -> Control:
 	var card := _card(Vector2(330, 0))
@@ -3955,9 +3943,11 @@ func _on_summary_completed(
 		return
 
 	_apply_franchise_summary(payload)
+	_request_franchise_intelligence()
 
 
 func _apply_franchise_summary(payload: Dictionary) -> void:
+	hq_story.configure(payload)
 	var team = payload.get("team", {})
 	_apply_active_team_brand(str(team.get("abbreviation", "")))
 	var season = payload.get("season", {})
@@ -4078,6 +4068,7 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 
 
 func _set_live_data_error(message: String) -> void:
+	hq_story.set_unavailable(message)
 	header_subtitle.text = "V3 FRANCHISE DATA UNAVAILABLE"
 
 	record_value.text = "N/A"
