@@ -216,7 +216,9 @@ func _render_payload() -> void:
 	var rank := _int_value(competitive.get("conference_rank"), 0)
 	var conference := _text(competitive.get("conference"), "")
 	var record := _text(competitive.get("record"), "")
-	if rank > 0 and conference != "":
+	if record == "0-0" and conference != "":
+		position_value.text = "%s • %s • OPENING" % [conference.to_upper(), record]
+	elif rank > 0 and conference != "":
 		position_value.text = "#%d %s • %s" % [rank, conference.to_upper(), record]
 	else:
 		position_value.text = record if record != "" else "UNAVAILABLE"

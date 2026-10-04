@@ -8,6 +8,7 @@ const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
 const PageIdentityV3 = preload("res://scripts/page_identity_v3.gd")
 const TeamLogoV3 = preload("res://scripts/team_logo_v3.gd")
 const LeagueMediaShowcaseV3 = preload("res://scripts/league_media_showcase_v3.gd")
+const LeagueCompetitionWatchV3 = preload("res://scripts/league_competition_watch_v3.gd")
 
 const LEAGUE_URL := "http://127.0.0.1:8765/v3/league-intelligence"
 
@@ -25,6 +26,7 @@ const BORDER := DesignSystemV3.BORDER
 var page_identity: Control
 var page_brand_bar: ColorRect
 var league_showcase: Control
+var competition_watch: Control
 var league_payload: Dictionary = {}
 var league_brand_primary := DesignSystemV3.TEAM_PRIMARY
 var league_brand_secondary := DesignSystemV3.GOLD
@@ -67,6 +69,8 @@ func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
 	if standings_tables.size() == 2:
 		_render_standings_table(standings_tables[0], _array(last_standings.get("east")))
 		_render_standings_table(standings_tables[1], _array(last_standings.get("west")))
+	if competition_watch != null and not league_payload.is_empty():
+		competition_watch.configure(league_payload, standings_team, league_brand_primary, league_brand_secondary)
 	if league_showcase != null and not league_payload.is_empty():
 		league_showcase.configure(league_payload, standings_team, league_brand_primary, league_brand_secondary)
 
@@ -156,6 +160,10 @@ func _build_interface() -> void:
 	content.add_theme_constant_override("separation", 18)
 	scroll.add_child(content)
 
+	competition_watch = LeagueCompetitionWatchV3.new()
+	competition_watch.name = "LeagueCompetitionWatch"
+	content.add_child(competition_watch)
+
 	league_showcase = LeagueMediaShowcaseV3.new()
 	content.add_child(league_showcase)
 
@@ -232,17 +240,24 @@ func _render(payload: Dictionary) -> void:
 	if standing.is_empty():
 		active_seed_label.text = "UNAVAILABLE"
 	else:
-		active_seed_label.text = "#%d %s • %s" % [
-			_i(standing.get("rank")),
-			_s(standing.get("conference"), "LEAGUE").to_upper(),
-			_s(standing.get("record"), "0-0")
-		]
+		var active_record = _s(standing.get("record"), "0-0")
+		var active_conference = _s(standing.get("conference"), "LEAGUE").to_upper()
+		if completed <= 0 or active_record == "0-0":
+			active_seed_label.text = "%s • %s • OPENING" % [active_conference, active_record]
+		else:
+			active_seed_label.text = "#%d %s • %s" % [
+				_i(standing.get("rank")),
+				active_conference,
+				active_record
+			]
 
 	var standings := _dict(payload.get("standings"))
 	standings_east.text = _standings_text(_array(standings.get("east")))
 	standings_west.text = _standings_text(_array(standings.get("west")))
 	last_standings = standings
 	standings_team = _s(standing.get("team"), standings_team)
+	if competition_watch != null:
+		competition_watch.configure(payload, _s(standing.get("team"), standings_team), league_brand_primary, league_brand_secondary)
 	if league_showcase != null:
 		league_showcase.configure(payload, standings_team, league_brand_primary, league_brand_secondary)
 	_render_standings_table(standings_tables[0], _array(standings.get("east")))
@@ -272,31 +287,34 @@ func _render_standings_table(table: GridContainer, rows: Array) -> void:
 		table.add_child(_label("Unavailable", 12, MUTED))
 		return
 
+	var opening_field = _standings_are_level(rows)
+
 	for raw in rows:
 		if typeof(raw) != TYPE_DICTIONARY:
 			continue
 		var row: Dictionary = raw
-		var team := _s(row.get("team"), "N/A").to_upper()
-		var is_active := team == standings_team and standings_team != ""
-		var diff := _s(row.get("point_diff"), "N/A")
+		var team = _s(row.get("team"), "N/A").to_upper()
+		var is_active = team == standings_team and standings_team != ""
+		var diff = _s(row.get("point_diff"), "N/A")
 		if typeof(row.get("point_diff")) in [TYPE_INT, TYPE_FLOAT]:
 			diff = "%+d" % int(row.get("point_diff"))
 
-		var rank := _label(_s(row.get("rank"), "N/A"), 12, standings_highlight if is_active else MUTED)
+		var rank_text = "—" if opening_field else _s(row.get("rank"), "N/A")
+		var rank = _label(rank_text, 12, standings_highlight if is_active else MUTED)
 		table.add_child(rank)
 
-		var logo := TeamLogoV3.new()
+		var logo = TeamLogoV3.new()
 		logo.custom_minimum_size = Vector2(28, 26)
 		logo.configure(team)
 		table.add_child(logo)
 
-		var team_cell := _label(team + (" • YOU" if is_active else ""), 12, standings_highlight if is_active else TEXT)
+		var team_cell = _label(team + (" • YOU" if is_active else ""), 12, standings_highlight if is_active else TEXT)
 		team_cell.tooltip_text = _s(row.get("team_name"), team)
 		team_cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		table.add_child(team_cell)
 
 		for value in [_s(row.get("record"), "N/A"), diff, _s(row.get("streak"), "N/A")]:
-			var cell := _label(str(value), 12, standings_highlight if is_active else TEXT)
+			var cell = _label(str(value), 12, standings_highlight if is_active else TEXT)
 			cell.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 			table.add_child(cell)
 
@@ -305,17 +323,31 @@ func _standings_text(rows: Array) -> String:
 	if rows.is_empty():
 		return "No conference standings are available."
 	var lines: Array[String] = []
+	var opening_field = _standings_are_level(rows)
 	lines.append("    TEAM       W-L      DIFF   STRK")
 	for raw in rows:
-		var row := _dict(raw)
-		lines.append("%2d  %-4s  %8s  %+5d   %s" % [
-			_i(row.get("rank")),
+		var row = _dict(raw)
+		var rank_text = "—" if opening_field else str(_i(row.get("rank")))
+		lines.append("%2s  %-4s  %8s  %+5d   %s" % [
+			rank_text,
 			_s(row.get("team"), "---"),
 			_s(row.get("record"), "0-0"),
 			_i(row.get("point_diff")),
 			_s(row.get("streak"), "-")
 		])
 	return "\n".join(lines)
+
+
+func _standings_are_level(rows: Array) -> bool:
+	if rows.is_empty():
+		return false
+	for raw in rows:
+		var row = _dict(raw)
+		if _s(row.get("record"), "0-0") != "0-0":
+			return false
+		if _i(row.get("point_diff"), 0) != 0:
+			return false
+	return true
 
 
 func _leaders_text(leaders: Dictionary, minimum_games: int) -> String:

@@ -1,5 +1,7 @@
 extends Control
 
+# Batch 35 UI reliability: responsive Settings stack
+
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
 
@@ -201,12 +203,14 @@ func _build_ui() -> void:
 	status_body.add_child(status_label)
 	column.add_child(status_card)
 
-	var content := HBoxContainer.new()
+	var content := VBoxContainer.new()
+	content.name = "SettingsResponsiveStack"
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content.add_theme_constant_override("separation", 14)
 	column.add_child(content)
 
 	var preferences_card := _card(Vector2(0, 520))
+	preferences_card.name = "DesktopPreferencesCard"
 	preferences_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var pref_body := _card_body(preferences_card, 18)
 	pref_body.add_child(_small_label("DESKTOP PREFERENCES", ACCENT))
@@ -273,8 +277,10 @@ func _build_ui() -> void:
 	pref_body.add_child(storage_note)
 	content.add_child(preferences_card)
 
-	var tutorial_card := _card(Vector2(380, 520))
-	tutorial_card.custom_minimum_size = Vector2(380, 520)
+	var tutorial_card := _card(Vector2(0, 320))
+	tutorial_card.name = "GuidedHelpCard"
+	tutorial_card.custom_minimum_size = Vector2(0, 320)
+	tutorial_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var tutorial_body := _card_body(tutorial_card, 18)
 	tutorial_body.add_child(_small_label("GUIDED HELP", GOLD))
 	tutorial_body.add_child(_section_title("V3 FRANCHISE TUTORIAL"))

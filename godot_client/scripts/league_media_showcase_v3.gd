@@ -73,13 +73,20 @@ func _build_pulse(payload: Dictionary) -> void:
 	identity_copy.add_child(team_title)
 
 	var standing := _dict(payload.get("active_team_standing"))
+	var pulse_schedule = _dict(payload.get("schedule"))
+	var pulse_completed = _i(pulse_schedule.get("completed_games"))
 	var position_text := "POSITION UNAVAILABLE"
 	if not standing.is_empty():
-		position_text = "#%d %s • %s" % [
-			_i(standing.get("rank")),
-			_s(standing.get("conference"), "LEAGUE").to_upper(),
-			_s(standing.get("record"), "0-0"),
-		]
+		var pulse_record = _s(standing.get("record"), "0-0")
+		var pulse_conference = _s(standing.get("conference"), "LEAGUE").to_upper()
+		if pulse_completed <= 0 or pulse_record == "0-0":
+			position_text = "%s • %s • OPENING WEEK" % [pulse_conference, pulse_record]
+		else:
+			position_text = "#%d %s • %s" % [
+				_i(standing.get("rank")),
+				pulse_conference,
+				pulse_record,
+			]
 	identity_copy.add_child(_label(position_text, 12, MUTED))
 
 	var metrics := GridContainer.new()
@@ -207,40 +214,63 @@ func _build_leaders_and_awards(payload: Dictionary) -> void:
 
 
 func _build_playoff_and_world(payload: Dictionary) -> void:
-	var section := VBoxContainer.new()
+	var schedule = _dict(payload.get("schedule"))
+	var completed = _i(schedule.get("completed_games"))
+	var opening = completed <= 0
+
+	var section = VBoxContainer.new()
 	section.add_theme_constant_override("separation", 8)
 	add_child(section)
-	section.add_child(_section_header("PLAYOFF RACE + LEAGUE WIRE", "Seeding pressure, postseason state, and truthful league headlines"))
+	section.add_child(_section_header(
+		"LEAGUE PREVIEW + OPENING WEEK" if opening else "PLAYOFF RACE + LEAGUE WIRE",
+		"Opening slate, conference context, and truthful league headlines" if opening else "Seeding pressure, postseason state, and truthful league headlines"
+	))
 
-	var row := HBoxContainer.new()
+	var row = HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	section.add_child(row)
 
-	var picture_card := _card(PANEL, Color(GOLD, 0.34), 16)
+	var picture_card = _card(PANEL, Color(GOLD, 0.34), 16)
 	picture_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var picture_body := _body(picture_card, 14)
-	picture_body.add_child(_label("PLAYOFF PICTURE", 11, GOLD))
+	var picture_body = _body(picture_card, 14)
+	picture_body.add_child(_label("CONFERENCE OUTLOOK" if opening else "PLAYOFF PICTURE", 11, GOLD))
 
-	var conferences := HBoxContainer.new()
-	conferences.add_theme_constant_override("separation", 10)
-	picture_body.add_child(conferences)
-	var picture := _dict(payload.get("playoff_picture"))
-	conferences.add_child(_playoff_column("EAST", _array(picture.get("east"))))
-	conferences.add_child(_playoff_column("WEST", _array(picture.get("west"))))
+	if opening:
+		var opening_copy = _label(
+			"All teams are level before the first completed result. Seeding and playoff labels stay neutral until the standings have real separation.",
+			11,
+			MUTED
+		)
+		opening_copy.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		picture_body.add_child(opening_copy)
+		picture_body.add_child(_divider())
+		var upcoming = _array(schedule.get("upcoming_games"))
+		if upcoming.is_empty():
+			picture_body.add_child(_empty("The opening slate is not exposed yet."))
+		else:
+			for raw in upcoming.slice(0, 4):
+				picture_body.add_child(_matchup_row(_dict(raw), false))
+	else:
+		var conferences = HBoxContainer.new()
+		conferences.add_theme_constant_override("separation", 10)
+		picture_body.add_child(conferences)
+		var picture = _dict(payload.get("playoff_picture"))
+		conferences.add_child(_playoff_column("EAST", _array(picture.get("east"))))
+		conferences.add_child(_playoff_column("WEST", _array(picture.get("west"))))
 	row.add_child(picture_card)
 
-	var world_card := _card(PANEL, Color(primary, 0.42), 16)
+	var world_card = _card(PANEL, Color(primary, 0.42), 16)
 	world_card.custom_minimum_size = Vector2(390, 0)
-	var world_body := _body(world_card, 14)
+	var world_body = _body(world_card, 14)
 	world_body.add_child(_label("LEAGUE WIRE", 11, TeamBrandingV3.hover_color(primary)))
-	var wire_items := _wire_items(payload)
+	var wire_items = _wire_items(payload)
 	if wire_items.is_empty():
 		world_body.add_child(_empty("League wire has no events to surface yet."))
 	else:
 		for item in wire_items.slice(0, 6):
 			world_body.add_child(_wire_row(str(item)))
 
-	var history := _array(payload.get("season_history"))
+	var history = _array(payload.get("season_history"))
 	if not history.is_empty():
 		world_body.add_child(_divider())
 		world_body.add_child(_label("RECENT CHAMPIONS", 10, MUTED))
@@ -431,18 +461,29 @@ func _history_row(item: Dictionary) -> Control:
 
 func _wire_items(payload: Dictionary) -> Array[String]:
 	var items: Array[String] = []
-	var standing := _dict(payload.get("active_team_standing"))
-	if not standing.is_empty():
-		items.append("%s is #%d in the %s at %s." % [
-			_s(standing.get("team"), active_team),
-			_i(standing.get("rank")),
-			_s(standing.get("conference"), "league").to_upper(),
-			_s(standing.get("record"), "0-0"),
-		])
+	var schedule = _dict(payload.get("schedule"))
+	var completed = _i(schedule.get("completed_games"))
+	var standing = _dict(payload.get("active_team_standing"))
 
-	var schedule := _dict(payload.get("schedule"))
+	if not standing.is_empty():
+		var record = _s(standing.get("record"), "0-0")
+		var conference = _s(standing.get("conference"), "league").to_upper()
+		if completed <= 0 or record == "0-0":
+			items.append("%s opens the season at %s in the %s; seeding begins after completed games." % [
+				_s(standing.get("team"), active_team),
+				record,
+				conference,
+			])
+		else:
+			items.append("%s is #%d in the %s at %s." % [
+				_s(standing.get("team"), active_team),
+				_i(standing.get("rank")),
+				conference,
+				record,
+			])
+
 	for raw in _array(schedule.get("recent_results")).slice(0, 2):
-		var result := _dict(raw)
+		var result = _dict(raw)
 		items.append("FINAL • %s %d at %s %d" % [
 			_s(result.get("away_team"), "---"),
 			_i(result.get("away_score")),
@@ -450,19 +491,28 @@ func _wire_items(payload: Dictionary) -> Array[String]:
 			_i(result.get("home_score")),
 		])
 
-	var awards := _dict(payload.get("award_watch"))
-	var mvp_rows := _array(awards.get("mvp_watch"))
+	if completed <= 0:
+		for raw in _array(schedule.get("upcoming_games")).slice(0, 2):
+			var upcoming = _dict(raw)
+			items.append("UPCOMING • %s at %s • Day %d" % [
+				_s(upcoming.get("away_team"), "---"),
+				_s(upcoming.get("home_team"), "---"),
+				_i(upcoming.get("day_index")),
+			])
+
+	var awards = _dict(payload.get("award_watch"))
+	var mvp_rows = _array(awards.get("mvp_watch"))
 	if not mvp_rows.is_empty():
-		var leader := _dict(mvp_rows[0])
+		var leader = _dict(mvp_rows[0])
 		items.append("MVP WATCH • %s (%s) leads the current projection." % [
 			_s(leader.get("name"), "Unknown"),
 			_s(leader.get("team"), "---"),
 		])
 
-	var postseason := _dict(payload.get("postseason"))
+	var postseason = _dict(payload.get("postseason"))
 	if bool(postseason.get("active", false)):
 		items.append("POSTSEASON • %s is active." % _s(postseason.get("stage"), "stage").replace("_", " ").to_upper())
-	var champion := _s(postseason.get("champion"), "")
+	var champion = _s(postseason.get("champion"), "")
 	if champion != "":
 		items.append("CHAMPION • %s has won the current archived season." % champion)
 	return items
