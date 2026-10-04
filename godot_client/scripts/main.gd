@@ -1,5 +1,7 @@
 extends Control
 
+# Batch 24 roster + player experience mega-overhaul
+
 const TradeCenterV3 = preload("res://scripts/trade_center_v3.gd")
 const FreeAgencyCenterV3 = preload("res://scripts/free_agency_center_v3.gd")
 const ScoutingDraftCenterV3 = preload("res://scripts/scouting_draft_center_v3.gd")
@@ -15,6 +17,9 @@ const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const UiComponentsV3 = preload("res://scripts/ui_components_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
 const TeamLogoV3 = preload("res://scripts/team_logo_v3.gd")
+const RosterExperienceV3 = preload("res://scripts/roster_experience_v3.gd")
+const PlayerProfileExperienceV3 = preload("res://scripts/player_profile_experience_v3.gd")
+const RotationCourtV3 = preload("res://scripts/rotation_court_v3.gd")
 const MatchupBannerV3 = preload("res://scripts/matchup_banner_v3.gd")
 const FranchiseHeroArtV3 = preload("res://scripts/franchise_hero_art_v3.gd")
 const UxPolishV3 = preload("res://scripts/ux_polish_v3.gd")
@@ -115,6 +120,8 @@ var roster_chemistry_value: Label
 var roster_brand_accents: Array = []
 var roster_brand_labels: Array = []
 var roster_rows: VBoxContainer
+var roster_team_logo = null
+var roster_experience = null
 var player_detail_overlay: Control
 var rotation_overlay: Control
 var game_day_overlay: Control
@@ -138,6 +145,7 @@ var game_day_team_record_label: Label
 var game_day_opponent_record_label: Label
 var game_day_meta_label: Label
 var game_day_alerts_label: Label
+var rotation_court_preview = null
 var rotation_edit_rows := {}
 var rotation_edit_order := []
 var rotation_feedback: Label
@@ -886,56 +894,79 @@ func _build_feature_area(
 	return outer
 
 
+# Batch 24 roster + player experience mega-overhaul
+# Batch 24 roster + player experience mega-overhaul
 func _build_roster_area() -> Control:
+	var page_scroll := ScrollContainer.new()
+	page_scroll.name = "RosterPageScroll"
+	page_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	page_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
 	var outer := MarginContainer.new()
 	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	outer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_set_margins(outer, 32, 26, 32, 28)
+	_set_margins(outer, 28, 22, 28, 24)
+	page_scroll.add_child(outer)
 
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 16)
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_theme_constant_override("separation", 12)
 	outer.add_child(column)
 
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 12)
+	column.add_child(header)
 
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	titles.add_theme_constant_override("separation", 3)
+	header.add_child(titles)
 
 	var eyebrow := Label.new()
-	eyebrow.text = "TEAM OPERATIONS"
+	eyebrow.text = "TEAM OPERATIONS • ROSTER"
 	eyebrow.add_theme_color_override("font_color", active_team_primary.lightened(0.45))
 	roster_brand_labels.append(eyebrow)
 	eyebrow.add_theme_font_size_override("font_size", 10)
 	titles.add_child(eyebrow)
 
 	var title := Label.new()
-	title.text = "ROSTER MANAGEMENT"
+	title.text = "ROSTER COMMAND"
 	title.add_theme_color_override("font_color", TEXT)
-	title.add_theme_font_size_override("font_size", 31)
+	title.add_theme_font_size_override("font_size", 36)
 	titles.add_child(title)
 
 	roster_subtitle = Label.new()
 	roster_subtitle.text = "LOADING V3 WORKING ROSTER..."
 	roster_subtitle.add_theme_color_override("font_color", MUTED)
-	roster_subtitle.add_theme_font_size_override("font_size", 12)
+	roster_subtitle.add_theme_font_size_override("font_size", 11)
 	titles.add_child(roster_subtitle)
-	header.add_child(titles)
+
+	roster_team_logo = TeamLogoV3.new()
+	roster_team_logo.custom_minimum_size = Vector2(76, 66)
+	header.add_child(roster_team_logo)
+	roster_team_logo.configure(active_team_abbreviation)
 
 	var edit_rotation := _action_button("EDIT ROTATION", true)
+	edit_rotation.custom_minimum_size = Vector2(138, 46)
 	edit_rotation.pressed.connect(_show_rotation_editor)
 	header.add_child(edit_rotation)
 
 	var refresh := _action_button("REFRESH")
+	refresh.custom_minimum_size = Vector2(96, 46)
 	refresh.pressed.connect(_request_roster)
 	header.add_child(refresh)
-	column.add_child(header)
+
+	var page_bar := ColorRect.new()
+	page_bar.custom_minimum_size = Vector2(0, 4)
+	page_bar.color = active_team_primary
+	page_bar.set_meta("emphasized", true)
+	page_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	roster_brand_accents.append(page_bar)
+	column.add_child(page_bar)
 
 	var metrics := GridContainer.new()
 	metrics.columns = 4
-	metrics.add_theme_constant_override("h_separation", 14)
-	metrics.add_theme_constant_override("v_separation", 14)
+	metrics.add_theme_constant_override("h_separation", 10)
+	metrics.add_theme_constant_override("v_separation", 10)
 	metrics.add_child(_roster_summary_card("ROSTER", "LOADING..."))
 	metrics.add_child(_roster_summary_card("PAYROLL", "LOADING..."))
 	metrics.add_child(_roster_summary_card("CAP ROOM EST.", "LOADING..."))
@@ -947,42 +978,51 @@ func _build_roster_area() -> Control:
 	column.add_child(status_panel)
 
 	var status_margin := MarginContainer.new()
-	_set_margins(status_margin, 12, 8, 12, 8)
+	_set_margins(status_margin, 12, 7, 12, 7)
 	status_panel.add_child(status_margin)
 
 	roster_status = Label.new()
 	roster_status.text = "Waiting for the V3 roster endpoint."
 	roster_status.add_theme_color_override("font_color", MUTED)
-	roster_status.add_theme_font_size_override("font_size", 10)
+	roster_status.add_theme_font_size_override("font_size", 9)
 	status_margin.add_child(roster_status)
 
-	var roster_card := _card(Vector2(0, 0))
+	roster_experience = RosterExperienceV3.new()
+	roster_experience.custom_minimum_size = Vector2(0, 430)
+	roster_experience.player_selected.connect(_show_player_detail)
+	roster_experience.edit_rotation_requested.connect(_show_rotation_editor)
+	column.add_child(roster_experience)
+
+	var roster_card := _card(Vector2(0, 560))
+	roster_card.name = "PlayerDatabaseCard"
 	roster_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	roster_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var body := _card_body(roster_card, 16)
+	roster_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(active_team_primary, 0.32)))
+	var body := _card_body(roster_card, 14)
 
 	var roster_header_row := HBoxContainer.new()
-	roster_header_row.add_child(_section_title("ACTIVE ROSTER"))
+	roster_header_row.add_child(_section_title("PLAYER DATABASE"))
 	var roster_header_spacer := Control.new()
 	roster_header_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	roster_header_row.add_child(roster_header_spacer)
-	roster_header_row.add_child(_small_label("CLICK ANY PLAYER FOR FULL PROFILE", MUTED))
+	roster_header_row.add_child(_small_label("PORTRAITS • RATINGS • CONTRACT • HEALTH • PRODUCTION", MUTED))
 	body.add_child(roster_header_row)
 	body.add_child(_roster_table_header())
 
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_child(scroll)
+	var database_scroll := ScrollContainer.new()
+	database_scroll.name = "PlayerDatabaseScroll"
+	database_scroll.custom_minimum_size = Vector2(0, 445)
+	database_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	database_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(database_scroll)
 
 	roster_rows = VBoxContainer.new()
 	roster_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	roster_rows.add_theme_constant_override("separation", 5)
-	scroll.add_child(roster_rows)
+	database_scroll.add_child(roster_rows)
 
 	roster_rows.add_child(
 		UiComponentsV3.loading_skeleton(
-			5,
+			4,
 			"Loading players from the V3 working checkpoint..."
 		)
 	)
@@ -990,12 +1030,12 @@ func _build_roster_area() -> Control:
 	column.add_child(roster_card)
 
 	var note := Label.new()
-	note.text = "V3 WORKING SAVE • Rotation edits are isolated from the protected V2 release checkpoint. Cap room remains an active-roster contract estimate."
+	note.text = "V3 WORKING SAVE • Rotation edits remain preview-gated and isolated from the protected V2 release checkpoint."
 	note.add_theme_color_override("font_color", MUTED)
-	note.add_theme_font_size_override("font_size", 10)
+	note.add_theme_font_size_override("font_size", 9)
 	column.add_child(note)
 
-	return outer
+	return page_scroll
 
 
 func _roster_summary_card(label_text: String, value_text: String) -> Control:
@@ -1187,204 +1227,32 @@ func _show_player_detail(player: Dictionary) -> void:
 	add_child(player_detail_overlay)
 	player_detail_overlay.move_to_front()
 
-	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.78)
+	var dim = ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.84)
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	player_detail_overlay.add_child(dim)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	var center := CenterContainer.new()
+	var center = CenterContainer.new()
 	center.mouse_filter = Control.MOUSE_FILTER_PASS
 	player_detail_overlay.add_child(center)
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	var card := _card(Vector2(980, 690))
-	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	card.add_theme_stylebox_override("panel", _box(PANEL, 18, Color(TEAM_PRIMARY, 0.58)))
-	center.add_child(card)
-
-	var body := _card_body(card, 20)
-	body.add_theme_constant_override("separation", 14)
-
-	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 14)
-	body.add_child(header)
-
-	var profile_portrait_script = load("res://scripts/player_portrait_v3.gd")
-	if profile_portrait_script != null:
-		var profile_portrait = profile_portrait_script.new()
-		profile_portrait.custom_minimum_size = Vector2(164, 120)
-		header.add_child(profile_portrait)
-		profile_portrait.configure(player)
-
-	var title_box := VBoxContainer.new()
-	title_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title_box.add_theme_constant_override("separation", 6)
-	header.add_child(title_box)
-
-	var player_name := Label.new()
-	player_name.text = str(player.get("name", "Unknown Player"))
-	player_name.add_theme_color_override("font_color", TEXT)
-	player_name.add_theme_font_size_override("font_size", 30)
-	title_box.add_child(player_name)
-
-	var subtitle := Label.new()
-	subtitle.text = "%s  •  Age %s  •  OVR %s  •  POT %s  •  %s" % [
-		str(player.get("position", "")),
-		_number_text(player.get("age", null), 1),
-		_number_text(player.get("overall", null), 1),
-		_number_text(player.get("potential", null), 1),
-		str(player.get("development_direction", ""))
-	]
-	subtitle.add_theme_color_override("font_color", MUTED)
-	subtitle.add_theme_font_size_override("font_size", 12)
-	title_box.add_child(subtitle)
-
-	var rating_strip := HBoxContainer.new()
-	rating_strip.add_theme_constant_override("separation", 8)
-	rating_strip.add_child(_profile_rating_tile("OVR", player.get("overall", null)))
-	rating_strip.add_child(_profile_rating_tile("POT", player.get("potential", null)))
-	title_box.add_child(rating_strip)
-
-	var close_button := _action_button("CLOSE")
-	close_button.pressed.connect(_close_player_detail)
-	header.add_child(close_button)
-
-	var tags := HBoxContainer.new()
-	tags.add_theme_constant_override("separation", 8)
-	body.add_child(tags)
-
-	if bool(player.get("is_starter", false)):
-		tags.add_child(_pill("STARTER", ACCENT))
-	elif bool(player.get("in_rotation", false)):
-		tags.add_child(_pill("ROTATION", GOOD))
-	else:
-		tags.add_child(_pill("RESERVE", MUTED))
-
-	var health = player.get("health", {})
-	var health_status := str(health.get("status", "unknown"))
-	tags.add_child(
-		_pill(
-			str(health.get("display", "Unknown")),
-			GOOD if health_status == "healthy" else BAD
-		)
+	var experience = PlayerProfileExperienceV3.new()
+	center.add_child(experience)
+	experience.close_requested.connect(_close_player_detail)
+	experience.configure(
+		player,
+		active_team_abbreviation,
+		active_team_primary,
+		active_team_secondary
 	)
 
-	var morale = player.get("morale", {})
-	var morale_status := _display_text(morale.get("status", null), "Not evaluated")
-	var morale_color := MUTED
-	if morale_status in ["Happy", "Thriving", "Content"]:
-		morale_color = GOOD
-	elif morale_status in ["Frustrated", "Angry", "Demanding Trade"]:
-		morale_color = BAD
-	tags.add_child(_pill(morale_status, morale_color))
-
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_child(scroll)
-
-	var content := VBoxContainer.new()
-	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content.add_theme_constant_override("separation", 12)
-	scroll.add_child(content)
-
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	grid.add_theme_constant_override("h_separation", 12)
-	grid.add_theme_constant_override("v_separation", 12)
-	content.add_child(grid)
-
-	var stats = player.get("season_stats", {})
-	grid.add_child(_profile_stats_card(stats))
-
-	var contract = player.get("contract", {})
-	var contract_lines := [
-		"Role   %s" % str(player.get("role", "")),
-		"Target minutes   %s" % _number_text(player.get("target_minutes", 0), 0),
-		"Salary   %s" % _display_text(contract.get("salary_display", null)),
-		"Years remaining   %s" % str(contract.get("years_remaining", 0)),
-		"Contract status   %s" % _pretty_phase(_display_text(contract.get("status", null))),
-		"Option   %s" % _friendly_value(str(contract.get("option_type", ""))),
-		"Rotation order   %s" % _friendly_value(str(player.get("rotation_order", "")))
-	]
-	grid.add_child(_detail_card("ROLE + CONTRACT", contract_lines))
-
-	var morale_reasons := ""
-	for reason in morale.get("reasons", []):
-		if morale_reasons != "":
-			morale_reasons += "\n"
-		morale_reasons += "• " + str(reason)
-
-	if morale_reasons == "":
-		morale_reasons = "Morale has not been evaluated for this player." if morale_status == "Not evaluated" else "No active morale concerns."
-
-	grid.add_child(
-		_detail_card(
-			"MORALE",
-			[
-				"Status   %s" % morale_status,
-				"Score   %s" % _number_text(morale.get("score", null), 1),
-				"Role satisfaction   %s" % _number_text(morale.get("role_satisfaction", null), 1),
-				"Expected role   %s" % _friendly_value(str(morale.get("expected_role", ""))),
-				"Recent minutes   %s" % _number_text(morale.get("recent_minutes", null), 1),
-				"Trade request risk   %s" % _pct_text(morale.get("trade_request_risk", null)),
-				"Trade status   %s" % _friendly_value(str(morale.get("trade_request_status", ""))),
-				morale_reasons
-			]
-		)
-	)
-
-	var health_lines := [
-		"Status   %s" % str(health.get("display", "Unknown")),
-		"Fatigue   %s" % _number_text(health.get("fatigue", null), 1),
-		"Durability   %s" % _ratio_pct_text(health.get("durability", null)),
-		"Risk tier   %s" % _friendly_value(str(health.get("risk_tier", ""))),
-		"Games missed   %s" % str(health.get("season_games_missed", 0)),
-		"Injuries suffered   %s" % str(health.get("injuries_suffered", 0))
-	]
-
-	var expected_return := int(health.get("expected_return_day", 0))
-	if expected_return > 0:
-		health_lines.append("Expected return day   %s" % expected_return)
-
-	var health_notes := str(health.get("notes", ""))
-	if health_notes != "":
-		health_lines.append(health_notes)
-
-	var risk_explanation := str(health.get("risk_explanation", ""))
-	if risk_explanation != "":
-		health_lines.append(risk_explanation)
-
-	grid.add_child(_detail_card("HEALTH + WORKLOAD", health_lines))
-
-	grid.add_child(
-		_detail_card(
-			"DEVELOPMENT",
-			[
-				"Overall   %s" % _number_text(player.get("overall", null), 1),
-				"Potential   %s" % _number_text(player.get("potential", null), 1),
-				"Future outlook   %s" % _number_text(player.get("future_outlook", null), 1),
-				"Direction   %s" % _friendly_value(str(player.get("development_direction", ""))),
-				"Age   %s" % _number_text(player.get("age", null), 1),
-				"Generated prospect   %s" % ("Yes" if bool(player.get("generated_prospect", false)) else "No")
-			]
-		)
-	)
-
-	var skills = player.get("skills", {})
-	grid.add_child(_profile_skill_card(skills))
-
-	var footer := Label.new()
-	footer.text = "ACTIVE V3 PLAYER PROFILE • Data comes from the isolated V3 working franchise; protected V2 remains unchanged."
-	footer.add_theme_color_override("font_color", MUTED)
-	footer.add_theme_font_size_override("font_size", 10)
-	content.add_child(footer)
+	# Batch 21A.1 compatibility marker for the superseded compact profile baseline:
+	# profile_portrait.custom_minimum_size = Vector2(164, 120)
+	UxPolishV3.animate_overlay_in(player_detail_overlay)
 
 
-# Batch 20C player profile presentation
 func _profile_stats_card(stats: Dictionary) -> Control:
 	var card := _card(Vector2(0, 0))
 	card.name = "ProfileSeasonProduction"
@@ -3049,7 +2917,7 @@ func _apply_active_team_brand(team_abbreviation: String) -> void:
 		)
 
 	for button in branded_primary_buttons:
-		if button is Button and is_instance_valid(button):
+		if is_instance_valid(button) and button is Button:
 			TeamBrandingV3.apply_primary_button(button, active_team_primary)
 
 	_broadcast_team_brand()
@@ -3390,6 +3258,17 @@ func _apply_roster_payload(payload: Dictionary) -> void:
 	if team is Dictionary and team.get("abbreviation", "") != "":
 		_apply_active_team_brand(str(team.abbreviation))
 
+	var roster_team_abbreviation := str(team.get("abbreviation", active_team_abbreviation)).to_upper()
+	if roster_team_logo != null:
+		roster_team_logo.configure(roster_team_abbreviation)
+	if roster_experience != null:
+		roster_experience.configure(
+			payload,
+			roster_team_abbreviation,
+			active_team_primary,
+			active_team_secondary
+		)
+
 	var source_label := "V3 WORKING SAVE" if str(payload.get("source", "")) == "v3_working_checkpoint" else "PROTECTED V2 SAVE"
 
 	roster_subtitle.text = "%s • %s • LEAGUE DAY %s • %s" % [
@@ -3436,61 +3315,75 @@ func _show_rotation_editor() -> void:
 	_close_rotation_editor()
 
 	rotation_overlay = Control.new()
+	rotation_overlay.name = "RotationLabOverlay"
 	rotation_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	rotation_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(rotation_overlay)
 	rotation_overlay.move_to_front()
 
-	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.76)
+	var dim = ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.82)
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	rotation_overlay.add_child(dim)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	var center := CenterContainer.new()
+	var center = CenterContainer.new()
 	center.mouse_filter = Control.MOUSE_FILTER_PASS
 	rotation_overlay.add_child(center)
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	var card := _card(Vector2(1040, 680))
+	var card = _card(Vector2(1180, 760))
+	card.name = "RotationLabCard"
 	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	card.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	card.add_theme_stylebox_override("panel", _box(PANEL, 18, Color(active_team_primary, 0.62)))
 	center.add_child(card)
 
-	var body := _card_body(card, 20)
-	body.add_theme_constant_override("separation", 12)
+	var body = _card_body(card, 18)
+	body.add_theme_constant_override("separation", 10)
 
-	var header := HBoxContainer.new()
+	var header = HBoxContainer.new()
 	header.add_theme_constant_override("separation", 12)
 	body.add_child(header)
 
-	var titles := VBoxContainer.new()
+	var team_logo = TeamLogoV3.new()
+	team_logo.custom_minimum_size = Vector2(70, 60)
+	team_logo.configure(active_team_abbreviation)
+	header.add_child(team_logo)
+
+	var titles = VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	titles.add_theme_constant_override("separation", 3)
+	titles.add_theme_constant_override("separation", 2)
 	header.add_child(titles)
 
-	var title := Label.new()
-	title.text = "EDIT ROTATION"
+	var eyebrow = Label.new()
+	eyebrow.text = "TEAM OPERATIONS • LINEUP ENGINE"
+	eyebrow.add_theme_color_override("font_color", active_team_primary.lightened(0.45))
+	eyebrow.add_theme_font_size_override("font_size", 9)
+	titles.add_child(eyebrow)
+
+	var title = Label.new()
+	title.text = "ROTATION LAB"
 	title.add_theme_color_override("font_color", TEXT)
-	title.add_theme_font_size_override("font_size", 26)
+	title.add_theme_font_size_override("font_size", 30)
 	titles.add_child(title)
 
-	var subtitle := Label.new()
-	subtitle.text = "V3 WORKING SAVE • Changes are validated by the existing V2 rotation engine before they can be applied."
+	var subtitle = Label.new()
+	subtitle.text = "Visual starting five + editable rotation • Existing preview validation remains mandatory before any write."
 	subtitle.add_theme_color_override("font_color", MUTED)
-	subtitle.add_theme_font_size_override("font_size", 11)
+	subtitle.add_theme_font_size_override("font_size", 10)
 	titles.add_child(subtitle)
 
-	var close_button := _action_button("CANCEL")
+	var close_button = _action_button("CANCEL")
 	close_button.pressed.connect(_close_rotation_editor)
 	header.add_child(close_button)
 
-	var summary_row := HBoxContainer.new()
-	summary_row.add_theme_constant_override("separation", 12)
+	var summary_row = HBoxContainer.new()
+	summary_row.add_theme_constant_override("separation", 10)
 	body.add_child(summary_row)
 
 	rotation_total_label = Label.new()
-	rotation_total_label.custom_minimum_size = Vector2(170, 38)
+	rotation_total_label.custom_minimum_size = Vector2(150, 38)
 	rotation_total_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	rotation_total_label.add_theme_font_size_override("font_size", 18)
 	summary_row.add_child(rotation_total_label)
@@ -3499,7 +3392,7 @@ func _show_rotation_editor() -> void:
 	rotation_feedback.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rotation_feedback.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	rotation_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	rotation_feedback.add_theme_font_size_override("font_size", 11)
+	rotation_feedback.add_theme_font_size_override("font_size", 10)
 	summary_row.add_child(rotation_feedback)
 
 	rotation_preview_button = _action_button("PREVIEW VALIDATION")
@@ -3511,24 +3404,52 @@ func _show_rotation_editor() -> void:
 	rotation_apply_button.pressed.connect(_apply_rotation)
 	summary_row.add_child(rotation_apply_button)
 
-	var table_header := HBoxContainer.new()
-	table_header.add_theme_constant_override("separation", 8)
-	table_header.add_child(_roster_cell("PLAYER", 220, MUTED))
-	table_header.add_child(_roster_cell("POS", 60, MUTED))
-	table_header.add_child(_roster_cell("HEALTH", 180, MUTED))
-	table_header.add_child(_roster_cell("START", 70, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	table_header.add_child(_roster_cell("ROTATION", 86, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	table_header.add_child(_roster_cell("MINUTES", 100, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	body.add_child(table_header)
+	var editor_scroll = ScrollContainer.new()
+	editor_scroll.name = "RotationLabScroll"
+	editor_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	editor_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(editor_scroll)
 
-	var scroll := ScrollContainer.new()
+	var editor_content = VBoxContainer.new()
+	editor_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	editor_content.add_theme_constant_override("separation", 10)
+	editor_scroll.add_child(editor_content)
+
+	rotation_court_preview = RotationCourtV3.new()
+	rotation_court_preview.name = "RotationEditorCourt"
+	rotation_court_preview.custom_minimum_size = Vector2(0, 275)
+	rotation_court_preview.player_selected.connect(_show_player_detail)
+	editor_content.add_child(rotation_court_preview)
+
+	var table_label_row = HBoxContainer.new()
+	table_label_row.add_theme_constant_override("separation", 8)
+	table_label_row.add_child(_small_label("ROTATION CONTROLS", TEAM_PRIMARY_HOVER))
+	var table_spacer = Control.new()
+	table_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	table_label_row.add_child(table_spacer)
+	table_label_row.add_child(_small_label("EDIT • PREVIEW • APPLY", MUTED))
+	editor_content.add_child(table_label_row)
+
+	var table_header = HBoxContainer.new()
+	table_header.add_theme_constant_override("separation", 8)
+	table_header.add_child(_roster_cell("PLAYER", 270, MUTED))
+	table_header.add_child(_roster_cell("POS", 50, MUTED))
+	table_header.add_child(_roster_cell("HEALTH", 145, MUTED))
+	table_header.add_child(_roster_cell("START", 60, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	table_header.add_child(_roster_cell("ROTATION", 78, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	table_header.add_child(_roster_cell("MINUTES", 92, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	editor_content.add_child(table_header)
+
+	var scroll = ScrollContainer.new()
+	scroll.name = "RotationControlsScroll"
+	scroll.custom_minimum_size = Vector2(0, 260)
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_child(scroll)
+	editor_content.add_child(scroll)
 
-	var rows_box := VBoxContainer.new()
+	var rows_box = VBoxContainer.new()
 	rows_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	rows_box.add_theme_constant_override("separation", 5)
+	rows_box.add_theme_constant_override("separation", 4)
 	scroll.add_child(rows_box)
 
 	rotation_edit_rows.clear()
@@ -3541,46 +3462,80 @@ func _show_rotation_editor() -> void:
 			rows_box.add_child(_rotation_editor_row(player))
 
 	_refresh_rotation_editor_state()
+	UxPolishV3.animate_overlay_in(rotation_overlay)
 
 
 func _rotation_editor_row(player: Dictionary) -> Control:
-	var panel := PanelContainer.new()
+	var panel = PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	panel.add_theme_stylebox_override("panel", _box(PANEL_ALT, 7, BORDER))
+	panel.custom_minimum_size = Vector2(0, 62)
+	panel.add_theme_stylebox_override("panel", _box(PANEL_ALT, 9, BORDER))
 
-	var margin := MarginContainer.new()
-	_set_margins(margin, 10, 7, 10, 7)
+	var margin = MarginContainer.new()
+	_set_margins(margin, 8, 5, 8, 5)
 	panel.add_child(margin)
 
-	var row := HBoxContainer.new()
+	var row = HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	margin.add_child(row)
 
-	var player_id := str(player.get("player_id", ""))
+	var player_id = str(player.get("player_id", ""))
 	rotation_edit_order.append(player_id)
 
-	row.add_child(_roster_cell(str(player.get("name", "Unknown")), 220, TEXT))
-	row.add_child(_roster_cell(str(player.get("position", "")), 60, MUTED))
+	var identity = HBoxContainer.new()
+	identity.custom_minimum_size = Vector2(270, 50)
+	identity.add_theme_constant_override("separation", 7)
+	row.add_child(identity)
+
+	var portrait_script = load("res://scripts/player_portrait_v3.gd")
+	if portrait_script != null:
+		var portrait = portrait_script.new()
+		portrait.custom_minimum_size = Vector2(62, 50)
+		identity.add_child(portrait)
+		portrait.configure(player)
+
+	var player_copy = VBoxContainer.new()
+	player_copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	player_copy.alignment = BoxContainer.ALIGNMENT_CENTER
+	identity.add_child(player_copy)
+
+	var name = Label.new()
+	name.text = str(player.get("name", "Unknown"))
+	name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name.add_theme_color_override("font_color", TEXT)
+	name.add_theme_font_size_override("font_size", 11)
+	player_copy.add_child(name)
+
+	var meta = Label.new()
+	meta.text = "OVR %s • %s" % [
+		_number_text(player.get("overall", null), 1),
+		"STARTER" if bool(player.get("is_starter", false)) else "ROTATION" if bool(player.get("in_rotation", false)) else "RESERVE"
+	]
+	meta.add_theme_color_override("font_color", _rating_tone(player.get("overall", null)))
+	meta.add_theme_font_size_override("font_size", 8)
+	player_copy.add_child(meta)
+
+	row.add_child(_roster_cell(str(player.get("position", "")), 50, MUTED))
 
 	var health = player.get("health", {})
-	var health_status := str(health.get("status", "unknown"))
-	var health_color := GOOD if health_status == "healthy" else BAD
-	row.add_child(_roster_cell(str(health.get("display", "Unknown")), 180, health_color))
+	var health_status = str(health.get("status", "unknown"))
+	var health_color = GOOD if health_status == "healthy" else (MUTED if health_status == "unknown" else BAD)
+	row.add_child(_roster_cell(str(health.get("display", "Unknown")), 145, health_color))
 
-	var starter_box := CheckBox.new()
-	starter_box.custom_minimum_size = Vector2(70, 32)
+	var starter_box = CheckBox.new()
+	starter_box.custom_minimum_size = Vector2(60, 32)
 	starter_box.button_pressed = bool(player.get("is_starter", false))
 	starter_box.tooltip_text = "Starter"
 	row.add_child(starter_box)
 
-	var rotation_box := CheckBox.new()
-	rotation_box.custom_minimum_size = Vector2(86, 32)
+	var rotation_box = CheckBox.new()
+	rotation_box.custom_minimum_size = Vector2(78, 32)
 	rotation_box.button_pressed = bool(player.get("in_rotation", false))
 	rotation_box.tooltip_text = "In rotation"
 	row.add_child(rotation_box)
 
-	var minutes_spin := SpinBox.new()
-	minutes_spin.custom_minimum_size = Vector2(100, 32)
+	var minutes_spin = SpinBox.new()
+	minutes_spin.custom_minimum_size = Vector2(92, 32)
 	minutes_spin.min_value = 0.0
 	minutes_spin.max_value = 48.0
 	minutes_spin.step = 1.0
@@ -3752,10 +3707,10 @@ func _refresh_rotation_editor_state() -> void:
 	if rotation_total_label == null or rotation_feedback == null:
 		return
 
-	var check := _rotation_local_validation()
-	var total := float(check.get("total_minutes", 0.0))
-	var required := float(check.get("required_minutes", 240.0))
-	var valid := bool(check.get("valid", false))
+	var check = _rotation_local_validation()
+	var total = float(check.get("total_minutes", 0.0))
+	var required = float(check.get("required_minutes", 240.0))
+	var valid = bool(check.get("valid", false))
 
 	rotation_total_label.text = "%.0f / %.0f MIN" % [total, required]
 	rotation_total_label.add_theme_color_override(
@@ -3774,8 +3729,32 @@ func _refresh_rotation_editor_state() -> void:
 		rotation_feedback.text = " • ".join(issues)
 		rotation_feedback.add_theme_color_override("font_color", BAD)
 
+	if rotation_court_preview != null:
+		rotation_court_preview.configure(
+			_rotation_preview_players(),
+			active_team_primary,
+			active_team_secondary
+		)
+
 	if rotation_preview_button != null:
 		rotation_preview_button.disabled = not valid
+
+
+func _rotation_preview_players() -> Array:
+	var players: Array = []
+	for player_id in rotation_edit_order:
+		var entry = rotation_edit_rows.get(player_id, {})
+		if entry.is_empty():
+			continue
+		var original = entry.get("player", {})
+		if typeof(original) != TYPE_DICTIONARY:
+			continue
+		var player: Dictionary = original.duplicate(true)
+		player["is_starter"] = bool(entry["starter"].button_pressed)
+		player["in_rotation"] = bool(entry["rotation"].button_pressed)
+		player["target_minutes"] = float(entry["minutes"].value)
+		players.append(player)
+	return players
 
 
 func _preview_rotation() -> void:
@@ -3907,6 +3886,7 @@ func _close_rotation_editor() -> void:
 		rotation_overlay.queue_free()
 
 	rotation_overlay = null
+	rotation_court_preview = null
 	rotation_edit_rows.clear()
 	rotation_edit_order.clear()
 	rotation_feedback = null

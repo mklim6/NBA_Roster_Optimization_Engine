@@ -67,15 +67,26 @@ func _initialize():
     await process_frame
     var portrait_script = load("res://scripts/player_portrait_v3.gd")
     var portraits = []
-    collect_portraits(root, portrait_script, portraits)
-    assert(portraits.size() == 2)
+    # Scope this regression to its two views; other pages can own portraits.
+    collect_portraits(row, portrait_script, portraits)
+    if portraits.size() != 1:
+        fail_now("roster_portrait_missing_or_duplicated")
+        return
+    collect_portraits(shell.player_detail_overlay, portrait_script, portraits)
+    if portraits.size() != 2:
+        fail_now("profile_portrait_missing_or_duplicated")
+        return
     for portrait in portraits:
-        assert(portrait.fallback_label.text == "PF")
-        assert(portrait.fallback_label.visible)
+        if portrait.fallback_label.text != "PF" or not portrait.fallback_label.visible:
+            fail_now("offline_portrait_fallback")
+            return
     var output = FileAccess.open(MARKER_PATH, FileAccess.WRITE)
     output.store_string("PASS")
     output.close()
     quit(0)
+func fail_now(label: String) -> void:
+    print("PORTRAIT_FAIL::" + label)
+    quit(2)
 func collect_portraits(node, script, found):
     if node.get_script() == script:
         found.append(node)
@@ -107,6 +118,8 @@ def main() -> int:
 
     main_text = MAIN.read_text(encoding="utf-8") if MAIN.exists() else ""
     portrait_text = PORTRAIT.read_text(encoding="utf-8") if PORTRAIT.exists() else ""
+    profile_path = ROOT / "godot_client/scripts/player_profile_experience_v3.gd"
+    profile_text = profile_path.read_text(encoding="utf-8") if profile_path.exists() else ""
 
     check(
         not any(re.match(r"^\s*\\t", line) for line in main_text.splitlines()),
@@ -149,8 +162,8 @@ def main() -> int:
         results,
     )
     check(
-        "profile_portrait_script.new()" in main_text
-        and "profile_portrait.configure(player)" in main_text,
+        ("profile_portrait_script.new()" in main_text and "profile_portrait.configure(player)" in main_text)
+        or ("PlayerProfileExperienceV3.new()" in main_text and "hero_portrait.configure(player)" in profile_text),
         "profile_lazy_portrait_instantiation_present",
         results,
     )
@@ -202,7 +215,7 @@ def main() -> int:
     if all(results.values()):
         print()
         print("V3 BATCH 20A.5 VALIDATION PASSED")
-        print("Portrait media is absent from startup and loads only when roster/profile UI is actually rendered.")
+        print("Roster/profile portraits and offline fallbacks remain healthy.")
         return 0
 
     print()
