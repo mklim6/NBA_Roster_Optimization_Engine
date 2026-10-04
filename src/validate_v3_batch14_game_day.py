@@ -91,7 +91,13 @@ def static_checks(results: dict[str, bool]) -> dict[str, Any]:
     )
     check(
         "game_day_center_visibility_wired",
-        'game_day_page.visible = page_name == "GAME DAY"' in main,
+        'game_day_page.visible = page_name == "GAME DAY"' in main
+        or all(token in main for token in (
+            '"GAME DAY":\n\t\t\treturn game_day_page',
+            'var target_page = _page_control(page_name)',
+            'for page in _all_page_controls():',
+            'page.visible = page == target_page',
+        )),
         results,
     )
     check(

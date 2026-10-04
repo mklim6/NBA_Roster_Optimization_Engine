@@ -1,25 +1,35 @@
 extends Control
 
+const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
+const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+
 const GAME_DAY_URL := "http://127.0.0.1:8765/v3/game-day"
 const GAME_DAY_SIMULATE_URL := "http://127.0.0.1:8765/v3/game-day/simulate"
 const ROSTER_URL := "http://127.0.0.1:8765/v3/roster"
 const ROTATION_PREVIEW_URL := "http://127.0.0.1:8765/v3/rotation/preview"
 const ROTATION_APPLY_URL := "http://127.0.0.1:8765/v3/rotation/apply"
 
-const BG := Color("080b12")
-const PANEL := Color("121824")
-const PANEL_ALT := Color("171f2d")
-const PANEL_HOVER := Color("202b3d")
-const TEXT := Color("f7f8fb")
-const MUTED := Color("8d99aa")
-const GOOD := Color("61d69b")
-const BAD := Color("ff6577")
-const BORDER := Color("263247")
-const SOFT_BORDER := Color("1d2737")
-const GOLD := Color("f3c96b")
-const ACCENT := Color("8ed8ff")
+const BG := DesignSystemV3.BG
+const PANEL := DesignSystemV3.PANEL
+const PANEL_ALT := DesignSystemV3.PANEL_ALT
+const PANEL_HOVER := DesignSystemV3.PANEL_HOVER
+const TEXT := DesignSystemV3.TEXT
+const MUTED := DesignSystemV3.MUTED
+const GOOD := DesignSystemV3.GOOD
+const BAD := DesignSystemV3.BAD
+const BORDER := DesignSystemV3.BORDER
+const SOFT_BORDER := DesignSystemV3.SOFT_BORDER
+const GOLD := DesignSystemV3.GOLD
+const ACCENT := DesignSystemV3.ACCENT
 const TEAM_PRIMARY := Color("d9273c")
 const TEAM_PRIMARY_HOVER := Color("ef4055")
+
+# Batch 20D Game Day presentation foundation
+var team_brand_panel: PanelContainer
+var matchup_card: PanelContainer
+var branded_top_band: ColorRect
+var readiness_values := {}
+var primary_buttons: Array = []
 
 var game_request: HTTPRequest
 var roster_request: HTTPRequest
@@ -69,6 +79,18 @@ var simulate_armed := false
 var long_action_manager = null
 
 
+func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	if branded_top_band != null:
+		branded_top_band.color = Color(primary, 0.08)
+	if team_brand_panel != null:
+		team_brand_panel.add_theme_stylebox_override("panel", _box(primary, 14, TeamBrandingV3.hover_color(primary)))
+		team_badge.add_theme_color_override("font_color", TeamBrandingV3.readable_foreground(primary))
+	if matchup_card != null:
+		matchup_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(primary, 0.58)))
+	for button in primary_buttons:
+		TeamBrandingV3.apply_primary_button(button, primary)
+
+
 func set_long_action_manager(manager) -> void:
 	long_action_manager = manager
 
@@ -107,6 +129,7 @@ func _build_page() -> void:
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	var top_band := ColorRect.new()
+	branded_top_band = top_band
 	top_band.color = Color(TEAM_PRIMARY, 0.05)
 	top_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(top_band)
@@ -141,6 +164,7 @@ func _build_page() -> void:
 	scroll.add_child(content)
 
 	content.add_child(_build_matchup_card())
+	content.add_child(_build_readiness_metrics())
 	content.add_child(_build_readiness_row())
 	content.add_child(_build_rotation_card())
 	content.add_child(_build_postgame_card())
@@ -174,6 +198,7 @@ func _build_header() -> Control:
 
 func _build_matchup_card() -> Control:
 	var card := _card(Vector2(0, 190))
+	matchup_card = card
 	card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(TEAM_PRIMARY, 0.58)))
 	var body := _card_body(card, 18)
 
@@ -187,6 +212,7 @@ func _build_matchup_card() -> Control:
 	matchup_row.add_child(left)
 
 	var left_badge_panel := PanelContainer.new()
+	team_brand_panel = left_badge_panel
 	left_badge_panel.custom_minimum_size = Vector2(104, 84)
 	left_badge_panel.add_theme_stylebox_override("panel", _box(TEAM_PRIMARY, 14, TEAM_PRIMARY_HOVER))
 	left.add_child(left_badge_panel)
@@ -220,6 +246,9 @@ func _build_matchup_card() -> Control:
 	simulation_button.disabled = true
 	simulation_button.pressed.connect(_on_simulate_pressed)
 	center.add_child(simulation_button)
+	var confirm_note := _label("Click once to arm, again to simulate.", 10, MUTED)
+	confirm_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	center.add_child(confirm_note)
 
 	var right := VBoxContainer.new()
 	right.custom_minimum_size = Vector2(230, 0)
@@ -241,6 +270,37 @@ func _build_matchup_card() -> Control:
 	opponent_record_label = _label("Record --", 11, MUTED)
 	right.add_child(opponent_record_label)
 	return card
+
+
+func _build_readiness_metrics() -> Control:
+	var row := HBoxContainer.new()
+	row.name = "GameDayReadinessMetrics"
+	row.add_theme_constant_override("separation", 10)
+	for label_text in ["UNAVAILABLE", "COACHING ALERTS", "ROTATION", "TARGET MINUTES"]:
+		var card := _card(Vector2(0, 88))
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 12, SOFT_BORDER))
+		var body := _card_body(card, 12)
+		body.add_child(_label(label_text, 9, MUTED))
+		var value := _label("N/A", 24, TEXT)
+		readiness_values[label_text] = value
+		body.add_child(value)
+		row.add_child(card)
+	return row
+
+
+func _render_readiness_metrics() -> void:
+	var unavailable = game_payload.get("unavailable_players", null)
+	var alerts = game_payload.get("coaching_alerts", null)
+	var rotation := _dict(game_payload.get("rotation"))
+	var ids = rotation.get("rotation_player_ids", null)
+	var minutes = rotation.get("total_minutes", null)
+	readiness_values["UNAVAILABLE"].text = str(unavailable.size()) if typeof(unavailable) == TYPE_ARRAY else "N/A"
+	readiness_values["COACHING ALERTS"].text = str(alerts.size()) if typeof(alerts) == TYPE_ARRAY else "N/A"
+	readiness_values["ROTATION"].text = str(ids.size()) if typeof(ids) == TYPE_ARRAY else "N/A"
+	readiness_values["TARGET MINUTES"].text = "%.0f" % float(minutes) if minutes != null else "N/A"
+	readiness_values["UNAVAILABLE"].add_theme_color_override("font_color", BAD if typeof(unavailable) == TYPE_ARRAY and not unavailable.is_empty() else TEXT)
+	readiness_values["COACHING ALERTS"].add_theme_color_override("font_color", GOLD if typeof(alerts) == TYPE_ARRAY and not alerts.is_empty() else TEXT)
 
 
 func _build_readiness_row() -> Control:
@@ -525,9 +585,12 @@ func _render_game_day() -> void:
 
 
 func _render_readiness() -> void:
+	_render_readiness_metrics()
 	var unavailable := _array(game_payload.get("unavailable_players"))
 	var availability_lines := []
-	if unavailable.is_empty():
+	if typeof(game_payload.get("unavailable_players", null)) != TYPE_ARRAY:
+		availability_lines.append("AVAILABILITY • Data unavailable for this refresh.")
+	elif unavailable.is_empty():
 		availability_lines.append("AVAILABILITY • Full roster available for the current matchup.")
 	else:
 		availability_lines.append("AVAILABILITY • %d player(s) unavailable or limited" % unavailable.size())
@@ -545,11 +608,13 @@ func _render_readiness() -> void:
 				line += " • %d game(s)" % games
 			availability_lines.append(line)
 	availability_label.text = "\n".join(availability_lines)
-	availability_label.add_theme_color_override("font_color", GOOD if unavailable.is_empty() else BAD)
+	availability_label.add_theme_color_override("font_color", MUTED if typeof(game_payload.get("unavailable_players", null)) != TYPE_ARRAY else (GOOD if unavailable.is_empty() else BAD))
 
 	var alerts := _array(game_payload.get("coaching_alerts"))
 	var alert_lines := []
-	if alerts.is_empty():
+	if typeof(game_payload.get("coaching_alerts", null)) != TYPE_ARRAY:
+		alert_lines.append("COACHING ALERTS • Data unavailable for this refresh.")
+	elif alerts.is_empty():
 		alert_lines.append("COACHING ALERTS • No production game-plan alerts are active.")
 	else:
 		alert_lines.append("COACHING ALERTS • %d active" % alerts.size())
@@ -1155,6 +1220,8 @@ func _section_title(text_value: String) -> Label:
 func _button(text_value: String, primary: bool = false) -> Button:
 	var button := Button.new()
 	button.text = text_value
+	if primary:
+		primary_buttons.append(button)
 	button.custom_minimum_size = Vector2(140, 38)
 	button.add_theme_font_size_override("font_size", 10)
 	button.add_theme_color_override("font_color", TEXT)
