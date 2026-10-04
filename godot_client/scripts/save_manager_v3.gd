@@ -1,5 +1,8 @@
 extends Control
 
+const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
+const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+
 signal active_save_changed
 
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/saves"
@@ -11,18 +14,18 @@ const RENAME_URL := "http://127.0.0.1:8765/v3/saves/rename"
 const LOAD_URL := "http://127.0.0.1:8765/v3/saves/load"
 const DELETE_URL := "http://127.0.0.1:8765/v3/saves/delete"
 
-const PANEL := Color("121824")
-const PANEL_ALT := Color("171f2d")
-const PANEL_HOVER := Color("202b3d")
-const TEXT := Color("f7f8fb")
-const MUTED := Color("8d99aa")
-const ACCENT := Color("8ed8ff")
-const GOOD := Color("61d69b")
-const BAD := Color("ff6577")
-const BORDER := Color("263247")
-const TEAM_PRIMARY := Color("d9273c")
-const TEAM_PRIMARY_HOVER := Color("ef4055")
-const GOLD := Color("f3c96b")
+const PANEL := DesignSystemV3.PANEL
+const PANEL_ALT := DesignSystemV3.PANEL_ALT
+const PANEL_HOVER := DesignSystemV3.PANEL_HOVER
+const TEXT := DesignSystemV3.TEXT
+const MUTED := DesignSystemV3.MUTED
+const ACCENT := DesignSystemV3.ACCENT
+const GOOD := DesignSystemV3.GOOD
+const BAD := DesignSystemV3.BAD
+const BORDER := DesignSystemV3.BORDER
+const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
+const TEAM_PRIMARY_HOVER := DesignSystemV3.TEAM_PRIMARY_HOVER
+const GOLD := DesignSystemV3.GOLD
 
 var summary_request: HTTPRequest
 var action_request: HTTPRequest
@@ -30,6 +33,7 @@ var payload: Dictionary = {}
 var selected_slot_id := ""
 var pending_action := ""
 var pending_confirm_action := ""
+var pending_confirm_slot_id := ""
 var rename_mode := false
 var new_franchise_mode := false
 var pending_new_franchise_body: Dictionary = {}
@@ -62,6 +66,10 @@ var rename_button: Button
 var load_button: Button
 var delete_button: Button
 var confirm_dialog: ConfirmationDialog
+var brand_heading: Label
+var brand_color := TEAM_PRIMARY
+var primary_buttons: Array = []
+var safety_card: PanelContainer
 
 
 func _ready() -> void:
@@ -75,6 +83,38 @@ func refresh() -> void:
 
 func apply_preferences(next_preferences: Dictionary) -> void:
 	desktop_preferences = next_preferences.duplicate(true)
+
+
+# Batch 20M franchise save manager presentation
+func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	brand_color = primary
+	if brand_heading != null:
+		brand_heading.add_theme_color_override("font_color", primary.lerp(Color.WHITE, 0.45))
+	if safety_card != null:
+		safety_card.add_theme_stylebox_override("panel", _box(PANEL, 12, Color(primary, 0.42)))
+	for button in primary_buttons:
+		if is_instance_valid(button):
+			TeamBrandingV3.apply_primary_button(button, primary)
+	if not payload.is_empty():
+		_render_summary()
+
+
+func _safe_array(value: Variant) -> Array:
+	return value if typeof(value) == TYPE_ARRAY else []
+
+
+func _confirmation_preference(key: String) -> bool:
+	var value = desktop_preferences.get(key)
+	return value if typeof(value) == TYPE_BOOL else true
+
+
+func _safe_display(value, fallback: String = "--") -> String:
+	if value == null:
+		return fallback
+	var text_value := str(value).strip_edges()
+	if text_value == "" or text_value.to_lower() in ["<null>", "null", "none", "<nil>"]:
+		return fallback
+	return text_value
 
 
 func _build_http() -> void:
@@ -114,7 +154,8 @@ func _build_ui() -> void:
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(titles)
-	titles.add_child(_small_label("FRANCHISE OPERATIONS • SAVE CONTROL", TEAM_PRIMARY_HOVER))
+	brand_heading = _small_label("FRANCHISE OPERATIONS • SAVE CONTROL", TEAM_PRIMARY_HOVER)
+	titles.add_child(brand_heading)
 	var title := Label.new()
 	title.text = "FRANCHISES"
 	title.add_theme_color_override("font_color", TEXT)
@@ -131,15 +172,16 @@ func _build_ui() -> void:
 	refresh_button.pressed.connect(_request_summary)
 	header.add_child(refresh_button)
 
-	var safety := _card(Vector2(0, 58))
-	var safety_body := _card_body(safety, 12)
+	safety_card = _card(Vector2(0, 58))
+	safety_card.add_theme_stylebox_override("panel", _box(PANEL, 12, Color(brand_color, 0.42)))
+	var safety_body := _card_body(safety_card, 12)
 	status_label = Label.new()
 	status_label.text = "Open Franchise Saves to read the current V3 working session."
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	status_label.add_theme_color_override("font_color", MUTED)
 	status_label.add_theme_font_size_override("font_size", 11)
 	safety_body.add_child(status_label)
-	column.add_child(safety)
+	column.add_child(safety_card)
 
 	var metrics := HBoxContainer.new()
 	metrics.add_theme_constant_override("separation", 10)
@@ -255,6 +297,9 @@ func _build_ui() -> void:
 	actions_body.add_child(load_button)
 
 	delete_button = _action_button("DELETE SELECTED", false)
+	delete_button.add_theme_color_override("font_color", BAD)
+	delete_button.add_theme_color_override("font_hover_color", Color.WHITE)
+	delete_button.add_theme_stylebox_override("hover", _box(Color(BAD, 0.12), 9, BAD))
 	delete_button.pressed.connect(_confirm_delete)
 	actions_body.add_child(delete_button)
 
@@ -272,6 +317,7 @@ func _build_ui() -> void:
 	confirm_dialog = ConfirmationDialog.new()
 	confirm_dialog.title = "Confirm franchise save action"
 	confirm_dialog.confirmed.connect(_on_confirmed)
+	confirm_dialog.canceled.connect(_on_confirm_cancelled)
 	add_child(confirm_dialog)
 	var confirm_label := confirm_dialog.get_label()
 	confirm_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -312,7 +358,7 @@ func _on_summary_completed(result: int, response_code: int, _headers: PackedStri
 
 func _render_summary() -> void:
 	var initialized: bool = bool(payload.get("initialized", false))
-	var slots: Array = payload.get("slots", [])
+	var slots: Array = _safe_array(payload.get("slots"))
 	var active_id: String = str(payload.get("active_slot_id", ""))
 	if selected_slot_id.is_empty() or not _slot_exists(selected_slot_id):
 		selected_slot_id = active_id
@@ -326,10 +372,10 @@ func _render_summary() -> void:
 				slots_box.add_child(_slot_row(raw_slot))
 
 	var active_slot: Dictionary = _slot_by_id(active_id)
-	active_slot_value.text = str(active_slot.get("name", "NOT INITIALIZED")) if initialized else "NOT INITIALIZED"
+	active_slot_value.text = _safe_display(active_slot.get("name"), "NOT INITIALIZED") if initialized else "NOT INITIALIZED"
 	save_count_value.text = str(int(payload.get("slot_count", 0)))
-	franchise_value.text = str(active_slot.get("team", "--")) if initialized else "--"
-	season_value.text = str(active_slot.get("season", "--")) if initialized else "--"
+	franchise_value.text = _safe_display(active_slot.get("team")) if initialized else "--"
+	season_value.text = _safe_display(active_slot.get("season")) if initialized else "--"
 
 	if not bool(payload.get("working_save_unchanged", true)) or not bool(payload.get("active_v2_unchanged", true)):
 		status_label.text = "SAFETY FAILURE • Save Manager read changed a protected checkpoint."
@@ -351,39 +397,63 @@ func _render_summary() -> void:
 
 func _slot_row(slot: Dictionary) -> Control:
 	var panel := PanelContainer.new()
-	var selected := str(slot.get("slot_id", "")) == selected_slot_id
-	panel.add_theme_stylebox_override("panel", _box(PANEL_HOVER if selected else PANEL_ALT, 9, ACCENT if selected else BORDER))
+	var slot_id := _safe_display(slot.get("slot_id"), "")
+	var selected := slot_id == selected_slot_id
+	var active := bool(slot.get("active", false))
+	panel.name = "SaveSlot_%s" % slot_id
+	var fill := PANEL_ALT.lerp(brand_color, 0.12) if active else (PANEL_HOVER if selected else PANEL_ALT)
+	var border_color := brand_color if active or selected else BORDER
+	panel.add_theme_stylebox_override("panel", _box(fill, 11, Color(border_color, 0.78)))
+	panel.tooltip_text = "Active working franchise" if active else ("Selected stored snapshot" if selected else "Select this franchise save")
+
 	var margin := MarginContainer.new()
-	_set_margins(margin, 12, 10, 12, 10)
+	_set_margins(margin, 13, 11, 13, 11)
 	panel.add_child(margin)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	margin.add_child(row)
+
+	var team_primary: Color = TeamBrandingV3.palette(_safe_display(slot.get("team"), "")).get("primary", brand_color)
+	var team_badge := _pill(_safe_display(slot.get("team"), "--"), team_primary.lerp(Color.WHITE, 0.38))
+	team_badge.custom_minimum_size = Vector2(54, 54)
+	team_badge.add_theme_font_size_override("font_size", 16)
+	team_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	team_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(team_badge)
 
 	var identity := VBoxContainer.new()
 	identity.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	identity.add_theme_constant_override("separation", 3)
 	row.add_child(identity)
 	var title := Label.new()
-	var active_text := "  • ACTIVE" if bool(slot.get("active", false)) else ""
-	title.text = "%s%s" % [str(slot.get("name", "Unnamed Save")), active_text]
-	title.add_theme_color_override("font_color", GOOD if bool(slot.get("active", false)) else TEXT)
-	title.add_theme_font_size_override("font_size", 13)
+	title.text = _safe_display(slot.get("name"), "Unnamed Save")
+	title.add_theme_color_override("font_color", brand_color.lerp(Color.WHITE, 0.42) if active else TEXT)
+	title.add_theme_font_size_override("font_size", 16)
+	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	identity.add_child(title)
+
 	var detail := Label.new()
-	detail.text = "%s • %s • %s • %s • Day %s" % [
-		str(slot.get("team", "--")), str(slot.get("season", "--")),
-		str(slot.get("record", "--")), _pretty(str(slot.get("phase", ""))),
-		str(slot.get("day_index", 0))
+	detail.text = "%s • %s • %s • Day %s" % [
+		_safe_display(slot.get("season")),
+		_safe_display(slot.get("record")),
+		_pretty(_safe_display(slot.get("phase"), "")),
+		_safe_display(slot.get("day_index"), "--")
 	]
 	detail.add_theme_color_override("font_color", MUTED)
-	detail.add_theme_font_size_override("font_size", 10)
+	detail.add_theme_font_size_override("font_size", 11)
+	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	identity.add_child(detail)
+
+	var state_text := "ACTIVE" if active else ("SELECTED" if selected else "STORED")
+	var state_color := brand_color.lerp(Color.WHITE, 0.34) if active or selected else MUTED
+	row.add_child(_pill(state_text, state_color))
 
 	var health := _pill("VERIFIED" if bool(slot.get("healthy", false)) else "CHECK", GOOD if bool(slot.get("healthy", false)) else GOLD)
 	row.add_child(health)
-	var select_button := _mini_button("SELECT")
-	select_button.pressed.connect(_select_slot.bind(str(slot.get("slot_id", ""))))
+
+	var select_button := _mini_button("SELECTED" if selected else "SELECT")
+	select_button.disabled = selected
+	select_button.pressed.connect(_select_slot.bind(slot_id))
 	row.add_child(select_button)
 	return panel
 
@@ -409,21 +479,21 @@ func _render_selected() -> void:
 		selected_detail.text = "Choose a save slot to view its actions."
 		name_input.text = ""
 		return
-	selected_title.text = str(selected.get("name", "Unnamed Save"))
+	selected_title.text = _safe_display(selected.get("name"), "Unnamed Save")
 	selected_detail.text = "%s\n%s • %s • %s\n%s • Day %s%s" % [
-		str(selected.get("team_name", selected.get("team", ""))),
-		str(selected.get("season", "--")), str(selected.get("record", "--")),
-		_pretty(str(selected.get("phase", ""))),
-		"ACTIVE WORKING FRANCHISE" if bool(selected.get("active", false)) else "Stored franchise snapshot",
-		str(selected.get("day_index", 0)),
-		"\nIntegrity verified" if bool(selected.get("healthy", false)) else "\nIntegrity requires review"
+		_safe_display(selected.get("team_name", selected.get("team"))),
+		_safe_display(selected.get("season")), _safe_display(selected.get("record")),
+		_pretty(_safe_display(selected.get("phase"), "")),
+		"ACTIVE WORKING FRANCHISE" if bool(selected.get("active", false)) else "STORED FRANCHISE SNAPSHOT",
+		_safe_display(selected.get("day_index"), "--"),
+		"\nIntegrity verified • protected V2 read-only" if bool(selected.get("healthy", false)) else "\nIntegrity requires review • loading unavailable"
 	]
-	name_input.text = str(selected.get("name", ""))
+	name_input.text = _safe_display(selected.get("name"), "")
 
 
 func _update_controls() -> void:
 	var initialized := bool(payload.get("initialized", false))
-	var busy := pending_action != ""
+	var busy := pending_action != "" or not bool(payload.get("working_save_unchanged", true)) or not bool(payload.get("active_v2_unchanged", true))
 	var selected := _slot_by_id(selected_slot_id)
 	var has_selected := not selected.is_empty()
 	var active_selected := bool(selected.get("active", false)) if has_selected else false
@@ -539,7 +609,7 @@ func _confirm_new_franchise() -> void:
 		clean_name = "%s Franchise" % _team_name_for_code(team)
 		name_input.text = clean_name
 	pending_new_franchise_body = {"team": team, "name": clean_name}
-	if not bool(desktop_preferences.get("confirm_new_franchise", true)):
+	if not _confirmation_preference("confirm_new_franchise"):
 		_post_action("new_franchise", NEW_FRANCHISE_URL, pending_new_franchise_body)
 		pending_new_franchise_body = {}
 		return
@@ -603,11 +673,12 @@ func _confirm_load() -> void:
 	var selected := _slot_by_id(selected_slot_id)
 	if selected.is_empty() or bool(selected.get("active", false)):
 		return
-	if not bool(desktop_preferences.get("confirm_load", true)):
+	if not _confirmation_preference("confirm_load"):
 		_post_action("load", LOAD_URL, {"slot_id": selected_slot_id})
 		return
 	pending_confirm_action = "load"
-	confirm_dialog.dialog_text = "Load '%s'?\n\nYour current live V3 session will first be snapshotted to its active slot. A recovery copy of the working checkpoint is created before the switch. Protected V2 remains unchanged." % str(selected.get("name", "selected save"))
+	pending_confirm_slot_id = selected_slot_id
+	confirm_dialog.dialog_text = "Load '%s'?\n\nYour current live V3 session will first be snapshotted to its active slot. A recovery copy of the working checkpoint is created before the switch. Protected V2 remains unchanged." % _safe_display(selected.get("name"), "selected save")
 	confirm_dialog.ok_button_text = "LOAD SAVE"
 	confirm_dialog.popup_centered(Vector2i(590, 310))
 
@@ -616,24 +687,50 @@ func _confirm_delete() -> void:
 	var selected := _slot_by_id(selected_slot_id)
 	if selected.is_empty() or bool(selected.get("active", false)):
 		return
-	if not bool(desktop_preferences.get("confirm_delete", true)):
+	if not _confirmation_preference("confirm_delete"):
 		_post_action("delete", DELETE_URL, {"slot_id": selected_slot_id})
 		return
 	pending_confirm_action = "delete"
-	confirm_dialog.dialog_text = "Delete '%s'?\n\nThe active franchise cannot be deleted. This non-active slot will be copied to Save Manager recovery before removal." % str(selected.get("name", "selected save"))
+	pending_confirm_slot_id = selected_slot_id
+	confirm_dialog.dialog_text = "Delete '%s'?\n\nThe active franchise cannot be deleted. This non-active slot will be copied to Save Manager recovery before removal." % _safe_display(selected.get("name"), "selected save")
 	confirm_dialog.ok_button_text = "DELETE SAVE"
 	confirm_dialog.popup_centered(Vector2i(590, 290))
 
 
-func _on_confirmed() -> void:
-	if pending_confirm_action == "load":
-		_post_action("load", LOAD_URL, {"slot_id": selected_slot_id})
-	elif pending_confirm_action == "new_franchise":
-		_post_action("new_franchise", NEW_FRANCHISE_URL, pending_new_franchise_body)
-		pending_new_franchise_body = {}
-	elif pending_confirm_action == "delete":
-		_post_action("delete", DELETE_URL, {"slot_id": selected_slot_id})
+func _on_confirm_cancelled() -> void:
 	pending_confirm_action = ""
+	pending_confirm_slot_id = ""
+	pending_new_franchise_body = {}
+
+
+func _on_confirmed() -> void:
+	var confirmed_action := pending_confirm_action
+	var confirmed_slot_id := pending_confirm_slot_id
+	pending_confirm_action = ""
+	pending_confirm_slot_id = ""
+
+	if confirmed_action == "load":
+		var load_target := _slot_by_id(confirmed_slot_id)
+		if load_target.is_empty() or bool(load_target.get("active", false)) or not bool(load_target.get("healthy", false)):
+			status_label.text = "LOAD BLOCKED • the confirmed save changed or is no longer safe to activate. Refresh and select it again."
+			status_label.add_theme_color_override("font_color", GOLD)
+			return
+		_post_action("load", LOAD_URL, {"slot_id": confirmed_slot_id})
+	elif confirmed_action == "new_franchise":
+		var body := pending_new_franchise_body.duplicate(true)
+		pending_new_franchise_body = {}
+		if body.is_empty():
+			status_label.text = "CREATE BLOCKED • franchise confirmation expired. Start the new-franchise flow again."
+			status_label.add_theme_color_override("font_color", GOLD)
+			return
+		_post_action("new_franchise", NEW_FRANCHISE_URL, body)
+	elif confirmed_action == "delete":
+		var delete_target := _slot_by_id(confirmed_slot_id)
+		if delete_target.is_empty() or bool(delete_target.get("active", false)):
+			status_label.text = "DELETE BLOCKED • the confirmed save changed or became active. Refresh and select it again."
+			status_label.add_theme_color_override("font_color", GOLD)
+			return
+		_post_action("delete", DELETE_URL, {"slot_id": confirmed_slot_id})
 
 
 func _post_action(action: String, url: String, body: Dictionary) -> void:
@@ -693,7 +790,7 @@ func _on_action_completed(result: int, response_code: int, _headers: PackedStrin
 
 
 func _slot_by_id(slot_id: String) -> Dictionary:
-	for raw_slot in payload.get("slots", []):
+	for raw_slot in _safe_array(payload.get("slots")):
 		if typeof(raw_slot) == TYPE_DICTIONARY and str(raw_slot.get("slot_id", "")) == slot_id:
 			return raw_slot
 	return {}
@@ -725,11 +822,14 @@ func _action_button(text_value: String, primary: bool = false) -> Button:
 	button.add_theme_font_size_override("font_size", 10)
 	button.add_theme_color_override("font_color", TEXT)
 	button.add_theme_color_override("font_hover_color", TEXT)
-	var normal := TEAM_PRIMARY if primary else PANEL_ALT
-	var hover := TEAM_PRIMARY_HOVER if primary else PANEL_HOVER
+	var normal := brand_color if primary else PANEL_ALT
+	var hover := TeamBrandingV3.hover_color(brand_color) if primary else PANEL_HOVER
 	button.add_theme_stylebox_override("normal", _box(normal, 9, normal if primary else BORDER))
 	button.add_theme_stylebox_override("hover", _box(hover, 9, hover if primary else ACCENT))
 	button.add_theme_stylebox_override("pressed", _box(hover, 9, hover))
+	if primary:
+		primary_buttons.append(button)
+		TeamBrandingV3.apply_primary_button(button, brand_color)
 	return button
 
 
