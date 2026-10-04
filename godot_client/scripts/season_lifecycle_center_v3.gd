@@ -1,25 +1,33 @@
 extends Control
 
+const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
+const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/lifecycle"
 const PREVIEW_URL := "http://127.0.0.1:8765/v3/lifecycle/preview"
 const EXECUTE_URL := "http://127.0.0.1:8765/v3/lifecycle/execute"
 
-const PANEL := Color("121824")
-const PANEL_ALT := Color("171f2d")
-const PANEL_HOVER := Color("202b3d")
-const TEXT := Color("f7f8fb")
-const MUTED := Color("8d99aa")
-const ACCENT := Color("8ed8ff")
-const GOOD := Color("61d69b")
-const BAD := Color("ff6577")
-const BORDER := Color("263247")
-const TEAM_PRIMARY := Color("d9273c")
-const TEAM_PRIMARY_HOVER := Color("ef4055")
-const GOLD := Color("f3c96b")
+const PANEL := DesignSystemV3.PANEL
+const PANEL_ALT := DesignSystemV3.PANEL_ALT
+const PANEL_HOVER := DesignSystemV3.PANEL_HOVER
+const TEXT := DesignSystemV3.TEXT
+const MUTED := DesignSystemV3.MUTED
+const ACCENT := DesignSystemV3.ACCENT
+const GOOD := DesignSystemV3.GOOD
+const BAD := DesignSystemV3.BAD
+const BORDER := DesignSystemV3.BORDER
+const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
+const TEAM_PRIMARY_HOVER := DesignSystemV3.TEAM_PRIMARY_HOVER
+const GOLD := DesignSystemV3.GOLD
 
 var summary_request: HTTPRequest
 var preview_request: HTTPRequest
 var execute_request: HTTPRequest
+
+var season_progress: ProgressBar
+var season_progress_label: Label
+var brand_heading: Label
+var primary_buttons: Array = []
 
 var season_value: Label
 var phase_value: Label
@@ -43,6 +51,15 @@ var execute_in_flight: bool = false
 
 
 var long_action_manager = null
+
+
+func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	if brand_heading != null:
+		brand_heading.add_theme_color_override("font_color", TeamBrandingV3.hover_color(primary))
+	if season_progress != null:
+		season_progress.add_theme_stylebox_override("fill", _box(primary, 4))
+	for button in primary_buttons:
+		TeamBrandingV3.apply_primary_button(button, primary)
 
 
 func set_long_action_manager(manager) -> void:
@@ -102,8 +119,14 @@ func _build_ui() -> void:
 	outer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_theme_constant_override("separation", 16)
-	outer.add_child(column)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	outer.add_child(scroll)
+	scroll.add_child(column)
 
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 12)
@@ -113,7 +136,8 @@ func _build_ui() -> void:
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	titles.add_theme_constant_override("separation", 4)
 	header.add_child(titles)
-	titles.add_child(_small_label("FRANCHISE OPERATIONS • SEASON CONTROL", TEAM_PRIMARY_HOVER))
+	brand_heading = _small_label("FRANCHISE OPERATIONS • SEASON CONTROL", TEAM_PRIMARY_HOVER)
+	titles.add_child(brand_heading)
 	var title := Label.new()
 	title.text = "SEASON LIFECYCLE"
 	title.add_theme_color_override("font_color", TEXT)
@@ -138,6 +162,15 @@ func _build_ui() -> void:
 	phase_value = _metric(metrics, "PHASE", "LOADING...")
 	progress_value = _metric(metrics, "LEAGUE PROGRESS", "LOADING...")
 	gate_value = _metric(metrics, "NEXT GATE", "LOADING...")
+
+	season_progress_label = _small_label("REGULAR SEASON • Waiting for schedule data", MUTED)
+	column.add_child(season_progress_label)
+	season_progress = ProgressBar.new()
+	season_progress.custom_minimum_size.y = 10
+	season_progress.show_percentage = false
+	season_progress.add_theme_stylebox_override("background", _box(PANEL_ALT, 4))
+	season_progress.add_theme_stylebox_override("fill", _box(TEAM_PRIMARY, 4))
+	column.add_child(season_progress)
 
 	var content := HBoxContainer.new()
 	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -245,34 +278,42 @@ func _on_summary_completed(result: int, response_code: int, _headers: PackedStri
 
 func _render_summary() -> void:
 	_invalidate_preview()
-	var season: Dictionary = summary_payload.get("season", {})
-	var schedule: Dictionary = summary_payload.get("schedule", {})
-	var postseason: Dictionary = summary_payload.get("postseason", {})
-	var draft: Dictionary = summary_payload.get("draft", {})
-	var cpu_fa: Dictionary = summary_payload.get("cpu_free_agency", {})
+	var season: Dictionary = _summary_dict(summary_payload.get("season"))
+	var schedule: Dictionary = _summary_dict(summary_payload.get("schedule"))
+	var postseason: Dictionary = _summary_dict(summary_payload.get("postseason"))
+	var draft: Dictionary = _summary_dict(summary_payload.get("draft"))
+	var cpu_fa: Dictionary = _summary_dict(summary_payload.get("cpu_free_agency"))
 
-	season_value.text = str(season.get("label", "--"))
-	phase_value.text = _pretty(str(season.get("phase", "--")))
+	season_value.text = _safe_string(season.get("label"), "N/A")
+	phase_value.text = _pretty(_safe_string(season.get("phase"), "N/A"))
 
 	var total_games: int = _safe_int(schedule.get("total", 0))
 	var completed_games: int = _safe_int(schedule.get("completed", 0))
+	var schedule_known := typeof(schedule.get("total")) in [TYPE_INT, TYPE_FLOAT] and typeof(schedule.get("completed")) in [TYPE_INT, TYPE_FLOAT] and total_games > 0
+	season_progress.visible = schedule_known
+	if schedule_known:
+		season_progress.value = clampf(100.0 * completed_games / total_games, 0.0, 100.0)
+		season_progress_label.text = "REGULAR SEASON • %d / %d games completed • %d remaining" % [completed_games, total_games, maxi(0, total_games - completed_games)]
+	else:
+		season_progress.value = 0
+		season_progress_label.text = "REGULAR SEASON • Schedule progress unavailable"
 	var postseason_stage: String = _safe_string(postseason.get("stage", ""))
 	var postseason_games: int = _safe_int(postseason.get("completed_games", 0))
 	if not postseason_stage.is_empty() and postseason_stage != "complete":
 		progress_value.text = "%s • %d GAMES" % [_pretty(postseason_stage), postseason_games]
 	elif postseason_stage == "complete":
 		progress_value.text = "POSTSEASON COMPLETE"
-	elif total_games > 0:
+	elif schedule_known:
 		progress_value.text = "%d / %d GAMES" % [completed_games, total_games]
 	else:
-		progress_value.text = "OFFSEASON"
+		progress_value.text = "OFFSEASON" if _safe_string(season.get("phase")) == "offseason" else "N/A"
 
 	latest_action = _safe_string(summary_payload.get("next_action", ""))
-	var action_label: String = str(summary_payload.get("next_action_label", "NO ACTION AVAILABLE"))
+	var action_label: String = _safe_string(summary_payload.get("next_action_label"), "NO ACTION AVAILABLE")
 	gate_value.text = action_label
 	action_title.text = action_label
 
-	var blockers: Array = summary_payload.get("blockers", [])
+	var blockers: Array = _summary_array(summary_payload.get("blockers"))
 	var stage: String = _safe_string(summary_payload.get("stage", ""))
 	var detail_parts: Array[String] = []
 	detail_parts.append("Stage: %s" % _pretty(stage))
@@ -307,12 +348,12 @@ func _render_summary() -> void:
 	status_label.add_theme_color_override("font_color", ACCENT if not latest_action.is_empty() else MUTED)
 
 	_clear_children(timeline_rows)
-	var timeline: Array = summary_payload.get("timeline", [])
+	var timeline: Array = _summary_array(summary_payload.get("timeline"))
 	for item in timeline:
 		if typeof(item) == TYPE_DICTIONARY:
 			timeline_rows.add_child(_timeline_row(item))
 
-	var versions: Dictionary = summary_payload.get("engine_versions", {})
+	var versions: Dictionary = _summary_dict(summary_payload.get("engine_versions"))
 	engine_detail.text = "Postseason %s\nCloseout %s\nDraft %s\nPost-Draft trim %s\nSeason boundary %s" % [
 		str(versions.get("postseason", "production")),
 		str(versions.get("closeout", "production")),
@@ -580,6 +621,14 @@ func _pretty(value: String) -> String:
 	return value.replace("_", " ").to_upper()
 
 
+func _summary_dict(value: Variant) -> Dictionary:
+	return value if typeof(value) == TYPE_DICTIONARY else {}
+
+
+func _summary_array(value: Variant) -> Array:
+	return value if typeof(value) == TYPE_ARRAY else []
+
+
 func _metric(parent: HBoxContainer, title: String, value: String) -> Label:
 	var card := _card(Vector2(0, 84))
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -597,6 +646,8 @@ func _metric(parent: HBoxContainer, title: String, value: String) -> Label:
 
 func _action_button(text_value: String, primary: bool = false) -> Button:
 	var button := Button.new()
+	if primary:
+		primary_buttons.append(button)
 	button.custom_minimum_size = Vector2(0, 38)
 	button.text = text_value
 	button.add_theme_font_size_override("font_size", 10)
