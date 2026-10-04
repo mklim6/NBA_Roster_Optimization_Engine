@@ -1,5 +1,8 @@
 extends Control
 
+const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
+const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+
 signal preferences_changed(preferences)
 signal tutorial_finished(started_from_startup)
 
@@ -8,18 +11,25 @@ const UPDATE_URL := "http://127.0.0.1:8765/v3/preferences"
 const RESET_URL := "http://127.0.0.1:8765/v3/preferences/reset"
 const TUTORIAL_COMPLETE_URL := "http://127.0.0.1:8765/v3/preferences/tutorial-complete"
 
-const PANEL := Color("121824")
-const PANEL_ALT := Color("171f2d")
-const PANEL_HOVER := Color("202b3d")
-const TEXT := Color("f7f8fb")
-const MUTED := Color("8d99aa")
-const ACCENT := Color("8ed8ff")
-const GOOD := Color("61d69b")
-const BAD := Color("ff6577")
-const BORDER := Color("263247")
-const TEAM_PRIMARY := Color("d9273c")
-const TEAM_PRIMARY_HOVER := Color("ef4055")
-const GOLD := Color("f3c96b")
+const PANEL := DesignSystemV3.PANEL
+const PANEL_ALT := DesignSystemV3.PANEL_ALT
+const PANEL_HOVER := DesignSystemV3.PANEL_HOVER
+const TEXT := DesignSystemV3.TEXT
+const MUTED := DesignSystemV3.MUTED
+const ACCENT := DesignSystemV3.ACCENT
+const GOOD := DesignSystemV3.GOOD
+const BAD := DesignSystemV3.BAD
+const BORDER := DesignSystemV3.BORDER
+const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
+const TEAM_PRIMARY_HOVER := DesignSystemV3.TEAM_PRIMARY_HOVER
+const GOLD := DesignSystemV3.GOLD
+
+var brand_heading: Label
+var tutorial_heading: Label
+var tutorial_progress: ProgressBar
+var changes_label: Label
+var brand_color := TEAM_PRIMARY
+var primary_buttons: Array = []
 
 var summary_request: HTTPRequest
 var action_request: HTTPRequest
@@ -88,6 +98,35 @@ func _ready() -> void:
 	_build_http()
 
 
+func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	brand_color = primary
+	if brand_heading != null:
+		brand_heading.add_theme_color_override("font_color", primary.lerp(Color.WHITE, 0.45))
+	if tutorial_heading != null:
+		tutorial_heading.add_theme_color_override("font_color", primary.lerp(Color.WHITE, 0.45))
+	if tutorial_progress != null:
+		tutorial_progress.add_theme_stylebox_override("fill", _box(primary, 4))
+	for button in primary_buttons:
+		if is_instance_valid(button):
+			TeamBrandingV3.apply_primary_button(button, primary)
+
+
+func _preference_bool(key: String, fallback: bool = true) -> bool:
+	var value = preferences.get(key)
+	return value if typeof(value) == TYPE_BOOL else fallback
+
+
+func _update_changes(_pressed: bool = false) -> void:
+	if changes_label == null:
+		return
+	var dirty := false
+	for key in _settings_body():
+		if _settings_body()[key] != _preference_bool(key):
+			dirty = true
+	changes_label.text = "UNSAVED CHANGES • Save settings to apply" if dirty else "SETTINGS MATCH SAVED PREFERENCES"
+	changes_label.add_theme_color_override("font_color", GOLD if dirty else MUTED)
+
+
 func refresh() -> void:
 	_request_summary()
 
@@ -134,7 +173,8 @@ func _build_ui() -> void:
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(titles)
-	titles.add_child(_small_label("DESKTOP EXPERIENCE • SETTINGS + HELP", TEAM_PRIMARY_HOVER))
+	brand_heading = _small_label("DESKTOP EXPERIENCE • SETTINGS + HELP", TEAM_PRIMARY_HOVER)
+	titles.add_child(brand_heading)
 	var title := Label.new()
 	title.text = "SETTINGS"
 	title.add_theme_color_override("font_color", TEXT)
@@ -209,6 +249,11 @@ func _build_ui() -> void:
 	var pref_spacer := Control.new()
 	pref_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	pref_body.add_child(pref_spacer)
+
+	changes_label = _small_label("SETTINGS MATCH SAVED PREFERENCES", MUTED)
+	pref_body.add_child(changes_label)
+	for toggle in [show_tutorial_toggle, confirm_load_toggle, confirm_delete_toggle, confirm_new_franchise_toggle, return_home_toggle]:
+		toggle.toggled.connect(_update_changes)
 
 	var actions := HBoxContainer.new()
 	actions.add_theme_constant_override("separation", 10)
@@ -310,21 +355,23 @@ func _on_summary_completed(result: int, response_code: int, _headers: PackedStri
 func _apply_preferences_to_controls() -> void:
 	if show_tutorial_toggle == null:
 		return
-	show_tutorial_toggle.button_pressed = bool(preferences.get("show_tutorial_on_startup", true))
-	confirm_load_toggle.button_pressed = bool(preferences.get("confirm_load", true))
-	confirm_delete_toggle.button_pressed = bool(preferences.get("confirm_delete", true))
-	confirm_new_franchise_toggle.button_pressed = bool(preferences.get("confirm_new_franchise", true))
-	return_home_toggle.button_pressed = bool(preferences.get("return_home_after_save_switch", true))
+	show_tutorial_toggle.set_pressed_no_signal(_preference_bool("show_tutorial_on_startup"))
+	confirm_load_toggle.set_pressed_no_signal(_preference_bool("confirm_load"))
+	confirm_delete_toggle.set_pressed_no_signal(_preference_bool("confirm_delete"))
+	confirm_new_franchise_toggle.set_pressed_no_signal(_preference_bool("confirm_new_franchise"))
+	return_home_toggle.set_pressed_no_signal(_preference_bool("return_home_after_save_switch"))
 	if tutorial_status_label != null:
 		tutorial_status_label.text = (
 			"Tutorial status: COMPLETED • reopen anytime below."
-			if bool(preferences.get("tutorial_completed", false))
+			if _preference_bool("tutorial_completed", false)
 			else "Tutorial status: NOT COMPLETED • first-launch guidance is available."
 		)
 		tutorial_status_label.add_theme_color_override(
 			"font_color",
-			GOOD if bool(preferences.get("tutorial_completed", false)) else GOLD
+			GOOD if _preference_bool("tutorial_completed", false) else GOLD
 		)
+
+	_update_changes()
 
 
 func _settings_body() -> Dictionary:
@@ -384,7 +431,8 @@ func start_tutorial(from_startup: bool = false) -> void:
 	var header_text := VBoxContainer.new()
 	header_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(header_text)
-	header_text.add_child(_small_label("V3 DESKTOP • GUIDED FRANCHISE TOUR", TEAM_PRIMARY_HOVER))
+	tutorial_heading = _small_label("V3 DESKTOP • GUIDED FRANCHISE TOUR", brand_color.lerp(Color.WHITE, 0.45))
+	header_text.add_child(tutorial_heading)
 	tutorial_step_label = Label.new()
 	tutorial_step_label.add_theme_color_override("font_color", MUTED)
 	tutorial_step_label.add_theme_font_size_override("font_size", 11)
@@ -393,6 +441,14 @@ func start_tutorial(from_startup: bool = false) -> void:
 	var skip_button := _action_button("SKIP TUTORIAL", false)
 	skip_button.pressed.connect(_finish_tutorial)
 	header.add_child(skip_button)
+
+	tutorial_progress = ProgressBar.new()
+	tutorial_progress.step = 0.0
+	tutorial_progress.show_percentage = false
+	tutorial_progress.custom_minimum_size.y = 10
+	tutorial_progress.add_theme_stylebox_override("background", _box(PANEL_ALT, 4))
+	tutorial_progress.add_theme_stylebox_override("fill", _box(brand_color, 4))
+	body.add_child(tutorial_progress)
 
 	var divider := _divider()
 	body.add_child(divider)
@@ -441,6 +497,7 @@ func _render_tutorial_step() -> void:
 		return
 	tutorial_index = clampi(tutorial_index, 0, total - 1)
 	var step: Dictionary = TUTORIAL_STEPS[tutorial_index]
+	tutorial_progress.value = 100.0 * (tutorial_index + 1) / total
 	tutorial_step_label.text = "STEP %s OF %s" % [tutorial_index + 1, total]
 	tutorial_title_label.text = str(step.get("title", "V3 TUTORIAL"))
 	tutorial_body_label.text = str(step.get("body", ""))
@@ -468,6 +525,9 @@ func _finish_tutorial() -> void:
 
 
 func _close_tutorial_overlay() -> void:
+	primary_buttons.erase(tutorial_next_button)
+	tutorial_heading = null
+	tutorial_progress = null
 	if tutorial_overlay != null and is_instance_valid(tutorial_overlay):
 		tutorial_overlay.queue_free()
 	tutorial_overlay = null
@@ -526,6 +586,8 @@ func _on_action_completed(result: int, response_code: int, _headers: PackedStrin
 
 func _action_button(text_value: String, primary: bool = false) -> Button:
 	var button := Button.new()
+	if primary:
+		primary_buttons.append(button)
 	button.custom_minimum_size = Vector2(0, 42)
 	button.text = text_value
 	button.add_theme_font_size_override("font_size", 10)
@@ -536,6 +598,8 @@ func _action_button(text_value: String, primary: bool = false) -> Button:
 	button.add_theme_stylebox_override("normal", _box(normal, 9, normal if primary else BORDER))
 	button.add_theme_stylebox_override("hover", _box(hover, 9, hover if primary else ACCENT))
 	button.add_theme_stylebox_override("pressed", _box(hover, 9, hover))
+	if primary:
+		TeamBrandingV3.apply_primary_button(button, brand_color)
 	return button
 
 
