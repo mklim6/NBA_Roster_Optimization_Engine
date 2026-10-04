@@ -177,6 +177,7 @@ func _ready() -> void:
 	long_action_manager.action_finished.connect(_on_long_action_finished)
 	_build_background()
 	_build_interface()
+	call_deferred("_install_motion_interactions")
 	_build_long_action_overlay()
 	_build_http_client()
 	_check_bridge()
@@ -244,6 +245,11 @@ func _build_long_action_overlay() -> void:
 	safety.add_theme_color_override("font_color", GOLD)
 	safety.add_theme_font_size_override("font_size", 10)
 	body.add_child(safety)
+
+
+# Batch 21A motion interaction system
+func _install_motion_interactions() -> void:
+	UxPolishV3.install_button_motion(self)
 
 
 func _on_long_action_started(snapshot: Dictionary) -> void:
@@ -2900,6 +2906,8 @@ func _show_page(page_name: String, force_refresh: bool = false) -> void:
 
 	if target_page != null and page_name != previous_page:
 		UxPolishV3.animate_page_in(target_page, active_team_primary)
+	if target_page != null:
+		UxPolishV3.install_button_motion(target_page)
 
 	for key in nav_buttons.keys():
 		var button: Button = nav_buttons[key]

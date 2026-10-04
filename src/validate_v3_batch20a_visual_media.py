@@ -15,7 +15,7 @@ TEAM_LOGO = ROOT / "godot_client" / "scripts" / "team_logo_v3.gd"
 V3 = ROOT / "outputs" / "runtime" / "v3_godot_working_checkpoint.pkl.gz"
 V2 = ROOT / "outputs" / "runtime" / "franchise_mode_checkpoint_v1.pkl.gz"
 
-VERSION = "v3-batch20a4-portrait-integration-validator-v1.0.0-2026-10-03"
+VERSION = "v3-batch20a5-portrait-logo-compatibility-v1.0.0-2026-10-04"
 
 
 def sha256(path: Path) -> str | None:
@@ -102,7 +102,7 @@ def main() -> int:
     results: dict[str, bool] = {}
 
     print("=" * 100)
-    print("V3 BATCH 20A.4 PORTRAIT INTEGRATION VALIDATION")
+    print("V3 BATCH 20A.5 PORTRAIT + TEAM MEDIA VALIDATION")
     print("=" * 100)
 
     main_text = MAIN.read_text(encoding="utf-8") if MAIN.exists() else ""
@@ -115,7 +115,17 @@ def main() -> int:
     )
     check(MAIN.is_file(), "main_shell_present", results)
     check(PORTRAIT.is_file(), "player_portrait_component_present", results)
-    check(not TEAM_LOGO.exists(), "team_logo_still_deferred", results)
+    check(
+        (
+            not TEAM_LOGO.exists()
+            or (
+                'preload("res://scripts/team_logo_v3.gd")' in main_text
+                and "team_logo.configure" in main_text
+            )
+        ),
+        "team_logo_media_coexists_with_portraits",
+        results,
+    )
 
     check(
         "class_name PlayerPortraitV3" not in portrait_text,
@@ -191,12 +201,12 @@ def main() -> int:
     print(f"Report: {report}")
     if all(results.values()):
         print()
-        print("V3 BATCH 20A.4 VALIDATION PASSED")
+        print("V3 BATCH 20A.5 VALIDATION PASSED")
         print("Portrait media is absent from startup and loads only when roster/profile UI is actually rendered.")
         return 0
 
     print()
-    print("V3 BATCH 20A.4 VALIDATION FAILED")
+    print("V3 BATCH 20A.5 VALIDATION FAILED")
     return 1
 
 
