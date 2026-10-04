@@ -1,5 +1,8 @@
 extends Control
 
+const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
+const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/scouting-draft"
 const SCOUT_PREVIEW_URL := "http://127.0.0.1:8765/v3/scouting/preview"
 const SCOUT_EXECUTE_URL := "http://127.0.0.1:8765/v3/scouting/advance"
@@ -10,18 +13,24 @@ const DRAFT_ADVANCE_EXECUTE_URL := "http://127.0.0.1:8765/v3/draft/advance/execu
 const ROSTER_CUT_PREVIEW_URL := "http://127.0.0.1:8765/v3/draft/roster-cut/preview"
 const ROSTER_CUT_EXECUTE_URL := "http://127.0.0.1:8765/v3/draft/roster-cut/execute"
 
-const PANEL := Color("121824")
-const PANEL_ALT := Color("171f2d")
-const PANEL_HOVER := Color("202b3d")
-const TEXT := Color("f7f8fb")
-const MUTED := Color("8d99aa")
-const ACCENT := Color("8ed8ff")
-const GOOD := Color("61d69b")
-const BAD := Color("ff6577")
-const BORDER := Color("263247")
-const TEAM_PRIMARY := Color("d9273c")
-const TEAM_PRIMARY_HOVER := Color("ef4055")
-const GOLD := Color("f3c96b")
+const PANEL := DesignSystemV3.PANEL
+const PANEL_ALT := DesignSystemV3.PANEL_ALT
+const PANEL_HOVER := DesignSystemV3.PANEL_HOVER
+const TEXT := DesignSystemV3.TEXT
+const MUTED := DesignSystemV3.MUTED
+const ACCENT := DesignSystemV3.ACCENT
+const GOOD := DesignSystemV3.GOOD
+const BAD := DesignSystemV3.BAD
+const BORDER := DesignSystemV3.BORDER
+const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
+const TEAM_PRIMARY_HOVER := DesignSystemV3.TEAM_PRIMARY_HOVER
+const GOLD := DesignSystemV3.GOLD
+
+var brand_heading: Label
+var board_count: Label
+var brand_color := TEAM_PRIMARY
+var primary_buttons: Array = []
+var board_available := false
 
 var summary_request: HTTPRequest
 var scout_preview_request: HTTPRequest
@@ -89,6 +98,36 @@ var roster_cut_execute_in_flight := false
 
 
 var long_action_manager = null
+
+
+func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	brand_color = primary
+	if brand_heading != null:
+		brand_heading.add_theme_color_override("font_color", primary.lerp(Color.WHITE, 0.45))
+	for button in primary_buttons:
+		TeamBrandingV3.apply_primary_button(button, primary)
+	if board_rows != null:
+		_render_board()
+
+
+func _dict(value: Variant) -> Dictionary:
+	return value if typeof(value) == TYPE_DICTIONARY else {}
+
+
+func _array(value: Variant) -> Array:
+	return value if typeof(value) == TYPE_ARRAY else []
+
+
+func _display(value: Variant, fallback: String = "N/A") -> String:
+	return fallback if value == null or str(value).strip_edges() == "" else str(value)
+
+
+func _number(value: Variant, fallback: float = 0.0) -> float:
+	return float(value) if typeof(value) in [TYPE_INT, TYPE_FLOAT] else fallback
+
+
+func _confidence_text(value: Variant) -> String:
+	return "%.0f%%" % float(value) if typeof(value) in [TYPE_INT, TYPE_FLOAT] else "N/A"
 
 
 func set_long_action_manager(manager) -> void:
@@ -187,7 +226,8 @@ func _build_ui() -> void:
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(titles)
-	titles.add_child(_small_label("FRANCHISE OPERATIONS • TALENT PIPELINE", TEAM_PRIMARY_HOVER))
+	brand_heading = _small_label("FRANCHISE OPERATIONS • TALENT PIPELINE", TEAM_PRIMARY_HOVER)
+	titles.add_child(brand_heading)
 	var title := Label.new()
 	title.text = "SCOUTING & DRAFT"
 	title.add_theme_color_override("font_color", TEXT)
@@ -241,6 +281,9 @@ func _build_ui() -> void:
 	search_box.placeholder_text = "Search prospect, position, school, archetype..."
 	search_box.text_changed.connect(_on_search_changed)
 	board_body.add_child(search_box)
+
+	board_count = _small_label("Board data unavailable", MUTED)
+	board_body.add_child(board_count)
 
 	var board_header_row := HBoxContainer.new()
 	board_header_row.add_theme_constant_override("separation", 8)
@@ -429,10 +472,11 @@ func _on_summary_completed(result: int, response_code: int, _headers: PackedStri
 		status_label.add_theme_color_override("font_color", BAD)
 		return
 	page_payload = raw_payload
-	prospects = raw_payload.get("board", [])
+	board_available = typeof(raw_payload.get("board")) == TYPE_ARRAY
+	prospects = _array(raw_payload.get("board"))
 	focus_selected.clear()
-	var summary: Dictionary = raw_payload.get("summary", {})
-	var saved_focus: Array = summary.get("focus_ids", [])
+	var summary: Dictionary = _dict(raw_payload.get("summary"))
+	var saved_focus: Array = _array(summary.get("focus_ids"))
 	for raw_id in saved_focus:
 		focus_selected[str(raw_id)] = true
 	_apply_summary()
@@ -440,16 +484,16 @@ func _on_summary_completed(result: int, response_code: int, _headers: PackedStri
 
 
 func _apply_summary() -> void:
-	var draft: Dictionary = page_payload.get("draft", {})
-	var summary: Dictionary = page_payload.get("summary", {})
-	var scout: Dictionary = page_payload.get("lead_scout", {})
-	var phase: String = str(draft.get("phase", "unavailable"))
+	var draft: Dictionary = _dict(page_payload.get("draft"))
+	var summary: Dictionary = _dict(page_payload.get("summary"))
+	var scout: Dictionary = _dict(page_payload.get("lead_scout"))
+	var phase: String = _display(draft.get("phase"), "unavailable")
 	draft_phase_value.text = phase.replace("_", " ").to_upper()
-	var weeks_done: int = int(summary.get("weeks_completed", 0))
-	var weeks_remaining: int = int(summary.get("weeks_remaining", 0))
-	scouting_week_value.text = "%s / %s" % [str(weeks_done), str(weeks_done + weeks_remaining)]
-	scout_value.text = str(scout.get("name", "N/A"))
-	confidence_value.text = "%.0f%%" % float(summary.get("average_confidence", 0.0))
+	var weeks_done: int = int(_number(summary.get("weeks_completed")))
+	var weeks_remaining: int = int(_number(summary.get("weeks_remaining")))
+	scouting_week_value.text = "%s / %s" % [str(weeks_done), str(weeks_done + weeks_remaining)] if summary.get("weeks_completed") != null and summary.get("weeks_remaining") != null else "N/A"
+	scout_value.text = _display(scout.get("name"))
+	confidence_value.text = _confidence_text(summary.get("average_confidence"))
 	scouting_execution_enabled = bool(page_payload.get("scouting_execution_enabled", false)) and weeks_remaining > 0
 	draft_execution_enabled = bool(page_payload.get("draft_execution_enabled", false))
 	draft_cpu_advance_enabled = bool(page_payload.get("draft_cpu_advance_enabled", false))
@@ -460,14 +504,11 @@ func _apply_summary() -> void:
 
 	var draft_year: int = int(draft.get("draft_year", 0))
 	var source_label: String = str(draft.get("source_season", ""))
-	status_label.text = "LIVE V3 • %s Draft • %s • production scouting v%s" % [
-		str(draft_year),
-		source_label,
-		str(page_payload.get("foundation_version", "")).replace("v3-transaction-foundation-", "")
-	]
+	status_label.text = "LIVE V3 • %s Draft • %s • Preview before advancing scouting or Draft actions" % [
+		str(draft_year), source_label]
 	status_label.add_theme_color_override("font_color", GOOD)
 
-	var pick: Dictionary = draft.get("current_pick", {})
+	var pick: Dictionary = _dict(draft.get("current_pick"))
 	if phase == "draft_in_progress" and not pick.is_empty():
 		var owner: String = str(pick.get("owner_team", ""))
 		var overall_pick: int = int(pick.get("overall_pick", 0))
@@ -479,7 +520,7 @@ func _apply_summary() -> void:
 		]
 		draft_status_label.add_theme_color_override("font_color", GOOD if draft_execution_enabled else GOLD)
 	elif phase == "draft_complete":
-		var roster_gate: Dictionary = page_payload.get("post_draft_roster", {})
+		var roster_gate: Dictionary = _dict(page_payload.get("post_draft_roster"))
 		var cuts_remaining: int = int(roster_gate.get("cuts_remaining", 0))
 		if cuts_remaining > 0:
 			draft_status_label.text = "DRAFT COMPLETE • %s post-Draft roster decision(s) remain. Use ROSTER DECISIONS below before opening the next season." % str(cuts_remaining)
@@ -494,29 +535,35 @@ func _apply_summary() -> void:
 
 func _render_board() -> void:
 	_clear_children(board_rows)
+	if not board_available:
+		board_count.text = "Board data unavailable"
+		board_rows.add_child(_small_label("Refresh to load the scouting board.", MUTED))
+		return
 	var query: String = search_box.text.strip_edges().to_lower()
-	var displayed := 0
+	var matches: Array = []
+	var total := 0
 	for raw_row in prospects:
 		if typeof(raw_row) != TYPE_DICTIONARY:
 			continue
+		total += 1
 		var row: Dictionary = raw_row
 		var haystack: String = "%s %s %s %s" % [
-			str(row.get("Prospect", "")), str(row.get("Pos", "")),
-			str(row.get("School / Club", "")), str(row.get("Archetype", ""))
-		]
-		if query != "" and not query in haystack.to_lower():
-			continue
+			_display(row.get("Prospect")), _display(row.get("Pos")),
+			_display(row.get("School / Club")), _display(row.get("Archetype"))]
+		if query == "" or query in haystack.to_lower():
+			matches.append(row)
+	var displayed := mini(50, matches.size())
+	board_count.text = "Showing %d of %d matches" % [displayed, matches.size()] if matches.size() > 50 or query != "" else "Showing %d of %d prospects" % [displayed, total]
+	for row in matches.slice(0, displayed):
 		board_rows.add_child(_prospect_row(row))
-		displayed += 1
-		if displayed >= 50:
-			break
 	if displayed == 0:
-		board_rows.add_child(_small_label("No prospects match the current search.", MUTED))
+		board_rows.add_child(_small_label("No prospects are available on this board." if total == 0 else "No prospects match the current search.", MUTED))
 
 
 func _prospect_row(row: Dictionary) -> Control:
 	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", _box(PANEL_ALT, 8, BORDER))
+	var is_selected: bool = not selected_prospect.is_empty() and row.get("prospect_id") != null and row.get("prospect_id") == selected_prospect.get("prospect_id")
+	panel.add_theme_stylebox_override("panel", _box(PANEL_ALT, 8, brand_color if is_selected else BORDER))
 	var margin := MarginContainer.new()
 	_set_margins(margin, 8, 7, 8, 7)
 	panel.add_child(margin)
@@ -531,15 +578,16 @@ func _prospect_row(row: Dictionary) -> Control:
 	focus.disabled = not scouting_execution_enabled
 	focus.toggled.connect(_on_focus_toggled.bind(prospect_id))
 	line.add_child(focus)
-	line.add_child(_cell(str(row.get("Rank", "")), 28, MUTED))
-	var name := _cell(str(row.get("Prospect", prospect_id)), 150, TEXT)
+	line.add_child(_cell(_display(row.get("Rank")), 28, MUTED))
+	var name := _cell(_display(row.get("Prospect"), prospect_id), 150, TEXT)
+	name.tooltip_text = name.text
 	name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	line.add_child(name)
-	line.add_child(_cell(str(row.get("Pos", "")), 32, ACCENT))
+	line.add_child(_cell(_display(row.get("Pos")), 32, ACCENT))
 	line.add_child(_cell(_rating_text(row.get("Scouted OVR")), 40, TEXT))
 	line.add_child(_cell(_rating_text(row.get("Scouted POT")), 40, GOOD))
-	line.add_child(_cell("%.0f%%" % float(row.get("Confidence", 0.0)), 42, MUTED))
-	line.add_child(_cell(str(row.get("Projected", "")), 65, MUTED))
+	line.add_child(_cell(_confidence_text(row.get("Confidence")), 42, MUTED))
+	line.add_child(_cell(_display(row.get("Projected")), 65, MUTED))
 	var select_button := _mini_button("SELECT")
 	select_button.custom_minimum_size = Vector2(58, 30)
 	select_button.disabled = bool(row.get("Drafted", false))
@@ -722,15 +770,13 @@ func _on_scout_execute_completed(result: int, response_code: int, _headers: Pack
 
 func _select_prospect(row: Dictionary) -> void:
 	selected_prospect = row
-	selected_prospect_label.text = "%s • %s • Scouted %.1f OVR / %.1f POT • %.0f%% confidence" % [
-		str(row.get("Prospect", row.get("prospect_id", ""))),
-		str(row.get("Pos", "")),
-		float(row.get("Scouted OVR", 0.0)),
-		float(row.get("Scouted POT", 0.0)),
-		float(row.get("Confidence", 0.0))
-	]
+	selected_prospect_label.text = "%s • %s • Scouted %s OVR / %s POT • %s confidence" % [
+		_display(row.get("Prospect"), _display(row.get("prospect_id"))),
+		_display(row.get("Pos")), _rating_text(row.get("Scouted OVR")),
+		_rating_text(row.get("Scouted POT")), _confidence_text(row.get("Confidence"))]
 	_invalidate_draft_preview()
 	_update_draft_controls()
+	_render_board()
 
 
 func _update_draft_controls() -> void:
@@ -1283,7 +1329,7 @@ func _invalidate_draft_advance_preview() -> void:
 
 
 func _rating_text(value) -> String:
-	if value == null:
+	if typeof(value) != TYPE_INT and typeof(value) != TYPE_FLOAT:
 		return "--"
 	return "%.1f" % float(value)
 
@@ -1335,6 +1381,8 @@ func _clear_children(node: Node) -> void:
 
 func _action_button(text_value: String, primary: bool = false) -> Button:
 	var button := Button.new()
+	if primary:
+		primary_buttons.append(button)
 	button.custom_minimum_size = Vector2(0, 38)
 	button.text = text_value
 	button.add_theme_font_size_override("font_size", 10)
