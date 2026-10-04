@@ -25,7 +25,7 @@ def main() -> int:
         godot = console
     manifest = json.loads((ROOT / "godot_client/assets/team_logos/SOURCES.json").read_text(encoding="utf-8"))
     assets = manifest["assets"]
-    results = {"all_30_asset_sources_and_hashes": len(assets) == 30 and len({a["team"] for a in assets}) == 30 and all(a["source_url"].startswith("https://cdn.nba.com/logos/nba/") and hashlib.sha256((ROOT / "godot_client/assets/team_logos" / a["file"]).read_bytes()).hexdigest() == a["sha256"] for a in assets)}
+    results = {"all_30_asset_sources_and_hashes": len(assets) == 30 and len({a["team"] for a in assets}) == 30 and all(a["source_url"].startswith("https://cdn.nba.com/logos/nba/") and hashlib.sha256((ROOT / "godot_client/assets/team_logos" / a["file"]).read_text(encoding="utf-8").encode("utf-8")).hexdigest() == a["sha256"] for a in assets)}
     with tempfile.TemporaryDirectory(prefix="v3_home_hero_smoke_") as scratch:
         marker = Path(scratch) / "passed.json"
         script = Path(scratch) / "game_day.gd"

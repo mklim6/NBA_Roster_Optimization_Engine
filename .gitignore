@@ -59,3 +59,6 @@ app_data/league_scenarios/*.json
 /dist_v3/
 /.v3_runtime/
 # END V3 BATCH 18D DESKTOP PACKAGING
+
+# Generated editor import metadata for bundled team logos.
+/godot_client/assets/team_logos/*.import

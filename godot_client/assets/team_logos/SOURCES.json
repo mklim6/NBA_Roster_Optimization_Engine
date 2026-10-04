@@ -8,119 +8,135 @@
       "nba_team_id": 1610612737,
       "file": "ATL.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612737/primary/L/logo.svg",
-      "sha256": "efe7639e6daac1a103c13a1c3cc0b2d00979397ab70333e9d8ded492ea250504"
+      "sha256": "d62007cd62bd276fe959420813342c81191f57bf0997dc02905cb547aada6c96",
+      "source_sha256": "efe7639e6daac1a103c13a1c3cc0b2d00979397ab70333e9d8ded492ea250504"
     },
     {
       "team": "BOS",
       "nba_team_id": 1610612738,
       "file": "BOS.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612738/primary/L/logo.svg",
-      "sha256": "531038092e848f7319e05d1785ef875353d6168c20ce419218503f1cc24cfd4c"
+      "sha256": "8cd9b70e548ab28c6ac87344edd06e8602feffb190100f6ffddfaa9b42659770",
+      "source_sha256": "531038092e848f7319e05d1785ef875353d6168c20ce419218503f1cc24cfd4c"
     },
     {
       "team": "CLE",
       "nba_team_id": 1610612739,
       "file": "CLE.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612739/primary/L/logo.svg",
-      "sha256": "ef345729b4d9f69863d2f6f20b80bda21191ecf5f49a40a0a4f428d0864a301b"
+      "sha256": "1dc6449527109f869495b22df531cfc2417d5839e5a3cb471247865166c85a57",
+      "source_sha256": "ef345729b4d9f69863d2f6f20b80bda21191ecf5f49a40a0a4f428d0864a301b"
     },
     {
       "team": "NOP",
       "nba_team_id": 1610612740,
       "file": "NOP.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612740/primary/L/logo.svg",
-      "sha256": "3d74bfcf573428a09814ddae46db420a31dfe5e77faf75b0d7da7b1649ba93b1"
+      "sha256": "4bfbe00bfa5b2d9589f0057419bedf3f26ac24a9e84cbe819c9183855af4e56d",
+      "source_sha256": "3d74bfcf573428a09814ddae46db420a31dfe5e77faf75b0d7da7b1649ba93b1"
     },
     {
       "team": "CHI",
       "nba_team_id": 1610612741,
       "file": "CHI.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612741/primary/L/logo.svg",
-      "sha256": "a11d0d6480b75e4eebca54130d195a462547705c8c7e6b501a11a62d57854068"
+      "sha256": "8440d99f881776bd4400d001b17b7048f6f6c5b0ea58baa91d4f5a030f7f7cc3",
+      "source_sha256": "a11d0d6480b75e4eebca54130d195a462547705c8c7e6b501a11a62d57854068"
     },
     {
       "team": "DAL",
       "nba_team_id": 1610612742,
       "file": "DAL.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612742/primary/L/logo.svg",
-      "sha256": "1547494512746c1827808f1650407e675025b20b07bb5bd185093ac49630db5c"
+      "sha256": "8175752d68a444cc5285f95fcac4a4ca4e886d52ec83ff52cd923d3101686e25",
+      "source_sha256": "1547494512746c1827808f1650407e675025b20b07bb5bd185093ac49630db5c"
     },
     {
       "team": "DEN",
       "nba_team_id": 1610612743,
       "file": "DEN.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612743/primary/L/logo.svg",
-      "sha256": "4e180a9d1906a726d1eb5d5074ae3468cdf25da5e388a98a112563683b6c8730"
+      "sha256": "fd242a199cedd07d8b6bc9abffb19793fdc040114fbf5112bfbe3b6ab3962deb",
+      "source_sha256": "4e180a9d1906a726d1eb5d5074ae3468cdf25da5e388a98a112563683b6c8730"
     },
     {
       "team": "GSW",
       "nba_team_id": 1610612744,
       "file": "GSW.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612744/primary/L/logo.svg",
-      "sha256": "99af50c32a1b1c19ede6286cda294e98cd19263d1d2b50cd4b79b0e868c96a0a"
+      "sha256": "967fd1b6d8a4d9a67f245b1577da17ce7d2e36df8374502fe81bcec0af01617d",
+      "source_sha256": "99af50c32a1b1c19ede6286cda294e98cd19263d1d2b50cd4b79b0e868c96a0a"
     },
     {
       "team": "HOU",
       "nba_team_id": 1610612745,
       "file": "HOU.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612745/primary/L/logo.svg",
-      "sha256": "9a0fd3d351f0726db427e8bed6db098bf88d15e98582b4b8dfd5a3638d6263f0"
+      "sha256": "9a0fd3d351f0726db427e8bed6db098bf88d15e98582b4b8dfd5a3638d6263f0",
+      "source_sha256": "9a0fd3d351f0726db427e8bed6db098bf88d15e98582b4b8dfd5a3638d6263f0"
     },
     {
       "team": "LAC",
       "nba_team_id": 1610612746,
       "file": "LAC.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612746/primary/L/logo.svg",
-      "sha256": "6fe94cd7b648afe8a700d2ae7c0a78bec1685adb7374214cbde7251520aa6a5a"
+      "sha256": "f35563768c854cae1346dab74ea7edc972becfd151b72debabb8851fc9023236",
+      "source_sha256": "6fe94cd7b648afe8a700d2ae7c0a78bec1685adb7374214cbde7251520aa6a5a"
     },
     {
       "team": "LAL",
       "nba_team_id": 1610612747,
       "file": "LAL.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612747/primary/L/logo.svg",
-      "sha256": "5b68f7b92ba7d05878ef7130162c77c1e5e7d4c5ac0608c7bb9f13f995a678b7"
+      "sha256": "49190b9eb0a121a2c35a2ba62d1f51e234a025c24b28326001671f4dec3667ec",
+      "source_sha256": "5b68f7b92ba7d05878ef7130162c77c1e5e7d4c5ac0608c7bb9f13f995a678b7"
     },
     {
       "team": "MIA",
       "nba_team_id": 1610612748,
       "file": "MIA.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612748/primary/L/logo.svg",
-      "sha256": "bb56d6319628bed94e5154d20cef555b20321939e05c37f3af7d9fea486b74b3"
+      "sha256": "aa7954aa7aa783fc9b49fc9569399690963030d77bf20f8c63a8ab4bc3be4ccf",
+      "source_sha256": "bb56d6319628bed94e5154d20cef555b20321939e05c37f3af7d9fea486b74b3"
     },
     {
       "team": "MIL",
       "nba_team_id": 1610612749,
       "file": "MIL.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612749/primary/L/logo.svg",
-      "sha256": "1a315b6ea7d465c48fc58d42cea16732089422e631d8453e8f2945032d0ff4c5"
+      "sha256": "117cfd2a0b6cf54207209cb4b74f93aac21dc6e7624c97a82120f950c61d1132",
+      "source_sha256": "1a315b6ea7d465c48fc58d42cea16732089422e631d8453e8f2945032d0ff4c5"
     },
     {
       "team": "MIN",
       "nba_team_id": 1610612750,
       "file": "MIN.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612750/primary/L/logo.svg",
-      "sha256": "e23cca4da95fe6a0629cd0a425e5dbefbf410948abf7499718d8fb858df5fa9d"
+      "sha256": "e23cca4da95fe6a0629cd0a425e5dbefbf410948abf7499718d8fb858df5fa9d",
+      "source_sha256": "e23cca4da95fe6a0629cd0a425e5dbefbf410948abf7499718d8fb858df5fa9d"
     },
     {
       "team": "BKN",
       "nba_team_id": 1610612751,
       "file": "BKN.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612751/primary/L/logo.svg",
-      "sha256": "6a3b134fbf97503b196848f6c933246a87c33ee623f13022c4cf7219a785ab34"
+      "sha256": "c52eb225441414f548c40e41285e7951597c6021013611f7f15eff577dbddbf6",
+      "source_sha256": "6a3b134fbf97503b196848f6c933246a87c33ee623f13022c4cf7219a785ab34"
     },
     {
       "team": "NYK",
       "nba_team_id": 1610612752,
       "file": "NYK.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612752/primary/L/logo.svg",
-      "sha256": "42e914c5226c3ff71fa09fe018e8604a4abb6a935e1896e5414733d6cd5fcde9"
+      "sha256": "42e914c5226c3ff71fa09fe018e8604a4abb6a935e1896e5414733d6cd5fcde9",
+      "source_sha256": "42e914c5226c3ff71fa09fe018e8604a4abb6a935e1896e5414733d6cd5fcde9"
     },
     {
       "team": "ORL",
       "nba_team_id": 1610612753,
       "file": "ORL.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612753/primary/L/logo.svg",
-      "sha256": "376112c908406fd48611566244fa8cee245061293a32de8fc66ff59d6175e56c",
+      "sha256": "3f93b5cc2818b8e5d935305069ee4e479c6d2b7a8c6bff039e7ab35afeb071a5",
       "source_sha256": "aa38562ae665b4266e21f38698abdd2b45bb5a099e23246973a6bd8b71f056bf",
       "rendering_normalization": "SVG output width and height raised from 50 to 512 pixels; original viewBox and all vector geometry unchanged."
     },
@@ -129,91 +145,105 @@
       "nba_team_id": 1610612754,
       "file": "IND.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612754/primary/L/logo.svg",
-      "sha256": "07b320f178a5bf9a800e1369289b1af59d777feff21936856b6f8cf9ef66ea8a"
+      "sha256": "07b320f178a5bf9a800e1369289b1af59d777feff21936856b6f8cf9ef66ea8a",
+      "source_sha256": "07b320f178a5bf9a800e1369289b1af59d777feff21936856b6f8cf9ef66ea8a"
     },
     {
       "team": "PHI",
       "nba_team_id": 1610612755,
       "file": "PHI.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612755/primary/L/logo.svg",
-      "sha256": "1e3fbaf4f2d48a4e8e3ce38cea06af858f1ac103e24d16cfb64728d39e29780d"
+      "sha256": "9453f877691dabf59c3ec0358d704e1ababb0f456afc1be0457421a21ef5be56",
+      "source_sha256": "1e3fbaf4f2d48a4e8e3ce38cea06af858f1ac103e24d16cfb64728d39e29780d"
     },
     {
       "team": "PHX",
       "nba_team_id": 1610612756,
       "file": "PHX.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612756/primary/L/logo.svg",
-      "sha256": "b4ec319fc4551e87c13bdfbe4eddcaeb38701a2a946fc977887669bbb6bb06e1"
+      "sha256": "105911386493f1944ea2f01acdeb1ccee679eda8edf811234d84eba96a1da22b",
+      "source_sha256": "b4ec319fc4551e87c13bdfbe4eddcaeb38701a2a946fc977887669bbb6bb06e1"
     },
     {
       "team": "POR",
       "nba_team_id": 1610612757,
       "file": "POR.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612757/primary/L/logo.svg",
-      "sha256": "65fbdafe950a7064f5303a1a45942b1519061cf9f56681e304763c81f87ca719"
+      "sha256": "f150c4b7775f25a53a8d9cb9a7aea65228b8d67d83e2479cf5a15da136c78d21",
+      "source_sha256": "65fbdafe950a7064f5303a1a45942b1519061cf9f56681e304763c81f87ca719"
     },
     {
       "team": "SAC",
       "nba_team_id": 1610612758,
       "file": "SAC.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612758/primary/L/logo.svg",
-      "sha256": "36bcebbe9c06361db15791796bd6fd1ee39dd88047b1ecb7d3a00702617141cf"
+      "sha256": "dc51766fbd26b25b47fb7688f9962f8cabc4fb478e4de35d5dc35f4b5aab60e5",
+      "source_sha256": "36bcebbe9c06361db15791796bd6fd1ee39dd88047b1ecb7d3a00702617141cf"
     },
     {
       "team": "SAS",
       "nba_team_id": 1610612759,
       "file": "SAS.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612759/primary/L/logo.svg",
-      "sha256": "c4df842e0d660dbc6dd1f8e523b1ca03dd2cfee314624071a6ab8425ab885271"
+      "sha256": "2ed1fdcb4ad4499b95594dadf56e0777c12c26b5e4ab18003c7ca4ac713980a5",
+      "source_sha256": "c4df842e0d660dbc6dd1f8e523b1ca03dd2cfee314624071a6ab8425ab885271"
     },
     {
       "team": "OKC",
       "nba_team_id": 1610612760,
       "file": "OKC.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612760/primary/L/logo.svg",
-      "sha256": "fb684464e11e07989b3121108b54f12fafc85631644ad534f3fef53fd9927d89"
+      "sha256": "ff24f63a66a3c029afaf4a56984a7d5255533fe74d427109ac942f9a3f2c4e75",
+      "source_sha256": "fb684464e11e07989b3121108b54f12fafc85631644ad534f3fef53fd9927d89"
     },
     {
       "team": "TOR",
       "nba_team_id": 1610612761,
       "file": "TOR.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612761/primary/L/logo.svg",
-      "sha256": "cb754caf37f8132f366e20d5af618575c314bc7d716253566d11932e4d723883"
+      "sha256": "cb754caf37f8132f366e20d5af618575c314bc7d716253566d11932e4d723883",
+      "source_sha256": "cb754caf37f8132f366e20d5af618575c314bc7d716253566d11932e4d723883"
     },
     {
       "team": "UTA",
       "nba_team_id": 1610612762,
       "file": "UTA.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612762/primary/L/logo.svg",
-      "sha256": "f1df72b502f198c452085fc01dcfcb1f352a93a5fa085cb0314bd0fa1aea1358"
+      "sha256": "5961f77375dd633e80467847db3936d80a1fe43417627aa8f74730fde5965c0a",
+      "source_sha256": "f1df72b502f198c452085fc01dcfcb1f352a93a5fa085cb0314bd0fa1aea1358"
     },
     {
       "team": "MEM",
       "nba_team_id": 1610612763,
       "file": "MEM.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612763/primary/L/logo.svg",
-      "sha256": "677c8053201e90471f0eda3fdd8364c7a598bcba72a7a6e61ed26cbc9ecadcaf"
+      "sha256": "26b2a82651019034be9f7882febb7dda7fe94683d99daeaa01b6651e3830ff35",
+      "source_sha256": "677c8053201e90471f0eda3fdd8364c7a598bcba72a7a6e61ed26cbc9ecadcaf"
     },
     {
       "team": "WAS",
       "nba_team_id": 1610612764,
       "file": "WAS.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612764/primary/L/logo.svg",
-      "sha256": "4e99c8f715c1af7e5cce17d507d5a4b21cf83f3c721cbb526f1b8597d58660b4"
+      "sha256": "b0839a84f994ae6ef99e62fd40ae1b5f5159157491b79f96aeea5b5ce5864a42",
+      "source_sha256": "4e99c8f715c1af7e5cce17d507d5a4b21cf83f3c721cbb526f1b8597d58660b4"
     },
     {
       "team": "DET",
       "nba_team_id": 1610612765,
       "file": "DET.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612765/primary/L/logo.svg",
-      "sha256": "efc20345b37e52206e025a0dbe5b57e28d8f4226b1a70573a9792a2e18595e0b"
+      "sha256": "10b9142de021e585fc4bfb38dcdd9adc22e9442a10987e950a58cb4cebca354d",
+      "source_sha256": "efc20345b37e52206e025a0dbe5b57e28d8f4226b1a70573a9792a2e18595e0b"
     },
     {
       "team": "CHA",
       "nba_team_id": 1610612766,
       "file": "CHA.svg",
       "source_url": "https://cdn.nba.com/logos/nba/1610612766/primary/L/logo.svg",
-      "sha256": "cf2c99a2d619f635920a94b69e20b2efb2babb992d5a821c22b0129e0cc57f46"
+      "sha256": "a310af6db03c20fb883f722a7b98b93d4c4c7792adfd306d4041d65db9a7759d",
+      "source_sha256": "cf2c99a2d619f635920a94b69e20b2efb2babb992d5a821c22b0129e0cc57f46"
     }
-  ]
+  ],
+  "bundle_sha256_format": "UTF-8 text with LF newlines; trailing line whitespace removed. Original download hashes are recorded separately."
 }
