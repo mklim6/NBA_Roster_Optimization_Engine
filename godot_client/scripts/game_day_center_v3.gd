@@ -58,6 +58,9 @@ var rotation_preview_button: Button
 var rotation_apply_button: Button
 
 var postgame_title_label: Label
+var postgame_result_label: Label
+var postgame_active_card: PanelContainer
+var postgame_team_color := TEAM_PRIMARY_HOVER
 var postgame_meta_label: Label
 var postgame_active_box: VBoxContainer
 var postgame_opponent_box: VBoxContainer
@@ -80,6 +83,7 @@ var long_action_manager = null
 
 
 func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	postgame_team_color = TeamBrandingV3.hover_color(primary)
 	if branded_top_band != null:
 		branded_top_band.color = Color(primary, 0.08)
 	if team_brand_panel != null:
@@ -87,6 +91,10 @@ func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
 		team_badge.add_theme_color_override("font_color", TeamBrandingV3.readable_foreground(primary))
 	if matchup_card != null:
 		matchup_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(primary, 0.58)))
+	if postgame_active_card != null:
+		postgame_active_card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 12, Color(primary, 0.48)))
+		if postgame_active_box.get_child_count() > 0:
+			postgame_active_box.get_child(0).add_theme_color_override("font_color", postgame_team_color)
 	for button in primary_buttons:
 		TeamBrandingV3.apply_primary_button(button, primary)
 
@@ -400,7 +408,11 @@ func _build_postgame_card() -> Control:
 	var card := _card(Vector2(0, 430))
 	var body := _card_body(card, 16)
 
+	postgame_result_label = _label("POSTGAME REVIEW", 12, MUTED)
+	body.add_child(postgame_result_label)
 	postgame_title_label = _section_title("LATEST RESULT • Waiting for a completed game")
+	postgame_title_label.add_theme_font_size_override("font_size", 24)
+	postgame_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.add_child(postgame_title_label)
 	postgame_meta_label = _label("Full player box scores will appear here after a completed controlled-team game.", 10, MUTED)
 	postgame_meta_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -412,6 +424,7 @@ func _build_postgame_card() -> Control:
 	body.add_child(teams)
 
 	var active_card := _card(Vector2(0, 0))
+	postgame_active_card = active_card
 	active_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	active_card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 12, Color(TEAM_PRIMARY, 0.48)))
 	active_card.size_flags_stretch_ratio = 1.0
@@ -551,6 +564,8 @@ func _render_game_day() -> void:
 		var last_game = game_payload.get("last_game", null)
 		if typeof(last_game) == TYPE_DICTIONARY:
 			_render_postgame(last_game)
+		else:
+			_reset_postgame()
 		_set_status("LIVE V3 GAME DAY • NO CONTROLLED-TEAM GAME IS CURRENTLY SCHEDULED • V2 PROTECTED", GOOD)
 		return
 
@@ -580,6 +595,8 @@ func _render_game_day() -> void:
 	var last_game = game_payload.get("last_game", null)
 	if typeof(last_game) == TYPE_DICTIONARY:
 		_render_postgame(last_game)
+	else:
+		_reset_postgame()
 
 	_set_status("LIVE V3 GAME DAY • PRODUCTION SIMULATION READY • V2 RELEASE CHECKPOINT PROTECTED", GOOD)
 
@@ -1113,10 +1130,16 @@ func _render_postgame(game: Dictionary) -> void:
 		controlled_team = home_team
 	var controlled_score := home_score if controlled_team == home_team else away_score
 	var opponent_score := away_score if controlled_team == home_team else home_score
-	var result_code := "W" if controlled_score > opponent_score else "L"
+	var result_code := "WIN" if controlled_score > opponent_score else "LOSS"
+	var result_color := GOOD if controlled_score > opponent_score else BAD
+	if controlled_score == opponent_score:
+		result_code = "TIED RESULT"
+		result_color = MUTED
+	postgame_result_label.text = "POSTGAME REVIEW • " + result_code
+	postgame_result_label.add_theme_color_override("font_color", result_color)
 
 	postgame_title_label.text = "LATEST RESULT • %s %d  —  %s %d" % [home_team, home_score, away_team, away_score]
-	postgame_title_label.add_theme_color_override("font_color", GOOD if result_code == "W" else BAD)
+	postgame_title_label.add_theme_color_override("font_color", TEXT)
 	var meta_bits := ["FINAL", "DAY %d" % day_index]
 	if overtime > 0:
 		meta_bits.append("%d OT" % overtime)
@@ -1129,7 +1152,7 @@ func _render_postgame(game: Dictionary) -> void:
 	var active_box_score := home_score if controlled_team == home_team else away_score
 	var opponent_box_score := away_score if controlled_team == home_team else home_score
 
-	_render_team_box_score(postgame_active_box, game, active_box_team, active_box_name, active_box_score, TEAM_PRIMARY_HOVER)
+	_render_team_box_score(postgame_active_box, game, active_box_team, active_box_name, active_box_score, postgame_team_color)
 	_render_team_box_score(postgame_opponent_box, game, opponent_box_team, opponent_box_name, opponent_box_score, MUTED)
 
 
@@ -1143,6 +1166,23 @@ func _render_team_box_score(
 ) -> void:
 	_clear_children(container)
 	container.add_child(_label("%s • %s" % [team_name.to_upper(), score], 15, title_color))
+	var team_rows: Array = []
+	for raw in _array(game.get("player_box_scores")):
+		var line := _dict(raw)
+		if _text(line.get("team"), "").to_upper() == team.to_upper():
+			team_rows.append(line)
+	var totals := _label("TEAM TOTALS • REB %s • AST %s • TO %s" % [
+		_box_total(team_rows, "rebounds"), _box_total(team_rows, "assists"), _box_total(team_rows, "turnovers")], 10, MUTED)
+	totals.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	container.add_child(totals)
+	var shooting := _label("SHOOTING • FG %s/%s • 3PT %s/%s" % [
+		_box_total(team_rows, "field_goals_made"), _box_total(team_rows, "field_goals_attempted"),
+		_box_total(team_rows, "three_pointers_made"), _box_total(team_rows, "three_pointers_attempted")], 10, MUTED)
+	shooting.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	container.add_child(shooting)
+	var leader := _label(_scoring_leader(team_rows), 11, GOLD)
+	leader.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	container.add_child(leader)
 
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 2)
@@ -1169,7 +1209,9 @@ func _render_team_box_score(
 		var player_name := _text(line.get("name"), "Unknown")
 		if bool(line.get("starter", false)):
 			player_name = "• " + player_name
-		row.add_child(_box_cell(player_name, 126, TEXT))
+		var name_cell := _box_cell(player_name, 126, TEXT)
+		name_cell.tooltip_text = player_name
+		row.add_child(name_cell)
 		row.add_child(_box_cell("%.0f" % _float_value(line.get("minutes"), 0.0), 30, TEXT, HORIZONTAL_ALIGNMENT_CENTER))
 		row.add_child(_box_cell(str(_int_value(line.get("points"), 0)), 30, TEXT, HORIZONTAL_ALIGNMENT_CENTER))
 		row.add_child(_box_cell(str(_int_value(line.get("rebounds"), 0)), 30, TEXT, HORIZONTAL_ALIGNMENT_CENTER))
@@ -1190,6 +1232,45 @@ func _render_team_box_score(
 
 	if emitted == 0:
 		container.add_child(_label("No player box-score rows are available for %s." % team, 10, MUTED))
+
+
+func _reset_postgame() -> void:
+	postgame_result_label.text = "POSTGAME REVIEW"
+	postgame_result_label.add_theme_color_override("font_color", MUTED)
+	postgame_title_label.text = "LATEST RESULT • Waiting for a completed game"
+	postgame_title_label.add_theme_color_override("font_color", TEXT)
+	postgame_meta_label.text = "Full player box scores will appear here after a completed controlled-team game."
+	_render_empty_box_score(postgame_active_box, "YOUR TEAM")
+	_render_empty_box_score(postgame_opponent_box, "OPPONENT")
+
+
+func _box_total(rows: Array, key: String) -> String:
+	if rows.is_empty():
+		return "N/A"
+	var total := 0.0
+	for line in rows:
+		var value = line.get(key)
+		if typeof(value) != TYPE_INT and typeof(value) != TYPE_FLOAT:
+			return "N/A"
+		total += float(value)
+	return "%.0f" % total
+
+
+func _scoring_leader(rows: Array) -> String:
+	var names: Array = []
+	var highest := -1
+	for line in rows:
+		var points = line.get("points")
+		if typeof(points) != TYPE_INT and typeof(points) != TYPE_FLOAT:
+			return "SCORING LEADER • N/A"
+		if int(points) > highest:
+			highest = int(points)
+			names.clear()
+		if int(points) == highest:
+			names.append(_text(line.get("name"), "Unknown"))
+	if names.is_empty():
+		return "SCORING LEADER • N/A"
+	return "SCORING LEADER • %s • %d PTS" % [" / ".join(names), highest]
 
 
 func _render_empty_box_score(container: VBoxContainer, title: String) -> void:
