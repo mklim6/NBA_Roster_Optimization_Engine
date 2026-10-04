@@ -5,6 +5,38 @@ const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const VERSION := "v3-team-branding-batch-19c-v1.0.0-2026-10-03"
 
 
+static func logo_texture(abbreviation: String) -> Texture2D:
+	var team := abbreviation.strip_edges().to_upper()
+	if not DesignSystemV3.TEAM_BRANDS.has(team):
+		return null
+	var logo_cache: Dictionary = Engine.get_meta("v3_team_logo_cache", {})
+	if logo_cache.has(team):
+		var cached = logo_cache[team].get_ref()
+		if cached != null:
+			return cached
+	var path := "res://assets/team_logos/%s.svg" % team
+	var image := Image.new()
+	if FileAccess.file_exists(path + ".import") and ResourceLoader.exists(path):
+		var imported = load(path)
+		if not imported is Texture2D:
+			return null
+		image = imported.get_image()
+	else:
+		# Source bundles can start before the editor creates any .godot imports.
+		if not FileAccess.file_exists(path) or image.load(path) != OK:
+			return null
+	var bounds := image.get_used_rect()
+	if bounds.size.x <= 0 or bounds.size.y <= 0:
+		return null
+	# Fit the actual mark, rather than the CDN's transparent square canvas.
+	image = image.get_region(bounds)
+	var texture := ImageTexture.create_from_image(image)
+	# Weak references share live textures without retaining GPU resources at shutdown.
+	logo_cache[team] = weakref(texture)
+	Engine.set_meta("v3_team_logo_cache", logo_cache)
+	return texture
+
+
 static func palette(team_abbreviation: String) -> Dictionary:
 	return DesignSystemV3.team_palette(team_abbreviation)
 

@@ -1,5 +1,7 @@
 extends Control
 
+const TeamLogoV3 = preload("res://scripts/team_logo_v3.gd")
+
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
 
@@ -413,12 +415,9 @@ func _slot_row(slot: Dictionary) -> Control:
 	row.add_theme_constant_override("separation", 10)
 	margin.add_child(row)
 
-	var team_primary: Color = TeamBrandingV3.palette(_safe_display(slot.get("team"), "")).get("primary", brand_color)
-	var team_badge := _pill(_safe_display(slot.get("team"), "--"), team_primary.lerp(Color.WHITE, 0.38))
-	team_badge.custom_minimum_size = Vector2(54, 54)
-	team_badge.add_theme_font_size_override("font_size", 16)
-	team_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	team_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	var team_badge := TeamLogoV3.new()
+	team_badge.custom_minimum_size = Vector2(64, 64)
+	team_badge.configure(_safe_display(slot.get("team"), "--"))
 	row.add_child(team_badge)
 
 	var identity := VBoxContainer.new()

@@ -14,6 +14,7 @@ const LongActionManagerV3 = preload("res://scripts/long_action_manager_v3.gd")
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const UiComponentsV3 = preload("res://scripts/ui_components_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+const TeamLogoV3 = preload("res://scripts/team_logo_v3.gd")
 const MatchupBannerV3 = preload("res://scripts/matchup_banner_v3.gd")
 const FranchiseHeroArtV3 = preload("res://scripts/franchise_hero_art_v3.gd")
 const UxPolishV3 = preload("res://scripts/ux_polish_v3.gd")
@@ -151,6 +152,7 @@ var rotation_syncing := false
 var header_subtitle: Label
 var team_name_label: Label
 var team_detail_label: Label
+var team_logo: Control
 var team_abbr_badge: Label
 var matchup_banner: Control
 var matchup_phase: Label
@@ -565,7 +567,7 @@ func _build_team_card() -> Control:
 
 	team_badge_panel = PanelContainer.new()
 	var badge := team_badge_panel
-	badge.custom_minimum_size = Vector2(72, 72)
+	badge.custom_minimum_size = Vector2(100, 100)
 	badge.add_theme_stylebox_override("panel", _box(active_team_primary, 16, active_team_hover))
 	identity.add_child(badge)
 
@@ -576,6 +578,9 @@ func _build_team_card() -> Control:
 	team_abbr_badge.add_theme_color_override("font_color", TEXT)
 	team_abbr_badge.add_theme_font_size_override("font_size", 22)
 	badge.add_child(team_abbr_badge)
+	team_abbr_badge.visible = false
+	team_logo = TeamLogoV3.new()
+	badge.add_child(team_logo)
 
 	var identity_text := VBoxContainer.new()
 	identity_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3009,11 +3014,13 @@ func _apply_active_team_brand(team_abbreviation: String) -> void:
 			)
 		)
 
+	if team_logo != null:
+		team_logo.configure(team_key)
 	if team_badge_panel != null:
 		team_badge_panel.add_theme_stylebox_override(
 			"panel",
 			DesignSystemV3.style_box(
-				active_team_primary,
+				PANEL_ALT.lerp(active_team_primary, 0.15),
 				DesignSystemV3.RADIUS_LG,
 				active_team_hover,
 				1,
