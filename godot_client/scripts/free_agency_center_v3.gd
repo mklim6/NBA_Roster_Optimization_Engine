@@ -1,25 +1,36 @@
-extends Control
+﻿extends Control
+
+const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
+const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
 
 const MARKET_URL := "http://127.0.0.1:8765/v3/free-agency/market"
 const PREVIEW_URL := "http://127.0.0.1:8765/v3/free-agency/preview"
 const EXECUTE_URL := "http://127.0.0.1:8765/v3/free-agency/execute"
 
-const PANEL := Color("121824")
-const PANEL_ALT := Color("171f2d")
-const PANEL_HOVER := Color("202b3d")
-const TEXT := Color("f7f8fb")
-const MUTED := Color("8d99aa")
-const ACCENT := Color("8ed8ff")
-const GOOD := Color("61d69b")
-const BAD := Color("ff6577")
-const BORDER := Color("263247")
-const TEAM_PRIMARY := Color("d9273c")
-const TEAM_PRIMARY_HOVER := Color("ef4055")
-const GOLD := Color("f3c96b")
+const PANEL := DesignSystemV3.PANEL
+const PANEL_ALT := DesignSystemV3.PANEL_ALT
+const PANEL_HOVER := DesignSystemV3.PANEL_HOVER
+const TEXT := DesignSystemV3.TEXT
+const MUTED := DesignSystemV3.MUTED
+const ACCENT := DesignSystemV3.ACCENT
+const GOOD := DesignSystemV3.GOOD
+const BAD := DesignSystemV3.BAD
+const BORDER := DesignSystemV3.BORDER
+const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
+const TEAM_PRIMARY_HOVER := DesignSystemV3.TEAM_PRIMARY_HOVER
+const GOLD := DesignSystemV3.GOLD
 
 var market_request: HTTPRequest
 var preview_request: HTTPRequest
 var execute_request: HTTPRequest
+
+var brand_heading: Label
+var market_count: Label
+var offer_state: Label
+var primary_buttons: Array = []
+var brand_color := TEAM_PRIMARY
+var market_available := false
+var pending_preview_request_payload := {}
 
 var status_label: Label
 var search_box: LineEdit
@@ -44,6 +55,31 @@ var execute_in_flight := false
 
 
 var long_action_manager = null
+
+
+func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	brand_color = primary
+	if brand_heading != null:
+		brand_heading.add_theme_color_override("font_color", TeamBrandingV3.hover_color(primary))
+	for button in primary_buttons:
+		TeamBrandingV3.apply_primary_button(button, primary)
+	if market_rows != null:
+		_render_market_rows()
+
+
+func _update_offer_state() -> void:
+	if offer_state == null:
+		return
+	if execute_in_flight:
+		offer_state.text = "SIGNING IN PROGRESS"
+	elif selected_player.is_empty():
+		offer_state.text = "SELECT A PLAYER"
+	elif not sign_button.disabled and latest_preview_fingerprint != "" and latest_preview_working_sha != "":
+		offer_state.text = "READY TO CONFIRM"
+	elif preview_label.get_theme_color("font_color") in [BAD, GOLD]:
+		offer_state.text = "PREVIEW REJECTED"
+	else:
+		offer_state.text = "OFFER NEEDS PREVIEW"
 
 
 func set_long_action_manager(manager) -> void:
@@ -89,6 +125,7 @@ func _build_http() -> void:
 
 func _build_ui() -> void:
 	var page_scroll := ScrollContainer.new()
+	page_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	page_scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	page_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	page_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -111,7 +148,8 @@ func _build_ui() -> void:
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(titles)
-	titles.add_child(_small_label("FRANCHISE OPERATIONS • PLAYER MARKET", TEAM_PRIMARY_HOVER))
+	brand_heading = _small_label("FRANCHISE OPERATIONS • PLAYER MARKET", TEAM_PRIMARY_HOVER)
+	titles.add_child(brand_heading)
 
 	var title := Label.new()
 	title.text = "FREE AGENCY"
@@ -144,7 +182,7 @@ func _build_ui() -> void:
 	content_row.add_theme_constant_override("separation", 14)
 	column.add_child(content_row)
 
-	var market_card := _card(Vector2(660, 590))
+	var market_card := _card(Vector2(540, 590))
 	market_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var market_body := _card_body(market_card, 16)
 
@@ -172,7 +210,11 @@ func _build_ui() -> void:
 	position_filter.item_selected.connect(_on_position_filter_changed)
 	filters.add_child(position_filter)
 
+	market_count = _small_label("Market data unavailable", MUTED)
+	market_body.add_child(market_count)
+
 	var market_scroll := ScrollContainer.new()
+	market_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	market_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	market_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	market_body.add_child(market_scroll)
@@ -182,10 +224,13 @@ func _build_ui() -> void:
 	market_rows.add_theme_constant_override("separation", 4)
 	market_scroll.add_child(market_rows)
 
-	var negotiation_card := _card(Vector2(360, 590))
+	var negotiation_card := _card(Vector2(320, 590))
 	var negotiation_body := _card_body(negotiation_card, 16)
 	negotiation_body.add_child(_small_label("CONTRACT DESK", GOLD))
 	negotiation_body.add_child(_section_title("NEGOTIATION PREVIEW"))
+
+	offer_state = _small_label("SELECT A PLAYER", GOLD)
+	negotiation_body.add_child(offer_state)
 
 	selection_label = Label.new()
 	selection_label.text = "Select a player from the market board."
@@ -221,7 +266,7 @@ func _build_ui() -> void:
 	preview_button.pressed.connect(_request_preview)
 	negotiation_body.add_child(preview_button)
 
-	sign_button = _action_button("SIGN PLAYER", false)
+	sign_button = _action_button("SIGN PLAYER", true)
 	sign_button.disabled = true
 	sign_button.pressed.connect(_confirm_sign_player)
 	negotiation_body.add_child(sign_button)
@@ -269,6 +314,10 @@ func _request_market() -> void:
 
 
 func _on_market_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	_invalidate_signing_execution()
+	market_available = false
+	free_agents = []
+	_render_market_rows()
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		status_label.text = "Free-agency market unavailable • HTTP %s" % response_code
 		status_label.add_theme_color_override("font_color", BAD)
@@ -284,13 +333,17 @@ func _on_market_completed(result: int, response_code: int, _headers: PackedStrin
 		status_label.add_theme_color_override("font_color", BAD)
 		return
 
-	free_agents = market_payload.get("players", [])
-	var season = market_payload.get("season", {})
+	if typeof(market_payload.get("players")) != TYPE_ARRAY:
+		status_label.text = "Free-agency player list is unavailable. Refresh the market."
+		return
+	market_available = true
+	free_agents = market_payload.get("players")
+	var season := _dict(market_payload.get("season"))
 	status_label.text = "LIVE • %s free agents • %s • Day %s • %s • working save unchanged • V2 protected" % [
 		str(free_agents.size()),
-		str(season.get("label", "")),
-		str(season.get("day_index", "?")),
-		str(season.get("phase", "")).replace("_", " ").capitalize()
+		_display(season.get("label")),
+		_display(season.get("day_index")),
+		_display(season.get("phase")).replace("_", " ").capitalize()
 	]
 	status_label.add_theme_color_override("font_color", GOOD)
 	_render_market_rows()
@@ -306,82 +359,98 @@ func _on_position_filter_changed(_index: int) -> void:
 
 func _render_market_rows() -> void:
 	_clear_children(market_rows)
+	if not market_available:
+		market_count.text = "Market data unavailable"
+		market_rows.add_child(_small_label("Refresh to load the free-agent market.", MUTED))
+		return
 	var query := search_box.text.strip_edges().to_lower()
 	var position_value := position_filter.get_item_text(position_filter.selected) if position_filter.item_count > 0 else "ALL"
-	var shown := 0
-
-	for raw_player in free_agents:
-		if typeof(raw_player) != TYPE_DICTIONARY:
+	var matches: Array = []
+	var total := 0
+	for raw in free_agents:
+		if typeof(raw) != TYPE_DICTIONARY:
 			continue
-		var player_data: Dictionary = raw_player
-		var player_name := str(player_data.get("name", ""))
-		var player_position := str(player_data.get("position", ""))
-		if query != "" and query not in player_name.to_lower():
+		total += 1
+		var name := _display(raw.get("name"))
+		var position := _display(raw.get("position"))
+		if query != "" and query not in name.to_lower():
 			continue
-		if position_value != "ALL" and position_value not in player_position.split("/"):
+		if position_value != "ALL" and position_value not in position.split("/"):
 			continue
-
+		matches.append(raw)
+	var shown := mini(80, matches.size())
+	market_count.text = "Showing %d of %d matches" % [shown, matches.size()] if matches.size() > 80 or query != "" or position_value != "ALL" else "Showing %d of %d free agents" % [shown, total]
+	for player_data in matches.slice(0, shown):
 		var button := Button.new()
-		button.custom_minimum_size = Vector2(0, 54)
-		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		button.text = "%s   •   %s   •   OVR %s   •   Age %s   •   Ref %s" % [
-			player_name,
-			player_position,
-			str(player_data.get("overall", "N/A")),
-			str(player_data.get("age", "N/A")),
-			_money_text(player_data.get("salary", null))
-		]
-		button.add_theme_color_override("font_color", TEXT)
-		button.add_theme_font_size_override("font_size", 10)
-		button.add_theme_stylebox_override("normal", _box(PANEL_ALT, 8, BORDER))
+		button.custom_minimum_size = Vector2(0, 66)
+		var selected: bool = not selected_player.is_empty() and player_data.get("player_id") != null and player_data.get("player_id") == selected_player.get("player_id")
+		button.add_theme_stylebox_override("normal", _box(PANEL_ALT, 8, brand_color if selected else BORDER))
 		button.add_theme_stylebox_override("hover", _box(PANEL_HOVER, 8, ACCENT))
+		button.tooltip_text = _display(player_data.get("name"))
+		var margin := MarginContainer.new()
+		margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_set_margins(margin, 12, 8, 12, 8)
+		button.add_child(margin)
+		var body := VBoxContainer.new()
+		body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		margin.add_child(body)
+		var name := _small_label(_display(player_data.get("name")), TEXT)
+		name.add_theme_font_size_override("font_size", 14)
+		name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		name.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		body.add_child(name)
+		var detail := _small_label("%s • OVR %s • Age %s • Reference salary %s" % [
+			_display(player_data.get("position")), _display(player_data.get("overall")),
+			_display(player_data.get("age")), _money_text(player_data.get("salary"))], MUTED)
+		detail.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		detail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		body.add_child(detail)
 		button.pressed.connect(_select_player.bind(player_data))
 		market_rows.add_child(button)
-		shown += 1
-		if shown >= 80:
-			break
-
 	if shown == 0:
-		var empty := Label.new()
-		empty.text = "No players match the current search/filter."
-		empty.add_theme_color_override("font_color", MUTED)
-		market_rows.add_child(empty)
-	elif shown >= 80:
-		var more := Label.new()
-		more.text = "Showing the first 80 matches. Narrow the search to reach deeper market entries."
-		more.add_theme_color_override("font_color", MUTED)
-		more.add_theme_font_size_override("font_size", 9)
-		market_rows.add_child(more)
+		market_rows.add_child(_small_label("No free agents in this market." if total == 0 else "No players match the current search/filter.", MUTED))
+
+
+func _display(value: Variant, fallback: String = "N/A") -> String:
+	return fallback if value == null or str(value).strip_edges() == "" else str(value)
+
+
+func _dict(value: Variant) -> Dictionary:
+	return value if typeof(value) == TYPE_DICTIONARY else {}
 
 
 func _select_player(player_data: Dictionary) -> void:
 	selected_player = player_data.duplicate(true)
-	var salary_value := float(selected_player.get("salary", 0.0) or 0.0)
+	var salary_value := float(selected_player.get("salary")) if typeof(selected_player.get("salary")) in [TYPE_INT, TYPE_FLOAT] else 0.0
 	if salary_value <= 0.0:
 		salary_value = 5000000.0
 	offer_salary.text = str(int(round(salary_value)))
 	offer_years.select(1)
 	offer_option.select(0)
 	selection_label.text = "%s\n%s • OVR %s • POT %s • Age %s\nMarket reference %s" % [
-		str(selected_player.get("name", "")),
-		str(selected_player.get("position", "")),
-		str(selected_player.get("overall", "N/A")),
-		str(selected_player.get("potential", "N/A")),
-		str(selected_player.get("age", "N/A")),
+		_display(selected_player.get("name")),
+		_display(selected_player.get("position")),
+		_display(selected_player.get("overall")),
+		_display(selected_player.get("potential")),
+		_display(selected_player.get("age")),
 		_money_text(selected_player.get("salary", null))
 	]
 	preview_label.text = "Offer changed. Run a fresh contract/CBA preview."
 	preview_label.add_theme_color_override("font_color", MUTED)
 	_invalidate_signing_execution()
 	_update_preview_button()
+	_render_market_rows()
 
 
 func _invalidate_signing_execution() -> void:
+	pending_preview_request_payload = {}
 	latest_preview_fingerprint = ""
 	latest_preview_working_sha = ""
 	latest_preview_request_payload = {}
 	if sign_button != null:
 		sign_button.disabled = true
+	_update_offer_state()
 
 
 func _on_offer_changed(_value: String) -> void:
@@ -402,7 +471,8 @@ func _update_preview_button() -> void:
 	var salary_valid := false
 	if offer_salary.text.strip_edges().is_valid_float():
 		salary_valid = float(offer_salary.text.strip_edges()) > 0.0
-	preview_button.disabled = selected_player.is_empty() or not salary_valid
+	preview_button.disabled = execute_in_flight or selected_player.is_empty() or not salary_valid
+	_update_offer_state()
 
 
 func _option_code() -> String:
@@ -434,6 +504,7 @@ func _request_preview() -> void:
 
 	var request_payload: Dictionary = _current_offer_request_payload()
 	_invalidate_signing_execution()
+	pending_preview_request_payload = request_payload.duplicate(true)
 	preview_button.disabled = true
 	preview_label.text = "Running structural, salary, and CBA preview..."
 	preview_label.add_theme_color_override("font_color", ACCENT)
@@ -447,6 +518,11 @@ func _request_preview() -> void:
 
 func _on_preview_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	_update_preview_button()
+	if pending_preview_request_payload != _current_offer_request_payload():
+		preview_label.text = "Offer changed while preview was running. Run a fresh preview."
+		preview_label.add_theme_color_override("font_color", MUTED)
+		_invalidate_signing_execution()
+		return
 	if result != HTTPRequest.RESULT_SUCCESS:
 		_invalidate_signing_execution()
 		preview_label.text = "Free-agency preview failed before the Python engine responded."
@@ -469,8 +545,8 @@ func _on_preview_completed(result: int, response_code: int, _headers: PackedStri
 		preview_label.add_theme_color_override("font_color", BAD)
 		return
 
-	var gate: Dictionary = raw_payload.get("contract_cba_gate", {})
-	var transaction: Dictionary = raw_payload.get("transaction_preview", {})
+	var gate: Dictionary = _dict(raw_payload.get("contract_cba_gate"))
+	var transaction: Dictionary = _dict(raw_payload.get("transaction_preview"))
 	var gate_status: String = str(gate.get("status", "manual_review"))
 	var transaction_status: String = str(transaction.get("status", "blocked"))
 	var can_commit: bool = bool(transaction.get("can_commit", false))
@@ -485,8 +561,8 @@ func _on_preview_completed(result: int, response_code: int, _headers: PackedStri
 	preview_label.text = detail
 	preview_label.add_theme_color_override("font_color", GOOD if committable else GOLD)
 
-	var fingerprint: String = str(transaction.get("candidate_fingerprint", ""))
-	var working_sha: String = str(raw_payload.get("working_save_sha256", ""))
+	var fingerprint: String = _display(transaction.get("candidate_fingerprint"), "")
+	var working_sha: String = _display(raw_payload.get("working_save_sha256"), "")
 	if committable and fingerprint != "" and working_sha != "":
 		latest_preview_fingerprint = fingerprint
 		latest_preview_working_sha = working_sha
@@ -494,6 +570,7 @@ func _on_preview_completed(result: int, response_code: int, _headers: PackedStri
 		sign_button.disabled = false
 		detail += "\n\nEXECUTION READY • Fresh signing token locked to the current V3 working save."
 		preview_label.text = detail
+		_update_offer_state()
 	else:
 		_invalidate_signing_execution()
 
@@ -542,6 +619,7 @@ func _execute_signing() -> void:
 	request_payload["expected_candidate_fingerprint"] = latest_preview_fingerprint
 	request_payload["expected_working_save_sha256"] = latest_preview_working_sha
 	execute_in_flight = true
+	_update_offer_state()
 	sign_button.disabled = true
 	preview_button.disabled = true
 	preview_label.text = "Signing through the production free-agency engine, then verifying the V3 save and protected V2 hash..."
@@ -605,7 +683,7 @@ func _on_execute_completed(result: int, response_code: int, _headers: PackedStri
 
 
 func _money_text(value) -> String:
-	if value == null:
+	if typeof(value) != TYPE_INT and typeof(value) != TYPE_FLOAT:
 		return "N/A"
 	var amount := float(value)
 	if abs(amount) >= 1000000.0:
@@ -623,6 +701,8 @@ func _clear_children(node: Node) -> void:
 
 func _action_button(text_value: String, primary: bool = false) -> Button:
 	var button := Button.new()
+	if primary:
+		primary_buttons.append(button)
 	button.custom_minimum_size = Vector2(0, 38)
 	button.text = text_value
 	button.add_theme_font_size_override("font_size", 10)
