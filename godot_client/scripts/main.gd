@@ -14,6 +14,7 @@ const LongActionManagerV3 = preload("res://scripts/long_action_manager_v3.gd")
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const UiComponentsV3 = preload("res://scripts/ui_components_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+const MatchupBannerV3 = preload("res://scripts/matchup_banner_v3.gd")
 const FranchiseHeroArtV3 = preload("res://scripts/franchise_hero_art_v3.gd")
 const UxPolishV3 = preload("res://scripts/ux_polish_v3.gd")
 
@@ -149,6 +150,8 @@ var header_subtitle: Label
 var team_name_label: Label
 var team_detail_label: Label
 var team_abbr_badge: Label
+var matchup_banner: Control
+var matchup_phase: Label
 var next_game_matchup: Label
 var next_game_detail: Label
 
@@ -604,14 +607,19 @@ func _build_next_game_card() -> Control:
 	var top_spacer := Control.new()
 	top_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(top_spacer)
-	top.add_child(_pill("REGULAR SEASON", MUTED))
+	matchup_phase = _pill("SCHEDULE", MUTED)
+	top.add_child(matchup_phase)
 	body.add_child(top)
 
 	next_game_matchup = Label.new()
 	next_game_matchup.text = "LOADING..."
 	next_game_matchup.add_theme_color_override("font_color", TEXT)
-	next_game_matchup.add_theme_font_size_override("font_size", 34)
+	next_game_matchup.add_theme_font_size_override("font_size", 23)
 	body.add_child(next_game_matchup)
+	matchup_banner = MatchupBannerV3.new()
+	matchup_banner.custom_minimum_size = Vector2(0, 100)
+	matchup_banner.visible = false
+	body.add_child(matchup_banner)
 
 	next_game_detail = Label.new()
 	next_game_detail.text = "Reading schedule..."
@@ -625,7 +633,9 @@ func _build_next_game_card() -> Control:
 
 	var actions := HBoxContainer.new()
 	actions.add_theme_constant_override("separation", 8)
-	actions.add_child(_action_button("GAME PLAN"))
+	var game_plan := _action_button("GAME PLAN")
+	game_plan.pressed.connect(_show_page.bind("GAME DAY"))
+	actions.add_child(game_plan)
 	var open_game_day := _action_button("OPEN GAME DAY", true)
 	open_game_day.pressed.connect(_show_page.bind("GAME DAY"))
 	actions.add_child(open_game_day)
@@ -4018,8 +4028,15 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 			opponent_abbr
 		]
 
-		var days_away := int(next_game.get("days_away", 0))
-		var when_text := "Today"
+		matchup_banner.set_matchup(team_abbr, opponent_abbr, is_home)
+		matchup_banner.visible = true
+		next_game_matchup.visible = false
+		matchup_phase.text = _pretty_phase(str(season.get("phase", "SCHEDULE")))
+		var days_value = next_game.get("days_away", null)
+		var days_away := int(days_value) if days_value != null else -1
+		var when_text := "Date pending"
+		if days_away == 0:
+			when_text = "Today"
 
 		if days_away == 1:
 			when_text = "Tomorrow"
@@ -4037,6 +4054,9 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 			next_game_number
 		]
 	else:
+		matchup_banner.visible = false
+		next_game_matchup.visible = true
+		matchup_phase.text = "SCHEDULE"
 		next_game_matchup.text = "NO GAME SCHEDULED"
 		next_game_detail.text = "No future game was found in the active schedule."
 
@@ -4056,6 +4076,9 @@ func _set_live_data_error(message: String) -> void:
 	draft_value.text = "N/A"
 	draft_detail.text = "Unavailable"
 
+	matchup_banner.visible = false
+	next_game_matchup.visible = true
+	matchup_phase.text = "OFFLINE"
 	next_game_matchup.text = "DATA OFFLINE"
 	next_game_detail.text = message
 
