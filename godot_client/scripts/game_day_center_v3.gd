@@ -3,6 +3,7 @@ extends Control
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
 const TeamLogoV3 = preload("res://scripts/team_logo_v3.gd")
+const GameDayArenaExperienceV3 = preload("res://scripts/game_day_arena_experience_v3.gd")
 
 const GAME_DAY_URL := "http://127.0.0.1:8765/v3/game-day"
 const GAME_DAY_SIMULATE_URL := "http://127.0.0.1:8765/v3/game-day/simulate"
@@ -86,6 +87,7 @@ var postgame_active_box: VBoxContainer
 var postgame_opponent_box: VBoxContainer
 
 var postgame_spotlight: VBoxContainer
+var arena_experience: Control
 var game_payload := {}
 var roster_payload := {}
 var active_team := ""
@@ -203,6 +205,9 @@ func _build_page() -> void:
 	scroll.add_child(content)
 
 	content.add_child(_build_matchup_card())
+	arena_experience = GameDayArenaExperienceV3.new()
+	arena_experience.name = "GameDayArenaExperience"
+	content.add_child(arena_experience)
 	content.add_child(_build_readiness_metrics())
 	content.add_child(_build_readiness_row())
 	coaching_board = preload("res://scripts/coaching_board_v3.gd").new()
@@ -793,8 +798,20 @@ func _on_roster_request_completed(
 		return
 
 	roster_payload = parsed
+	_refresh_arena_experience()
 	_render_rotation_editor()
 	_render_rotation_summary()
+
+
+func _refresh_arena_experience() -> void:
+	if arena_experience == null:
+		return
+	arena_experience.configure(
+		game_payload,
+		roster_payload,
+		active_team,
+		active_opponent
+	)
 
 
 func _render_game_day() -> void:
@@ -813,6 +830,7 @@ func _render_game_day() -> void:
 
 	if next_game == null or typeof(next_game) != TYPE_DICTIONARY:
 		active_opponent = ""
+		_refresh_arena_experience()
 		if opponent_logo_control != null:
 			opponent_logo_control.configure("")
 		if team_context_label != null:
@@ -840,6 +858,7 @@ func _render_game_day() -> void:
 
 	var game := _dict(next_game)
 	active_opponent = _text(game.get("opponent"), "OPP").to_upper()
+	_refresh_arena_experience()
 	var opponent_name := _text(game.get("opponent_name"), active_opponent)
 	var opponent_record := _dict(game_payload.get("opponent_record"))
 	var is_home := bool(game.get("is_home", false))
