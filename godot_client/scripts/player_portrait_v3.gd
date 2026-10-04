@@ -62,6 +62,9 @@ func _ready() -> void:
 
 
 func configure(player: Dictionary) -> void:
+	# A reused portrait must discard the previous player's in-flight request.
+	if request != null and str(player.get("player_id", "")).strip_edges() != configured_player_id:
+		request.cancel_request()
 	configured_player_id = str(player.get("player_id", "")).strip_edges()
 	configured_name = str(player.get("name", "Unknown Player")).strip_edges()
 	configured_generated = bool(player.get("generated_prospect", false))
