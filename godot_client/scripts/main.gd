@@ -14,6 +14,7 @@ const LongActionManagerV3 = preload("res://scripts/long_action_manager_v3.gd")
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const UiComponentsV3 = preload("res://scripts/ui_components_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+const FranchiseHeroArtV3 = preload("res://scripts/franchise_hero_art_v3.gd")
 const UxPolishV3 = preload("res://scripts/ux_polish_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
@@ -95,6 +96,7 @@ var branded_primary_buttons: Array = []
 var background_top_band: ColorRect
 var background_accent_line: ColorRect
 var header_eyebrow_label: Label
+var franchise_hero_art: Control
 var team_card_panel: PanelContainer
 var team_badge_panel: PanelContainer
 var team_card_eyebrow_label: Label
@@ -533,8 +535,12 @@ func _build_header() -> Control:
 
 func _build_team_card() -> Control:
 	team_card_panel = _card(Vector2(330, 220))
+	team_card_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var card := team_card_panel
 	card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(active_team_primary, 0.72)))
+	franchise_hero_art = FranchiseHeroArtV3.new()
+	franchise_hero_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(franchise_hero_art)
 	var body := _card_body(card, 20)
 	body.add_theme_constant_override("separation", 12)
 
@@ -2962,6 +2968,8 @@ func _apply_active_team_brand(team_abbreviation: String) -> void:
 	if long_action_spinner_label != null:
 		long_action_spinner_label.add_theme_color_override("font_color", active_team_hover)
 
+	if franchise_hero_art != null:
+		franchise_hero_art.apply_team_brand(team_key, active_team_primary, active_team_secondary)
 	if team_card_panel != null:
 		team_card_panel.add_theme_stylebox_override(
 			"panel",
