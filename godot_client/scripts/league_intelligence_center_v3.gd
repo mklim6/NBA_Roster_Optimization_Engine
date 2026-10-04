@@ -1,17 +1,26 @@
 extends Control
 
+const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
+const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+
 const LEAGUE_URL := "http://127.0.0.1:8765/v3/league-intelligence"
 
-const BG := Color("080b12")
-const PANEL := Color("121824")
-const PANEL_ALT := Color("171f2d")
-const TEXT := Color("f7f8fb")
-const MUTED := Color("8d99aa")
-const ACCENT := Color("8ed8ff")
-const GOOD := Color("61d69b")
-const GOLD := Color("f3c96b")
-const TEAM_PRIMARY := Color("d9273c")
-const BORDER := Color("263247")
+const BG := DesignSystemV3.BG
+const PANEL := DesignSystemV3.PANEL
+const PANEL_ALT := DesignSystemV3.PANEL_ALT
+const TEXT := DesignSystemV3.TEXT
+const MUTED := DesignSystemV3.MUTED
+const ACCENT := DesignSystemV3.ACCENT
+const GOOD := DesignSystemV3.GOOD
+const GOLD := DesignSystemV3.GOLD
+const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
+const BORDER := DesignSystemV3.BORDER
+
+var brand_heading: Label
+var standings_tables: Array = []
+var standings_team := ""
+var standings_highlight := GOOD
+var last_standings := {}
 
 var league_request: HTTPRequest
 var status_label: Label
@@ -27,6 +36,18 @@ var awards_label: Label
 var postseason_label: Label
 var history_label: Label
 var refresh_button: Button
+
+
+func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	standings_team = _team
+	standings_highlight = primary.lerp(Color.WHITE, 0.45)
+	if brand_heading != null:
+		brand_heading.add_theme_color_override("font_color", standings_highlight)
+	if refresh_button != null:
+		TeamBrandingV3.apply_primary_button(refresh_button, primary)
+	if standings_tables.size() == 2:
+		_render_standings_table(standings_tables[0], _array(last_standings.get("east")))
+		_render_standings_table(standings_tables[1], _array(last_standings.get("west")))
 
 
 func _ready() -> void:
@@ -66,6 +87,7 @@ func _build_interface() -> void:
 	header.add_child(titles)
 
 	var eyebrow := _label("FRANCHISE OPERATIONS • LEAGUE", 10, TEAM_PRIMARY)
+	brand_heading = eyebrow
 	titles.add_child(eyebrow)
 	var title := _label("LEAGUE INTELLIGENCE CENTER", 32, TEXT)
 	titles.add_child(title)
@@ -94,6 +116,7 @@ func _build_interface() -> void:
 	active_seed_label = _metric(metrics, "YOUR POSITION", "LOADING...")
 
 	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.add_child(scroll)
@@ -164,10 +187,11 @@ func _render(payload: Dictionary) -> void:
 	var standing := _dict(payload.get("active_team_standing"))
 	var phase := _s(season.get("phase"), "unknown").replace("_", " ").to_upper()
 	season_label.text = "%s • %s" % [_s(season.get("label"), "UNKNOWN"), phase]
+	var schedule_known := typeof(schedule.get("completed_games")) in [TYPE_INT, TYPE_FLOAT] and typeof(schedule.get("total_games")) in [TYPE_INT, TYPE_FLOAT] and typeof(schedule.get("remaining_games")) in [TYPE_INT, TYPE_FLOAT]
 	var completed := _i(schedule.get("completed_games"))
 	var total := _i(schedule.get("total_games"))
 	var remaining := _i(schedule.get("remaining_games"))
-	progress_label.text = "%d / %d • %d LEFT" % [completed, total, remaining]
+	progress_label.text = "%d / %d • %d LEFT" % [completed, total, remaining] if schedule_known else "UNAVAILABLE"
 	if standing.is_empty():
 		active_seed_label.text = "UNAVAILABLE"
 	else:
@@ -180,6 +204,10 @@ func _render(payload: Dictionary) -> void:
 	var standings := _dict(payload.get("standings"))
 	standings_east.text = _standings_text(_array(standings.get("east")))
 	standings_west.text = _standings_text(_array(standings.get("west")))
+	last_standings = standings
+	standings_team = _s(standing.get("team"), standings_team)
+	_render_standings_table(standings_tables[0], _array(standings.get("east")))
+	_render_standings_table(standings_tables[1], _array(standings.get("west")))
 	leaders_label.text = _leaders_text(_dict(payload.get("leaders")), _i(payload.get("leader_minimum_games")))
 	playoff_label.text = _playoff_text(_dict(payload.get("playoff_picture")))
 	schedule_label.text = _schedule_text(schedule)
@@ -189,6 +217,36 @@ func _render(payload: Dictionary) -> void:
 
 	status_label.text = "LIVE V3 CHECKPOINT • READ ONLY • V2 PROTECTED"
 	status_label.add_theme_color_override("font_color", GOOD)
+
+
+func _render_standings_table(table: GridContainer, rows: Array) -> void:
+	for child in table.get_children():
+		table.remove_child(child)
+		child.queue_free()
+	for heading in ["#", "TEAM", "W-L", "DIFF", "STREAK"]:
+		table.add_child(_label(heading, 10, MUTED))
+	if rows.is_empty():
+		table.add_child(_label("—", 12, MUTED))
+		table.add_child(_label("Unavailable", 12, MUTED))
+		return
+	for raw in rows:
+		if typeof(raw) != TYPE_DICTIONARY:
+			continue
+		var row: Dictionary = raw
+		var team := _s(row.get("team"), "N/A")
+		var is_active := team == standings_team and standings_team != ""
+		var diff := _s(row.get("point_diff"), "N/A")
+		if typeof(row.get("point_diff")) in [TYPE_INT, TYPE_FLOAT]:
+			diff = "%+d" % int(row.get("point_diff"))
+		var cells := [_s(row.get("rank"), "N/A"), team + (" • YOU" if is_active else ""), _s(row.get("record"), "N/A"), diff, _s(row.get("streak"), "N/A")]
+		for i in range(cells.size()):
+			var cell := _label(cells[i], 12, standings_highlight if is_active else TEXT)
+			cell.tooltip_text = _s(row.get("team_name"), team) if i == 1 else cells[i]
+			if i == 1:
+				cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			elif i > 1:
+				cell.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			table.add_child(cell)
 
 
 func _standings_text(rows: Array) -> String:
@@ -221,6 +279,8 @@ func _leaders_text(leaders: Dictionary, minimum_games: int) -> String:
 		lines.append("")
 		lines.append(str(category[0]))
 		var rows := _array(leaders.get(str(category[1])))
+		if rows.is_empty():
+			lines.append("No qualifying players yet." if typeof(leaders.get(str(category[1]))) == TYPE_ARRAY else "Leaderboard unavailable.")
 		for raw in rows:
 			var row := _dict(raw)
 			lines.append("%d. %s (%s)  %.1f %s" % [
@@ -255,7 +315,7 @@ func _schedule_text(schedule: Dictionary) -> String:
 	var lines: Array[String] = ["RECENT RESULTS"]
 	var recent := _array(schedule.get("recent_results"))
 	if recent.is_empty():
-		lines.append("No completed games yet.")
+		lines.append("No completed games yet." if typeof(schedule.get("recent_results")) == TYPE_ARRAY else "Recent results unavailable.")
 	for raw in recent.slice(0, 6):
 		var row := _dict(raw)
 		lines.append("Day %d • %s %d at %s %d" % [
@@ -269,7 +329,7 @@ func _schedule_text(schedule: Dictionary) -> String:
 	lines.append("UPCOMING")
 	var upcoming := _array(schedule.get("upcoming_games"))
 	if upcoming.is_empty():
-		lines.append("No regular-season games remain.")
+		lines.append("No regular-season games remain." if typeof(schedule.get("upcoming_games")) == TYPE_ARRAY else "Upcoming schedule unavailable.")
 	for raw in upcoming.slice(0, 6):
 		var row := _dict(raw)
 		lines.append("Day %d • %s at %s" % [
@@ -363,6 +423,15 @@ func _section(parent: HBoxContainer, title: String, initial: String, minimum: Ve
 	var body := _label(initial, 12, TEXT)
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(body)
+	if title in ["EASTERN CONFERENCE", "WESTERN CONFERENCE"]:
+		body.hide()
+		var table := GridContainer.new()
+		table.columns = 5
+		table.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		table.add_theme_constant_override("h_separation", 10)
+		table.add_theme_constant_override("v_separation", 8)
+		column.add_child(table)
+		standings_tables.append(table)
 	return body
 
 
