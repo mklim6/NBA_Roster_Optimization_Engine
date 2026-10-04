@@ -74,6 +74,12 @@ var draft_dialog: ConfirmationDialog
 var cpu_draft_dialog: ConfirmationDialog
 var roster_cut_dialog: ConfirmationDialog
 
+var prospect_dossier: VBoxContainer
+var comparison_prospect: Dictionary = {}
+var board_limit := 50
+var board_scroll: ScrollContainer
+var load_more_button: Button
+var pin_button: Button
 var page_payload: Dictionary = {}
 var prospects: Array = []
 var focus_selected: Dictionary = {}
@@ -118,6 +124,8 @@ func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
 		TeamBrandingV3.apply_primary_button(button, primary)
 	if board_rows != null:
 		_render_board()
+	if prospect_dossier != null:
+		_update_dossier()
 
 
 func _dict(value: Variant) -> Dictionary:
@@ -280,7 +288,22 @@ func _build_ui() -> void:
 	scout_value = _metric(metrics, "LEAD SCOUT", "LOADING")
 	confidence_value = _metric(metrics, "AVG CONFIDENCE", "LOADING")
 
-	var content := HBoxContainer.new()
+	prospect_dossier = preload("res://scripts/prospect_dossier_v3.gd").new()
+	prospect_dossier.name = "ProspectDossier"
+	column.add_child(prospect_dossier)
+	var comparison_actions := HBoxContainer.new()
+	comparison_actions.add_theme_constant_override("separation", 12)
+	column.add_child(comparison_actions)
+	pin_button = _action_button("PIN SELECTED REPORT")
+	pin_button.disabled = true
+	pin_button.pressed.connect(_pin_comparison)
+	comparison_actions.add_child(pin_button)
+	var clear_comparison := _action_button("CLEAR COMPARISON")
+	clear_comparison.pressed.connect(func(): comparison_prospect.clear(); _update_dossier())
+	comparison_actions.add_child(clear_comparison)
+	_update_dossier()
+
+	var content := VBoxContainer.new()
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content.add_theme_constant_override("separation", 14)
 	column.add_child(content)
@@ -307,7 +330,7 @@ func _build_ui() -> void:
 
 	var board_header_row := HBoxContainer.new()
 	board_header_row.add_theme_constant_override("separation", 8)
-	board_header_row.add_child(_column_label("FOCUS", 42))
+	board_header_row.add_child(_column_label("PRI", 42))
 	board_header_row.add_child(_column_label("RK", 28))
 	var prospect_header := _column_label("PROSPECT", 150)
 	prospect_header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -316,11 +339,13 @@ func _build_ui() -> void:
 	board_header_row.add_child(_column_label("OVR", 40))
 	board_header_row.add_child(_column_label("POT", 40))
 	board_header_row.add_child(_column_label("CONF", 42))
-	board_header_row.add_child(_column_label("PROJECTED", 65))
+	board_header_row.add_child(_column_label("RANGE", 65))
 	board_header_row.add_child(_column_label("DRAFT", 58))
 	board_body.add_child(board_header_row)
 
-	var board_scroll := ScrollContainer.new()
+	board_scroll = ScrollContainer.new()
+	board_scroll.name = "ProspectBoardScroll"
+	board_scroll.custom_minimum_size.y = 480
 	board_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	board_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	board_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -329,14 +354,23 @@ func _build_ui() -> void:
 	board_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	board_rows.add_theme_constant_override("separation", 4)
 	board_scroll.add_child(board_rows)
+	load_more_button = _action_button("LOAD MORE PROSPECTS")
+	load_more_button.pressed.connect(func(): board_limit += 50; _render_board())
+	board_body.add_child(load_more_button)
 	content.add_child(board_card)
 
-	var actions := VBoxContainer.new()
+	var actions := GridContainer.new()
+	actions.columns = 2
+	actions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	actions.add_theme_constant_override("h_separation", 14)
+	actions.add_theme_constant_override("v_separation", 14)
 	actions.custom_minimum_size = Vector2(320, 0)
 	actions.add_theme_constant_override("separation", 14)
 	content.add_child(actions)
 
 	var scout_card := _card(Vector2(320, 315))
+	scout_card.name = "ScoutingOperationsCard"
+	scout_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scout_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(GOLD, 0.48)))
 	var scout_body := _card_body(scout_card, 16)
 	scout_body.add_child(_small_label("WEEKLY INTELLIGENCE CYCLE", GOLD))
@@ -345,7 +379,7 @@ func _build_ui() -> void:
 	focus_label.text = "Select up to 6 priority prospects from the board."
 	focus_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	focus_label.add_theme_color_override("font_color", TEXT)
-	focus_label.add_theme_font_size_override("font_size", 11)
+	focus_label.add_theme_font_size_override("font_size", 14)
 	scout_body.add_child(focus_label)
 
 	var scout_buttons := HBoxContainer.new()
@@ -369,6 +403,8 @@ func _build_ui() -> void:
 	actions.add_child(scout_card)
 
 	var draft_card := _card(Vector2(320, 390))
+	draft_card.name = "DraftNightDeskCard"
+	draft_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	draft_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(ACCENT, 0.54)))
 	var draft_body := _card_body(draft_card, 16)
 	draft_body.add_child(_small_label("PHASE-LOCKED TRANSACTION", ACCENT))
@@ -377,13 +413,13 @@ func _build_ui() -> void:
 	draft_status_label.text = "Draft state loading..."
 	draft_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	draft_status_label.add_theme_color_override("font_color", MUTED)
-	draft_status_label.add_theme_font_size_override("font_size", 10)
+	draft_status_label.add_theme_font_size_override("font_size", 13)
 	draft_body.add_child(draft_status_label)
 	selected_prospect_label = Label.new()
 	selected_prospect_label.text = "Select a prospect from the board."
 	selected_prospect_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	selected_prospect_label.add_theme_color_override("font_color", TEXT)
-	selected_prospect_label.add_theme_font_size_override("font_size", 11)
+	selected_prospect_label.add_theme_font_size_override("font_size", 14)
 	draft_body.add_child(selected_prospect_label)
 
 	var draft_buttons := HBoxContainer.new()
@@ -493,6 +529,11 @@ func _on_summary_completed(result: int, response_code: int, _headers: PackedStri
 		status_label.text = "SAFETY FAILURE • read-only scouting load changed a protected checkpoint."
 		status_label.add_theme_color_override("font_color", BAD)
 		return
+	selected_prospect.clear()
+	comparison_prospect.clear()
+	board_limit = 50
+	board_scroll.scroll_vertical = 0
+	selected_prospect_label.text = "Select a prospect from the board."
 	page_payload = raw_payload
 	board_available = typeof(raw_payload.get("board")) == TYPE_ARRAY
 	prospects = _array(raw_payload.get("board"))
@@ -502,6 +543,7 @@ func _on_summary_completed(result: int, response_code: int, _headers: PackedStri
 	for raw_id in saved_focus:
 		focus_selected[str(raw_id)] = true
 	_apply_summary()
+	_update_dossier()
 	_render_board()
 
 
@@ -574,8 +616,9 @@ func _render_board() -> void:
 			_display(row.get("School / Club")), _display(row.get("Archetype"))]
 		if query == "" or query in haystack.to_lower():
 			matches.append(row)
-	var displayed := mini(50, matches.size())
-	board_count.text = "Showing %d of %d matches" % [displayed, matches.size()] if matches.size() > 50 or query != "" else "Showing %d of %d prospects" % [displayed, total]
+	var displayed := mini(board_limit, matches.size())
+	load_more_button.visible = displayed < matches.size()
+	board_count.text = "Showing %d of %d matches" % [displayed, matches.size()] if matches.size() > board_limit or query != "" else "Showing %d of %d prospects" % [displayed, total]
 	for row in matches.slice(0, displayed):
 		board_rows.add_child(_prospect_row(row))
 	if displayed == 0:
@@ -584,6 +627,7 @@ func _render_board() -> void:
 
 func _prospect_row(row: Dictionary) -> Control:
 	var panel := PanelContainer.new()
+	panel.custom_minimum_size.y = 84
 	var is_selected: bool = not selected_prospect.is_empty() and row.get("prospect_id") != null and row.get("prospect_id") == selected_prospect.get("prospect_id")
 	panel.add_theme_stylebox_override("panel", _box(PANEL_ALT, 8, brand_color if is_selected else BORDER))
 	var margin := MarginContainer.new()
@@ -604,13 +648,24 @@ func _prospect_row(row: Dictionary) -> Control:
 	var name := _cell(_display(row.get("Prospect"), prospect_id), 150, TEXT)
 	name.tooltip_text = name.text
 	name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	line.add_child(name)
+	name.add_theme_font_size_override("font_size", 17)
+	var identity := VBoxContainer.new()
+	identity.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	identity.alignment = BoxContainer.ALIGNMENT_CENTER
+	identity.add_theme_constant_override("separation", 4)
+	identity.add_child(name)
+	var school := _cell("%s • %s" % [_display(row.get("School / Club")), _display(row.get("Archetype"))], 150, MUTED)
+	school.add_theme_font_size_override("font_size", 12)
+	school.tooltip_text = school.text
+	identity.add_child(school)
+	line.add_child(identity)
 	line.add_child(_cell(_display(row.get("Pos")), 32, ACCENT))
 	line.add_child(_cell(_rating_text(row.get("Scouted OVR")), 40, TEXT))
 	line.add_child(_cell(_rating_text(row.get("Scouted POT")), 40, GOOD))
 	line.add_child(_cell(_confidence_text(row.get("Confidence")), 42, MUTED))
 	line.add_child(_cell(_display(row.get("Projected")), 65, MUTED))
 	var select_button := _mini_button("SELECT")
+	select_button.name = "SelectProspect_" + prospect_id
 	select_button.custom_minimum_size = Vector2(58, 30)
 	select_button.disabled = bool(row.get("Drafted", false))
 	select_button.pressed.connect(_select_prospect.bind(row.duplicate(true)))
@@ -619,6 +674,8 @@ func _prospect_row(row: Dictionary) -> Control:
 
 
 func _on_search_changed(_value: String) -> void:
+	board_limit = 50
+	board_scroll.scroll_vertical = 0
 	_render_board()
 
 
@@ -790,8 +847,20 @@ func _on_scout_execute_completed(result: int, response_code: int, _headers: Pack
 	_request_summary()
 
 
+func _update_dossier() -> void:
+	prospect_dossier.configure(selected_prospect, comparison_prospect, _dict(page_payload.get("draft")), str(page_payload.get("team", "")), brand_color)
+	pin_button.disabled = selected_prospect.is_empty()
+	pin_button.text = "REPORT PINNED" if not comparison_prospect.is_empty() and comparison_prospect.get("prospect_id", "") == selected_prospect.get("prospect_id", "") else "PIN SELECTED REPORT"
+
+func _pin_comparison() -> void:
+	if selected_prospect.is_empty():
+		return
+	comparison_prospect = selected_prospect.duplicate(true)
+	_update_dossier()
+
 func _select_prospect(row: Dictionary) -> void:
 	selected_prospect = row
+	_update_dossier()
 	selected_prospect_label.text = "%s • %s • Scouted %s OVR / %s POT • %s confidence" % [
 		_display(row.get("Prospect"), _display(row.get("prospect_id"))),
 		_display(row.get("Pos")), _rating_text(row.get("Scouted OVR")),
@@ -799,6 +868,12 @@ func _select_prospect(row: Dictionary) -> void:
 	_invalidate_draft_preview()
 	_update_draft_controls()
 	_render_board()
+	await get_tree().process_frame
+	var ancestor = prospect_dossier.get_parent()
+	while ancestor != null and not ancestor is ScrollContainer:
+		ancestor = ancestor.get_parent()
+	if ancestor is ScrollContainer:
+		ancestor.ensure_control_visible(prospect_dossier)
 
 
 func _update_draft_controls() -> void:
@@ -1376,7 +1451,7 @@ func _cell(text_value: String, width: int, color: Color) -> Label:
 	label.text = text_value
 	label.custom_minimum_size = Vector2(width, 0)
 	label.add_theme_color_override("font_color", color)
-	label.add_theme_font_size_override("font_size", 10)
+	label.add_theme_font_size_override("font_size", 14)
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	return label
 
@@ -1388,7 +1463,7 @@ func _column_label(text_value: String, width: int) -> Label:
 func _mini_button(text_value: String) -> Button:
 	var button := Button.new()
 	button.text = text_value
-	button.add_theme_font_size_override("font_size", 9)
+	button.add_theme_font_size_override("font_size", 12)
 	button.add_theme_color_override("font_color", TEXT)
 	button.add_theme_stylebox_override("normal", _box(PANEL, 7, BORDER))
 	button.add_theme_stylebox_override("hover", _box(PANEL_HOVER, 7, ACCENT))
