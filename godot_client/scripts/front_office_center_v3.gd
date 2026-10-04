@@ -35,6 +35,7 @@ var chemistry_value: Label
 var roster_value: Label
 var health_text: Label
 var morale_text: Label
+var development_lab: VBoxContainer
 var development_text: Label
 var workload_text: Label
 var financial_text: Label
@@ -140,7 +141,14 @@ func _build_page() -> void:
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	grid.add_theme_constant_override("h_separation", 14)
 	grid.add_theme_constant_override("v_separation", 14)
-	scroll.add_child(grid)
+	var sections := VBoxContainer.new()
+	sections.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sections.add_theme_constant_override("separation", 18)
+	scroll.add_child(sections)
+	development_lab = preload("res://scripts/development_lab_v3.gd").new()
+	development_lab.name = "DevelopmentLab"
+	sections.add_child(development_lab)
+	sections.add_child(grid)
 
 	health_text = _section(grid, "TEAM HEALTH", "Injury availability and return timetable.")
 	morale_text = _section(grid, "MORALE + ROLE HEALTH", "Role satisfaction and trade-request pressure.")
@@ -159,6 +167,7 @@ func _build_http() -> void:
 func _refresh() -> void:
 	if request == null:
 		return
+	development_lab.clear_report()
 	status_label.text = "REFRESHING FRONT OFFICE..."
 	status_label.add_theme_color_override("font_color", MUTED)
 	var error := request.request(FRONT_OFFICE_URL)
@@ -226,6 +235,7 @@ func _render_payload() -> void:
 
 	health_text.text = _render_health(health)
 	morale_text.text = _render_morale(morale, chemistry)
+	development_lab.configure(development)
 	development_text.text = _render_development(development)
 	workload_text.text = _render_workload(health, rotation)
 	financial_text.text = _render_financial(financial, team)
