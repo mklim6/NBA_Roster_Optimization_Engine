@@ -230,12 +230,11 @@ def main() -> int:
             and "func apply_preferences" in save_text
         ),
         "save_manager_confirmation_preferences_wired": all(
-            token in save_text
-            for token in (
-                'desktop_preferences.get("confirm_new_franchise", true)',
-                'desktop_preferences.get("confirm_load", true)',
-                'desktop_preferences.get("confirm_delete", true)',
-            )
+            f'desktop_preferences.get("{key}", true)' in save_text
+            or (f'_confirmation_preference("{key}")' in save_text
+                and "func _confirmation_preference" in save_text
+                and "return value if typeof(value) == TYPE_BOOL else true" in save_text)
+            for key in ("confirm_new_franchise", "confirm_load", "confirm_delete")
         ),
         "post_switch_navigation_preference_wired": (
             'desktop_preferences.get("return_home_after_save_switch", true)' in main_text

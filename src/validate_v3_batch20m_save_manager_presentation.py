@@ -133,6 +133,8 @@ func _initialize():
     assert("LOAD BLOCKED" in page.status_label.text)
     page.desktop_preferences.confirm_delete = null
     assert(page._confirmation_preference("confirm_delete"))
+    page.desktop_preferences.confirm_delete = false
+    assert(not page._confirmation_preference("confirm_delete"))
     page._on_confirm_cancelled()
 
     page.selected_slot_id = "slot2"
