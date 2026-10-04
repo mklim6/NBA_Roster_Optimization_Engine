@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import asdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 import copy
@@ -734,11 +736,31 @@ def _contract_payload(player: Any) -> dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=32)
+def _desktop_season_thresholds(season_label: str) -> dict[str, Any]:
+    """Resolve display thresholds without creating or saving a financial snapshot."""
+    from freeform_trade_machine_engine_v3 import load_runtime_data
+    from franchise_financial_cba_bridge_v1 import build_future_thresholds
+
+    return asdict(build_future_thresholds(load_runtime_data(), season_label))
+
+
 def _roster_financial_summary(state: Any, team_abbreviation: str) -> dict[str, Any]:
     financial = _obj_dict(
         getattr(state, "franchise_active_financial_snapshot_v1", {})
     )
     thresholds = _obj_dict(financial.get("thresholds", {}))
+    threshold_source = "saved_financial_snapshot"
+    threshold_error = None
+    if _number(thresholds.get("salary_cap")) is None:
+        season_label = str(getattr(getattr(state, "settings", None), "season_label", "") or "")
+        try:
+            thresholds = _desktop_season_thresholds(season_label)
+            threshold_source = str(thresholds.get("source", "season_rules"))
+        except Exception as exc:
+            # An unavailable rule environment must remain unknown, never zero.
+            threshold_source = "unavailable"
+            threshold_error = str(exc)
 
     salary_cap = _number(thresholds.get("salary_cap"))
     minimum_team_salary = _number(thresholds.get("minimum_team_salary"))
@@ -796,6 +818,8 @@ def _roster_financial_summary(state: Any, team_abbreviation: str) -> dict[str, A
         "second_apron_room_display": _money_display(second_apron_room),
         "salary_rows": salary_rows,
         "missing_salary_rows": missing_salary_rows,
+        "threshold_source": threshold_source,
+        "threshold_error": threshold_error,
         "basis": "active_roster_contracts_only",
         "is_estimate": True,
     }
