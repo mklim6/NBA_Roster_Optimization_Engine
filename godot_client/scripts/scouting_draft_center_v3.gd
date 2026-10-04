@@ -5,6 +5,7 @@ extends Control
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
 const PageIdentityV3 = preload("res://scripts/page_identity_v3.gd")
+const DraftNightEventV3 = preload("res://scripts/draft_night_event_v3.gd")
 
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/scouting-draft"
 const SCOUT_PREVIEW_URL := "http://127.0.0.1:8765/v3/scouting/preview"
@@ -75,6 +76,7 @@ var cpu_draft_dialog: ConfirmationDialog
 var roster_cut_dialog: ConfirmationDialog
 
 var prospect_dossier: VBoxContainer
+var draft_night_event: Control
 var comparison_prospect: Dictionary = {}
 var board_limit := 50
 var board_scroll: ScrollContainer
@@ -126,6 +128,8 @@ func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
 		_render_board()
 	if prospect_dossier != null:
 		_update_dossier()
+	if draft_night_event != null:
+		_refresh_draft_night_event()
 
 
 func _dict(value: Variant) -> Dictionary:
@@ -287,6 +291,10 @@ func _build_ui() -> void:
 	scouting_week_value = _metric(metrics, "SCOUTING WEEK", "LOADING")
 	scout_value = _metric(metrics, "LEAD SCOUT", "LOADING")
 	confidence_value = _metric(metrics, "AVG CONFIDENCE", "LOADING")
+
+	draft_night_event = DraftNightEventV3.new()
+	draft_night_event.name = "DraftNightEvent"
+	column.add_child(draft_night_event)
 
 	prospect_dossier = preload("res://scripts/prospect_dossier_v3.gd").new()
 	prospect_dossier.name = "ProspectDossier"
@@ -544,6 +552,7 @@ func _on_summary_completed(result: int, response_code: int, _headers: PackedStri
 		focus_selected[str(raw_id)] = true
 	_apply_summary()
 	_update_dossier()
+	_refresh_draft_night_event()
 	_render_board()
 
 
@@ -847,6 +856,18 @@ func _on_scout_execute_completed(result: int, response_code: int, _headers: Pack
 	_request_summary()
 
 
+func _refresh_draft_night_event() -> void:
+	if draft_night_event == null:
+		return
+	draft_night_event.configure(
+		page_payload,
+		prospects,
+		selected_prospect,
+		str(page_payload.get("team", "")),
+		brand_color
+	)
+
+
 func _update_dossier() -> void:
 	prospect_dossier.configure(selected_prospect, comparison_prospect, _dict(page_payload.get("draft")), str(page_payload.get("team", "")), brand_color)
 	pin_button.disabled = selected_prospect.is_empty()
@@ -861,6 +882,7 @@ func _pin_comparison() -> void:
 func _select_prospect(row: Dictionary) -> void:
 	selected_prospect = row
 	_update_dossier()
+	_refresh_draft_night_event()
 	selected_prospect_label.text = "%s • %s • Scouted %s OVR / %s POT • %s confidence" % [
 		_display(row.get("Prospect"), _display(row.get("prospect_id"))),
 		_display(row.get("Pos")), _rating_text(row.get("Scouted OVR")),
