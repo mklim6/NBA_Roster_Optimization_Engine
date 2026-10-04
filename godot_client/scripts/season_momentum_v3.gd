@@ -1,9 +1,11 @@
 extends VBoxContainer
+signal navigate(page: String)
 const DS = preload("res://scripts/design_system_v3.gd")
 const Logo = preload("res://scripts/team_logo_v3.gd")
 var payload: Dictionary = {}
 var milestone_cards: Array = []
 var result_cards: Array = []
+var schedule_cards: Array = []
 var chart: Control
 
 class MarginChart extends Control:
@@ -34,6 +36,7 @@ func configure(data: Dictionary, accent: Color, unavailable: String = "") -> voi
 	payload = data.duplicate(true)
 	milestone_cards.clear()
 	result_cards.clear()
+	schedule_cards.clear()
 	chart = null
 	for child in get_children():
 		remove_child(child)
@@ -43,6 +46,7 @@ func configure(data: Dictionary, accent: Color, unavailable: String = "") -> voi
 	if data.is_empty():
 		add_child(_label(unavailable if not unavailable.is_empty() else "Season progress unavailable. Return to HQ to retry.", 14, DS.MUTED))
 		return
+	_build_schedule(data.get("next_games", []), accent)
 	var target = data.get("next_target", null)
 	var wins = data.get("wins", null)
 	var message := "All four win milestones reached. Keep building your season."
@@ -132,3 +136,33 @@ func _label(text: String, font_size: int, color: Color = DS.TEXT) -> Label:
 	label.add_theme_font_size_override("font_size", font_size)
 	label.add_theme_color_override("font_color", color)
 	return label
+
+func _build_schedule(games: Array, accent: Color) -> void:
+	add_child(_label("NEXT FIVE • YOUR UPCOMING SCHEDULE", 16, DS.GOLD))
+	if games.is_empty():
+		add_child(_label("No remaining games in the current regular-season schedule. Review Season Center for the next phase.", 14, DS.MUTED))
+		return
+	var strip := HBoxContainer.new()
+	strip.add_theme_constant_override("separation", 8)
+	add_child(strip)
+	for game in games:
+		var body := _card(strip, accent)
+		schedule_cards.append(body)
+		var logo := Logo.new()
+		logo.custom_minimum_size = Vector2(48,44)
+		logo.configure(str(game.get("opponent", "")))
+		body.add_child(logo)
+		body.add_child(_label(str(game.get("opponent", "")), 20))
+		body.add_child(_label(str(game.get("venue", "")) + " • DAY " + str(game.get("day_index", "")), 11, DS.MUTED))
+		var days := int(game.get("days_until", 0))
+		body.add_child(_label("TODAY" if days == 0 else "IN %s DAYS" % days if days > 0 else "AWAITING PLAY", 11))
+		var rest = game.get("rest_days", null)
+		var rest_text: String = "REST UNKNOWN" if rest == null else "%s REST %s" % [rest, "DAY" if int(rest) == 1 else "DAYS"]
+		if bool(game.get("back_to_back", false)):
+			rest_text = "BACK-TO-BACK"
+		body.add_child(_label(rest_text, 11, DS.GOLD if bool(game.get("back_to_back", false)) else DS.MUTED))
+	var prepare := Button.new()
+	prepare.text = "PREPARE NEXT GAME • COACHING & ROTATION"
+	prepare.custom_minimum_size.y = 40
+	prepare.pressed.connect(func(): navigate.emit("GAME DAY"))
+	add_child(prepare)

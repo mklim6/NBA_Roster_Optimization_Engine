@@ -125,6 +125,7 @@ func _render() -> void:
 	journey.add_child(_panel("NEXT CHAPTER", "%s\n%s" % [str(summary.get("draft", {}).get("draft_year", "Upcoming")) + " draft", str(summary.get("draft", {}).get("phase", "Not available")).replace("_", " ").capitalize()], "SCOUTING", "SCOUTING BOARD"))
 	var momentum = preload("res://scripts/season_momentum_v3.gd").new()
 	momentum.name = "SeasonMomentum"
+	momentum.navigate.connect(func(page): navigate.emit(page))
 	add_child(momentum)
 	momentum.configure(intelligence.get("momentum", {}), accent, report_status)
 	add_child(_label("FRONT OFFICE DECISIONS", 13, DS.GOLD))
