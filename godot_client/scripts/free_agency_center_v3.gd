@@ -1,7 +1,10 @@
 ﻿extends Control
 
+# Batch 22 franchise presentation macro
+
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+const PageIdentityV3 = preload("res://scripts/page_identity_v3.gd")
 
 const MARKET_URL := "http://127.0.0.1:8765/v3/free-agency/market"
 const PREVIEW_URL := "http://127.0.0.1:8765/v3/free-agency/preview"
@@ -19,6 +22,9 @@ const BORDER := DesignSystemV3.BORDER
 const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
 const TEAM_PRIMARY_HOVER := DesignSystemV3.TEAM_PRIMARY_HOVER
 const GOLD := DesignSystemV3.GOLD
+
+var page_identity: Control
+var page_brand_bar: ColorRect
 
 var market_request: HTTPRequest
 var preview_request: HTTPRequest
@@ -58,6 +64,10 @@ var long_action_manager = null
 
 
 func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	if page_identity != null:
+		page_identity.configure(_team, primary, _secondary)
+	if page_brand_bar != null:
+		page_brand_bar.color = primary
 	brand_color = primary
 	if brand_heading != null:
 		brand_heading.add_theme_color_override("font_color", TeamBrandingV3.hover_color(primary))
@@ -145,6 +155,12 @@ func _build_ui() -> void:
 	header.add_theme_constant_override("separation", 12)
 	column.add_child(header)
 
+	page_brand_bar = ColorRect.new()
+	page_brand_bar.custom_minimum_size = Vector2(0, 4)
+	page_brand_bar.color = TEAM_PRIMARY
+	page_brand_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(page_brand_bar)
+
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(titles)
@@ -154,7 +170,7 @@ func _build_ui() -> void:
 	var title := Label.new()
 	title.text = "FREE AGENCY"
 	title.add_theme_color_override("font_color", TEXT)
-	title.add_theme_font_size_override("font_size", 31)
+	title.add_theme_font_size_override("font_size", 36)
 	titles.add_child(title)
 
 	var subtitle := Label.new()
@@ -162,6 +178,9 @@ func _build_ui() -> void:
 	subtitle.add_theme_color_override("font_color", MUTED)
 	subtitle.add_theme_font_size_override("font_size", 12)
 	titles.add_child(subtitle)
+
+	page_identity = PageIdentityV3.new()
+	header.add_child(page_identity)
 
 	var refresh_button := _action_button("REFRESH MARKET", false)
 	refresh_button.pressed.connect(_request_market)
@@ -183,6 +202,7 @@ func _build_ui() -> void:
 	column.add_child(content_row)
 
 	var market_card := _card(Vector2(540, 590))
+	market_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(ACCENT, 0.46)))
 	market_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var market_body := _card_body(market_card, 16)
 
@@ -225,6 +245,7 @@ func _build_ui() -> void:
 	market_scroll.add_child(market_rows)
 
 	var negotiation_card := _card(Vector2(320, 590))
+	negotiation_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(GOLD, 0.52)))
 	var negotiation_body := _card_body(negotiation_card, 16)
 	negotiation_body.add_child(_small_label("CONTRACT DESK", GOLD))
 	negotiation_body.add_child(_section_title("NEGOTIATION PREVIEW"))

@@ -2,6 +2,7 @@ extends Control
 
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+const TeamLogoV3 = preload("res://scripts/team_logo_v3.gd")
 
 const GAME_DAY_URL := "http://127.0.0.1:8765/v3/game-day"
 const GAME_DAY_SIMULATE_URL := "http://127.0.0.1:8765/v3/game-day/simulate"
@@ -25,9 +26,24 @@ const TEAM_PRIMARY := Color("d9273c")
 const TEAM_PRIMARY_HOVER := Color("ef4055")
 
 # Batch 20D Game Day presentation foundation
+# Batch 21B Game Day broadcast spectacle
 var team_brand_panel: PanelContainer
+var opponent_brand_panel: PanelContainer
 var matchup_card: PanelContainer
 var branded_top_band: ColorRect
+var team_logo_control: Control
+var opponent_logo_control: Control
+var team_accent_bar: ColorRect
+var opponent_accent_bar: ColorRect
+var team_context_label: Label
+var opponent_context_label: Label
+var broadcast_network_label: Label
+var broadcast_context_label: Label
+var postgame_scoreboard_panel: PanelContainer
+var postgame_home_logo: Control
+var postgame_away_logo: Control
+var postgame_home_team_label: Label
+var postgame_away_team_label: Label
 var readiness_values := {}
 var primary_buttons: Array = []
 
@@ -87,10 +103,17 @@ func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
 	if branded_top_band != null:
 		branded_top_band.color = Color(primary, 0.08)
 	if team_brand_panel != null:
-		team_brand_panel.add_theme_stylebox_override("panel", _box(primary, 14, TeamBrandingV3.hover_color(primary)))
-		team_badge.add_theme_color_override("font_color", TeamBrandingV3.readable_foreground(primary))
+		team_brand_panel.add_theme_stylebox_override("panel", _box(Color(primary, 0.88), 16, TeamBrandingV3.hover_color(primary)))
+		if team_badge != null:
+			team_badge.add_theme_color_override("font_color", TeamBrandingV3.readable_foreground(primary))
+	if team_accent_bar != null:
+		team_accent_bar.color = primary
+	if broadcast_network_label != null:
+		broadcast_network_label.add_theme_color_override("font_color", TeamBrandingV3.hover_color(primary))
 	if matchup_card != null:
 		matchup_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(primary, 0.58)))
+	if postgame_scoreboard_panel != null:
+		postgame_scoreboard_panel.add_theme_stylebox_override("panel", _box(Color("0d141f"), 16, Color(primary, 0.52)))
 	if postgame_active_card != null:
 		postgame_active_card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 12, Color(primary, 0.48)))
 		if postgame_active_box.get_child_count() > 0:
@@ -204,79 +227,180 @@ func _build_header() -> Control:
 	return row
 
 
+# Batch 21B.1 cinematic Game Day polish
+# Batch 22 franchise presentation macro
 func _build_matchup_card() -> Control:
-	var card := _card(Vector2(0, 190))
+	var card := _card(Vector2(0, 326))
+	card.name = "BroadcastMatchupHero"
 	matchup_card = card
-	card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(TEAM_PRIMARY, 0.58)))
-	var body := _card_body(card, 18)
+	card.add_theme_stylebox_override("panel", _box(Color("101823"), 20, Color(TEAM_PRIMARY, 0.62)))
+	var body := _card_body(card, 20)
+	body.add_theme_constant_override("separation", 12)
+
+	var broadcast_strip := HBoxContainer.new()
+	broadcast_strip.name = "BroadcastPregameStrip"
+	broadcast_strip.add_theme_constant_override("separation", 10)
+	body.add_child(broadcast_strip)
+
+	broadcast_network_label = _label("FRANCHISE NETWORK • PRIME TIME", 10, TEAM_PRIMARY_HOVER)
+	broadcast_network_label.name = "BroadcastNetworkLabel"
+	broadcast_strip.add_child(broadcast_network_label)
+
+	var broadcast_spacer := Control.new()
+	broadcast_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	broadcast_strip.add_child(broadcast_spacer)
+
+	broadcast_context_label = _label("PREGAME • LIVE", 10, GOLD)
+	broadcast_context_label.name = "BroadcastContextLabel"
+	broadcast_strip.add_child(broadcast_context_label)
+
+	var broadcast_rule := HSeparator.new()
+	broadcast_rule.modulate = Color(1, 1, 1, 0.10)
+	body.add_child(broadcast_rule)
 
 	var matchup_row := HBoxContainer.new()
-	matchup_row.add_theme_constant_override("separation", 16)
+	matchup_row.add_theme_constant_override("separation", 18)
 	body.add_child(matchup_row)
 
 	var left := VBoxContainer.new()
-	left.custom_minimum_size = Vector2(230, 0)
-	left.add_theme_constant_override("separation", 6)
+	left.custom_minimum_size = Vector2(270, 0)
+	left.add_theme_constant_override("separation", 7)
 	matchup_row.add_child(left)
 
-	var left_badge_panel := PanelContainer.new()
-	team_brand_panel = left_badge_panel
-	left_badge_panel.custom_minimum_size = Vector2(104, 84)
-	left_badge_panel.add_theme_stylebox_override("panel", _box(TEAM_PRIMARY, 14, TEAM_PRIMARY_HOVER))
-	left.add_child(left_badge_panel)
+	team_brand_panel = PanelContainer.new()
+	team_brand_panel.name = "BroadcastActiveTeamPanel"
+	team_brand_panel.custom_minimum_size = Vector2(270, 166)
+	team_brand_panel.add_theme_stylebox_override("panel", _box(Color(TEAM_PRIMARY, 0.90), 18, TEAM_PRIMARY_HOVER))
+	left.add_child(team_brand_panel)
 
-	team_badge = _label("TEAM", 30, TEXT)
-	team_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	team_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	left_badge_panel.add_child(team_badge)
+	var left_stack := VBoxContainer.new()
+	left_stack.add_theme_constant_override("separation", 2)
+	team_brand_panel.add_child(left_stack)
 
-	team_name_label = _label("ACTIVE FRANCHISE", 14, TEXT)
+	team_accent_bar = ColorRect.new()
+	team_accent_bar.custom_minimum_size = Vector2(0, 5)
+	team_accent_bar.color = TEAM_PRIMARY_HOVER
+	team_accent_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	left_stack.add_child(team_accent_bar)
+
+	var left_logo_center := CenterContainer.new()
+	left_logo_center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	left_stack.add_child(left_logo_center)
+
+	team_logo_control = TeamLogoV3.new()
+	team_logo_control.name = "PregameTeamLogo"
+	team_logo_control.custom_minimum_size = Vector2(158, 138)
+	left_logo_center.add_child(team_logo_control)
+
+	team_name_label = _label("ACTIVE FRANCHISE", 17, TEXT)
+	team_name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	left.add_child(team_name_label)
+
+	var left_meta := HBoxContainer.new()
+	left_meta.add_theme_constant_override("separation", 9)
+	left.add_child(left_meta)
+
 	team_record_label = _label("Record --", 11, MUTED)
-	left.add_child(team_record_label)
+	team_record_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_meta.add_child(team_record_label)
+
+	team_context_label = _label("YOUR TEAM", 9, TEAM_PRIMARY_HOVER)
+	left_meta.add_child(team_context_label)
 
 	var center := VBoxContainer.new()
+	center.custom_minimum_size = Vector2(340, 0)
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	center.alignment = BoxContainer.ALIGNMENT_CENTER
-	center.add_theme_constant_override("separation", 7)
+	center.add_theme_constant_override("separation", 9)
 	matchup_row.add_child(center)
 
-	matchup_label = _label("LOADING MATCHUP...", 32, TEXT)
-	matchup_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	center.add_child(matchup_label)
+	var center_plate := PanelContainer.new()
+	center_plate.name = "BroadcastCenterPlate"
+	center_plate.custom_minimum_size = Vector2(330, 118)
+	center_plate.add_theme_stylebox_override("panel", _box(Color("0b111a"), 18, Color(GOLD, 0.28)))
+	center.add_child(center_plate)
 
-	game_meta_label = _label("Reading production schedule...", 12, GOLD)
+	var center_plate_margin := MarginContainer.new()
+	_set_margins(center_plate_margin, 14, 12, 14, 12)
+	center_plate.add_child(center_plate_margin)
+
+	var center_copy := VBoxContainer.new()
+	center_copy.alignment = BoxContainer.ALIGNMENT_CENTER
+	center_copy.add_theme_constant_override("separation", 6)
+	center_plate_margin.add_child(center_copy)
+
+	var versus_kicker := _label("TONIGHT'S MATCHUP", 9, GOLD)
+	versus_kicker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	center_copy.add_child(versus_kicker)
+
+	matchup_label = _label("LOADING MATCHUP...", 42, TEXT)
+	matchup_label.name = "BroadcastMatchupTitle"
+	matchup_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	matchup_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	center_copy.add_child(matchup_label)
+
+	game_meta_label = _label("Reading production schedule...", 11, MUTED)
 	game_meta_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	center.add_child(game_meta_label)
+	center_copy.add_child(game_meta_label)
+
+	var action_center := CenterContainer.new()
+	action_center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.add_child(action_center)
 
 	simulation_button = _button("SIMULATE GAME", true)
-	simulation_button.custom_minimum_size = Vector2(210, 44)
+	simulation_button.custom_minimum_size = Vector2(304, 48)
 	simulation_button.disabled = true
 	simulation_button.pressed.connect(_on_simulate_pressed)
-	center.add_child(simulation_button)
-	var confirm_note := _label("Click once to arm, again to simulate.", 10, MUTED)
+	action_center.add_child(simulation_button)
+
+	var confirm_note := _label("Arm simulation • confirm on second click", 10, MUTED)
 	confirm_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	center.add_child(confirm_note)
 
 	var right := VBoxContainer.new()
-	right.custom_minimum_size = Vector2(230, 0)
-	right.add_theme_constant_override("separation", 6)
+	right.custom_minimum_size = Vector2(270, 0)
+	right.add_theme_constant_override("separation", 7)
 	matchup_row.add_child(right)
 
-	var right_badge_panel := PanelContainer.new()
-	right_badge_panel.custom_minimum_size = Vector2(104, 84)
-	right_badge_panel.add_theme_stylebox_override("panel", _box(Color("222b3b"), 14, BORDER))
-	right.add_child(right_badge_panel)
+	opponent_brand_panel = PanelContainer.new()
+	opponent_brand_panel.name = "BroadcastOpponentTeamPanel"
+	opponent_brand_panel.custom_minimum_size = Vector2(270, 166)
+	opponent_brand_panel.add_theme_stylebox_override("panel", _box(Color("222b3b"), 18, BORDER))
+	right.add_child(opponent_brand_panel)
 
-	opponent_badge = _label("OPP", 30, TEXT)
-	opponent_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	opponent_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	right_badge_panel.add_child(opponent_badge)
+	var right_stack := VBoxContainer.new()
+	right_stack.add_theme_constant_override("separation", 2)
+	opponent_brand_panel.add_child(right_stack)
 
-	opponent_name_label = _label("OPPONENT", 14, TEXT)
+	opponent_accent_bar = ColorRect.new()
+	opponent_accent_bar.custom_minimum_size = Vector2(0, 5)
+	opponent_accent_bar.color = MUTED
+	opponent_accent_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	right_stack.add_child(opponent_accent_bar)
+
+	var right_logo_center := CenterContainer.new()
+	right_logo_center.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right_stack.add_child(right_logo_center)
+
+	opponent_logo_control = TeamLogoV3.new()
+	opponent_logo_control.name = "PregameOpponentLogo"
+	opponent_logo_control.custom_minimum_size = Vector2(158, 138)
+	right_logo_center.add_child(opponent_logo_control)
+
+	opponent_name_label = _label("OPPONENT", 17, TEXT)
+	opponent_name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	right.add_child(opponent_name_label)
+
+	var right_meta := HBoxContainer.new()
+	right_meta.add_theme_constant_override("separation", 9)
+	right.add_child(right_meta)
+
 	opponent_record_label = _label("Record --", 11, MUTED)
-	right.add_child(opponent_record_label)
+	opponent_record_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_meta.add_child(opponent_record_label)
+
+	opponent_context_label = _label("OPPONENT", 9, MUTED)
+	right_meta.add_child(opponent_context_label)
 	return card
 
 
@@ -285,12 +409,31 @@ func _build_readiness_metrics() -> Control:
 	row.name = "GameDayReadinessMetrics"
 	row.add_theme_constant_override("separation", 10)
 	for label_text in ["UNAVAILABLE", "COACHING ALERTS", "ROTATION", "TARGET MINUTES"]:
-		var card := _card(Vector2(0, 88))
+		var tone := MUTED
+		match label_text:
+			"UNAVAILABLE":
+				tone = GOOD
+			"COACHING ALERTS":
+				tone = GOLD
+			"ROTATION":
+				tone = ACCENT
+			"TARGET MINUTES":
+				tone = TEAM_PRIMARY_HOVER
+
+		var card := _card(Vector2(0, 94))
 		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 12, SOFT_BORDER))
+		card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 13, Color(tone, 0.36)))
 		var body := _card_body(card, 12)
-		body.add_child(_label(label_text, 9, MUTED))
-		var value := _label("N/A", 24, TEXT)
+		body.add_theme_constant_override("separation", 5)
+
+		var accent := ColorRect.new()
+		accent.custom_minimum_size = Vector2(0, 3)
+		accent.color = tone
+		accent.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		body.add_child(accent)
+
+		body.add_child(_label(label_text, 9, Color(tone, 0.92)))
+		var value := _label("N/A", 25, TEXT)
 		readiness_values[label_text] = value
 		body.add_child(value)
 		row.add_child(card)
@@ -405,18 +548,95 @@ func _build_rotation_card() -> Control:
 
 
 func _build_postgame_card() -> Control:
-	var card := _card(Vector2(0, 430))
+	var card := _card(Vector2(0, 530))
+	card.name = "BroadcastPostgameReview"
 	var body := _card_body(card, 16)
+	body.add_theme_constant_override("separation", 12)
 
-	postgame_result_label = _label("POSTGAME REVIEW", 12, MUTED)
-	body.add_child(postgame_result_label)
-	postgame_title_label = _section_title("LATEST RESULT • Waiting for a completed game")
-	postgame_title_label.add_theme_font_size_override("font_size", 24)
+	postgame_scoreboard_panel = PanelContainer.new()
+	postgame_scoreboard_panel.name = "PostgameBroadcastScoreboard"
+	postgame_scoreboard_panel.custom_minimum_size = Vector2(0, 190)
+	postgame_scoreboard_panel.add_theme_stylebox_override("panel", _box(Color("0b111a"), 18, Color(TEAM_PRIMARY, 0.48)))
+	body.add_child(postgame_scoreboard_panel)
+
+	var scoreboard_margin := MarginContainer.new()
+	_set_margins(scoreboard_margin, 20, 14, 20, 14)
+	postgame_scoreboard_panel.add_child(scoreboard_margin)
+
+	var scoreboard := VBoxContainer.new()
+	scoreboard.alignment = BoxContainer.ALIGNMENT_CENTER
+	scoreboard.add_theme_constant_override("separation", 7)
+	scoreboard_margin.add_child(scoreboard)
+
+	postgame_result_label = _label("FRANCHISE NETWORK • POSTGAME", 10, MUTED)
+	postgame_result_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	scoreboard.add_child(postgame_result_label)
+
+	var score_row := HBoxContainer.new()
+	score_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	score_row.add_theme_constant_override("separation", 18)
+	scoreboard.add_child(score_row)
+
+	var home_identity := VBoxContainer.new()
+	home_identity.custom_minimum_size = Vector2(190, 0)
+	home_identity.alignment = BoxContainer.ALIGNMENT_CENTER
+	score_row.add_child(home_identity)
+
+	var home_logo_center := CenterContainer.new()
+	home_identity.add_child(home_logo_center)
+	postgame_home_logo = TeamLogoV3.new()
+	postgame_home_logo.custom_minimum_size = Vector2(96, 84)
+	home_logo_center.add_child(postgame_home_logo)
+
+	postgame_home_team_label = _label("HOME", 14, TEXT)
+	postgame_home_team_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	home_identity.add_child(postgame_home_team_label)
+
+	var score_center := VBoxContainer.new()
+	score_center.custom_minimum_size = Vector2(300, 0)
+	score_center.alignment = BoxContainer.ALIGNMENT_CENTER
+	score_center.add_theme_constant_override("separation", 3)
+	score_row.add_child(score_center)
+
+	var final_kicker := _label("FINAL SCORE", 9, GOLD)
+	final_kicker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	score_center.add_child(final_kicker)
+
+	postgame_title_label = _section_title("--   —   --")
+	postgame_title_label.name = "PostgameBroadcastScore"
+	postgame_title_label.add_theme_font_size_override("font_size", 52)
+	postgame_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	postgame_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	body.add_child(postgame_title_label)
+	score_center.add_child(postgame_title_label)
+
 	postgame_meta_label = _label("Full player box scores will appear here after a completed controlled-team game.", 10, MUTED)
+	postgame_meta_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	postgame_meta_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	body.add_child(postgame_meta_label)
+	score_center.add_child(postgame_meta_label)
+
+	var away_identity := VBoxContainer.new()
+	away_identity.custom_minimum_size = Vector2(190, 0)
+	away_identity.alignment = BoxContainer.ALIGNMENT_CENTER
+	score_row.add_child(away_identity)
+
+	var away_logo_center := CenterContainer.new()
+	away_identity.add_child(away_logo_center)
+	postgame_away_logo = TeamLogoV3.new()
+	postgame_away_logo.custom_minimum_size = Vector2(96, 84)
+	away_logo_center.add_child(postgame_away_logo)
+
+	postgame_away_team_label = _label("AWAY", 14, TEXT)
+	postgame_away_team_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	away_identity.add_child(postgame_away_team_label)
+
+	var box_header := HBoxContainer.new()
+	box_header.add_theme_constant_override("separation", 10)
+	box_header.add_child(_label("FULL BOX SCORE", 10, GOLD))
+	var box_header_spacer := Control.new()
+	box_header_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box_header.add_child(box_header_spacer)
+	box_header.add_child(_label("TEAM TOTALS • SHOOTING • PLAYER LINES", 9, MUTED))
+	body.add_child(box_header)
 
 	var teams := HBoxContainer.new()
 	teams.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -547,13 +767,23 @@ func _render_game_day() -> void:
 	var record := _dict(game_payload.get("record"))
 	var next_game = game_payload.get("next_game", null)
 
-	team_badge.text = active_team
+	if team_logo_control != null:
+		team_logo_control.configure(active_team)
 	team_name_label.text = team_name.to_upper()
 	team_record_label.text = "Record %s" % _text(record.get("display"), "N/A")
 
 	if next_game == null or typeof(next_game) != TYPE_DICTIONARY:
 		active_opponent = ""
-		opponent_badge.text = "--"
+		if opponent_logo_control != null:
+			opponent_logo_control.configure("")
+		if team_context_label != null:
+			team_context_label.text = "YOUR TEAM"
+		if opponent_context_label != null:
+			opponent_context_label.text = "NO GAME"
+		if opponent_brand_panel != null:
+			opponent_brand_panel.add_theme_stylebox_override("panel", _box(Color("222b3b"), 16, BORDER))
+		if broadcast_context_label != null:
+			broadcast_context_label.text = "NO GAME ON DECK"
 		opponent_name_label.text = "NO OPPONENT"
 		opponent_record_label.text = "Record --"
 		matchup_label.text = "NO GAME SCHEDULED"
@@ -575,7 +805,25 @@ func _render_game_day() -> void:
 	var opponent_record := _dict(game_payload.get("opponent_record"))
 	var is_home := bool(game.get("is_home", false))
 
-	opponent_badge.text = active_opponent
+	if opponent_logo_control != null:
+		opponent_logo_control.configure(active_opponent)
+	var opponent_palette := DesignSystemV3.team_palette(active_opponent)
+	var opponent_primary = opponent_palette.get("primary", Color("222b3b"))
+	if opponent_brand_panel != null:
+		opponent_brand_panel.add_theme_stylebox_override(
+			"panel",
+			_box(Color(opponent_primary, 0.90), 18, TeamBrandingV3.hover_color(opponent_primary))
+		)
+	if opponent_accent_bar != null:
+		opponent_accent_bar.color = TeamBrandingV3.hover_color(opponent_primary)
+	if team_context_label != null:
+		team_context_label.text = "HOME TEAM" if is_home else "AWAY TEAM"
+		team_context_label.add_theme_color_override("font_color", postgame_team_color)
+	if opponent_context_label != null:
+		opponent_context_label.text = "AWAY TEAM" if is_home else "HOME TEAM"
+		opponent_context_label.add_theme_color_override("font_color", TeamBrandingV3.hover_color(opponent_primary))
+	if broadcast_context_label != null:
+		broadcast_context_label.text = "HOME COURT • PRIME TIME" if is_home else "ON THE ROAD • PRIME TIME"
 	opponent_name_label.text = opponent_name.to_upper()
 	opponent_record_label.text = "Record %s" % _text(opponent_record.get("display"), "N/A")
 	matchup_label.text = "%s  %s  %s" % [active_team, "VS" if is_home else "@", active_opponent]
@@ -1138,8 +1386,16 @@ func _render_postgame(game: Dictionary) -> void:
 	postgame_result_label.text = "POSTGAME REVIEW • " + result_code
 	postgame_result_label.add_theme_color_override("font_color", result_color)
 
-	postgame_title_label.text = "LATEST RESULT • %s %d  —  %s %d" % [home_team, home_score, away_team, away_score]
+	postgame_title_label.text = "%d   —   %d" % [home_score, away_score]
 	postgame_title_label.add_theme_color_override("font_color", TEXT)
+	if postgame_home_logo != null:
+		postgame_home_logo.configure(home_team)
+	if postgame_away_logo != null:
+		postgame_away_logo.configure(away_team)
+	if postgame_home_team_label != null:
+		postgame_home_team_label.text = home_name.to_upper()
+	if postgame_away_team_label != null:
+		postgame_away_team_label.text = away_name.to_upper()
 	var meta_bits := ["FINAL", "DAY %d" % day_index]
 	if overtime > 0:
 		meta_bits.append("%d OT" % overtime)
@@ -1154,6 +1410,7 @@ func _render_postgame(game: Dictionary) -> void:
 
 	_render_team_box_score(postgame_active_box, game, active_box_team, active_box_name, active_box_score, postgame_team_color)
 	_render_team_box_score(postgame_opponent_box, game, opponent_box_team, opponent_box_name, opponent_box_score, MUTED)
+	_animate_postgame_reveal()
 
 
 func _render_team_box_score(
@@ -1165,21 +1422,51 @@ func _render_team_box_score(
 	title_color: Color
 ) -> void:
 	_clear_children(container)
-	container.add_child(_label("%s • %s" % [team_name.to_upper(), score], 15, title_color))
+
+	var score_header := HBoxContainer.new()
+	score_header.name = "BroadcastTeamBoxHeader_" + team.to_upper()
+	score_header.add_theme_constant_override("separation", 9)
+	container.add_child(score_header)
+
+	var logo := TeamLogoV3.new()
+	logo.custom_minimum_size = Vector2(70, 62)
+	logo.configure(team)
+	score_header.add_child(logo)
+
+	var team_copy := VBoxContainer.new()
+	team_copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	team_copy.alignment = BoxContainer.ALIGNMENT_CENTER
+	team_copy.add_theme_constant_override("separation", 2)
+	score_header.add_child(team_copy)
+
+	var team_title := _label(team_name.to_upper(), 14, title_color)
+	team_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	team_copy.add_child(team_title)
+	team_copy.add_child(_label(team.to_upper() + " • FINAL", 9, MUTED))
+
+	var score_label := _label(str(score), 34, TEXT)
+	score_label.custom_minimum_size = Vector2(62, 0)
+	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	score_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	score_header.add_child(score_label)
+
 	var team_rows: Array = []
 	for raw in _array(game.get("player_box_scores")):
 		var line := _dict(raw)
 		if _text(line.get("team"), "").to_upper() == team.to_upper():
 			team_rows.append(line)
+
 	var totals := _label("TEAM TOTALS • REB %s • AST %s • TO %s" % [
 		_box_total(team_rows, "rebounds"), _box_total(team_rows, "assists"), _box_total(team_rows, "turnovers")], 10, MUTED)
 	totals.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	container.add_child(totals)
+
 	var shooting := _label("SHOOTING • FG %s/%s • 3PT %s/%s" % [
 		_box_total(team_rows, "field_goals_made"), _box_total(team_rows, "field_goals_attempted"),
 		_box_total(team_rows, "three_pointers_made"), _box_total(team_rows, "three_pointers_attempted")], 10, MUTED)
 	shooting.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	container.add_child(shooting)
+
 	var leader := _label(_scoring_leader(team_rows), 11, GOLD)
 	leader.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	container.add_child(leader)
@@ -1234,11 +1521,45 @@ func _render_team_box_score(
 		container.add_child(_label("No player box-score rows are available for %s." % team, 10, MUTED))
 
 
+func _animate_postgame_reveal() -> void:
+	if postgame_scoreboard_panel == null or postgame_title_label == null:
+		return
+
+	postgame_scoreboard_panel.modulate = Color(1, 1, 1, 0.34)
+	postgame_title_label.pivot_offset = postgame_title_label.size * 0.5
+	postgame_title_label.scale = Vector2(0.975, 0.975)
+
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.set_trans(Tween.TRANS_QUAD)
+	tween.set_ease(Tween.EASE_OUT)
+	tween.tween_property(
+		postgame_scoreboard_panel,
+		"modulate:a",
+		1.0,
+		DesignSystemV3.MOTION_NORMAL
+	)
+	tween.tween_property(
+		postgame_title_label,
+		"scale",
+		Vector2.ONE,
+		DesignSystemV3.MOTION_NORMAL
+	)
+
+
 func _reset_postgame() -> void:
 	postgame_result_label.text = "POSTGAME REVIEW"
 	postgame_result_label.add_theme_color_override("font_color", MUTED)
-	postgame_title_label.text = "LATEST RESULT • Waiting for a completed game"
+	postgame_title_label.text = "--   —   --"
 	postgame_title_label.add_theme_color_override("font_color", TEXT)
+	if postgame_home_logo != null:
+		postgame_home_logo.configure("")
+	if postgame_away_logo != null:
+		postgame_away_logo.configure("")
+	if postgame_home_team_label != null:
+		postgame_home_team_label.text = "HOME"
+	if postgame_away_team_label != null:
+		postgame_away_team_label.text = "AWAY"
 	postgame_meta_label.text = "Full player box scores will appear here after a completed controlled-team game."
 	_render_empty_box_score(postgame_active_box, "YOUR TEAM")
 	_render_empty_box_score(postgame_opponent_box, "OPPONENT")

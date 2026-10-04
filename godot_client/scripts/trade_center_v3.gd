@@ -1,7 +1,10 @@
 extends Control
 
+# Batch 22 franchise presentation macro
+
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+const PageIdentityV3 = preload("res://scripts/page_identity_v3.gd")
 
 const FOUNDATION_URL := "http://127.0.0.1:8765/v3/transaction-foundation?trade_finder=1"
 const TEAM_ASSETS_URL := "http://127.0.0.1:8765/v3/trade/team-assets"
@@ -20,6 +23,9 @@ const BORDER := DesignSystemV3.BORDER
 const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
 const TEAM_PRIMARY_HOVER := DesignSystemV3.TEAM_PRIMARY_HOVER
 const GOLD := DesignSystemV3.GOLD
+
+var page_identity: Control
+var page_brand_bar: ColorRect
 
 var foundation_request: HTTPRequest
 var partner_assets_request: HTTPRequest
@@ -66,6 +72,10 @@ var long_action_manager = null
 
 
 func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	if page_identity != null:
+		page_identity.configure(_team, primary, _secondary)
+	if page_brand_bar != null:
+		page_brand_bar.color = primary
 	if brand_heading != null:
 		brand_heading.add_theme_color_override("font_color", TeamBrandingV3.hover_color(primary))
 	if active_assets_heading != null:
@@ -167,6 +177,12 @@ func _build_ui() -> void:
 	header.add_theme_constant_override("separation", 12)
 	column.add_child(header)
 
+	page_brand_bar = ColorRect.new()
+	page_brand_bar.custom_minimum_size = Vector2(0, 4)
+	page_brand_bar.color = TEAM_PRIMARY
+	page_brand_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(page_brand_bar)
+
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(titles)
@@ -176,7 +192,7 @@ func _build_ui() -> void:
 	var title := Label.new()
 	title.text = "TRADE CENTER"
 	title.add_theme_color_override("font_color", TEXT)
-	title.add_theme_font_size_override("font_size", 31)
+	title.add_theme_font_size_override("font_size", 36)
 	titles.add_child(title)
 
 	var subtitle := Label.new()
@@ -184,6 +200,9 @@ func _build_ui() -> void:
 	subtitle.add_theme_color_override("font_color", MUTED)
 	subtitle.add_theme_font_size_override("font_size", 12)
 	titles.add_child(subtitle)
+
+	page_identity = PageIdentityV3.new()
+	header.add_child(page_identity)
 
 	var refresh_button := _action_button("REFRESH MARKET", false)
 	refresh_button.pressed.connect(_request_foundation)
@@ -200,6 +219,7 @@ func _build_ui() -> void:
 	column.add_child(safety)
 
 	var finder_card := _card(Vector2(0, 205))
+	finder_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(GOLD, 0.46)))
 	var finder_body := _card_body(finder_card, 16)
 	var finder_header := HBoxContainer.new()
 	finder_header.add_child(_section_title("CPU TRADE FINDER"))
@@ -237,6 +257,7 @@ func _build_ui() -> void:
 	builder_row.add_child(active_panel)
 
 	var command_card := _card(Vector2(280, 500))
+	command_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(ACCENT, 0.46)))
 	var command_body := _card_body(command_card, 16)
 	command_body.add_child(_small_label("TRADE BUILDER", GOLD))
 	command_body.add_child(_section_title("PACKAGE CONTROL"))

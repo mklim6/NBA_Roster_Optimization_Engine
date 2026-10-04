@@ -1,7 +1,10 @@
 extends Control
 
+# Batch 22 franchise presentation macro
+
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+const PageIdentityV3 = preload("res://scripts/page_identity_v3.gd")
 
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/scouting-draft"
 const SCOUT_PREVIEW_URL := "http://127.0.0.1:8765/v3/scouting/preview"
@@ -25,6 +28,9 @@ const BORDER := DesignSystemV3.BORDER
 const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
 const TEAM_PRIMARY_HOVER := DesignSystemV3.TEAM_PRIMARY_HOVER
 const GOLD := DesignSystemV3.GOLD
+
+var page_identity: Control
+var page_brand_bar: ColorRect
 
 var brand_heading: Label
 var board_count: Label
@@ -101,6 +107,10 @@ var long_action_manager = null
 
 
 func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	if page_identity != null:
+		page_identity.configure(_team, primary, _secondary)
+	if page_brand_bar != null:
+		page_brand_bar.color = primary
 	brand_color = primary
 	if brand_heading != null:
 		brand_heading.add_theme_color_override("font_color", primary.lerp(Color.WHITE, 0.45))
@@ -223,6 +233,12 @@ func _build_ui() -> void:
 	header.add_theme_constant_override("separation", 12)
 	column.add_child(header)
 
+	page_brand_bar = ColorRect.new()
+	page_brand_bar.custom_minimum_size = Vector2(0, 4)
+	page_brand_bar.color = TEAM_PRIMARY
+	page_brand_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(page_brand_bar)
+
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(titles)
@@ -231,13 +247,16 @@ func _build_ui() -> void:
 	var title := Label.new()
 	title.text = "SCOUTING & DRAFT"
 	title.add_theme_color_override("font_color", TEXT)
-	title.add_theme_font_size_override("font_size", 31)
+	title.add_theme_font_size_override("font_size", 36)
 	titles.add_child(title)
 	var subtitle := Label.new()
 	subtitle.text = "Production scouting reports, priority assignments, and phase-safe Draft execution."
 	subtitle.add_theme_color_override("font_color", MUTED)
 	subtitle.add_theme_font_size_override("font_size", 12)
 	titles.add_child(subtitle)
+
+	page_identity = PageIdentityV3.new()
+	header.add_child(page_identity)
 
 	var refresh_button := _action_button("REFRESH BOARD", false)
 	refresh_button.pressed.connect(_request_summary)
@@ -267,6 +286,7 @@ func _build_ui() -> void:
 	column.add_child(content)
 
 	var board_card := _card(Vector2(0, 650))
+	board_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(ACCENT, 0.44)))
 	board_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var board_body := _card_body(board_card, 16)
 	var board_header := HBoxContainer.new()
@@ -317,6 +337,7 @@ func _build_ui() -> void:
 	content.add_child(actions)
 
 	var scout_card := _card(Vector2(320, 315))
+	scout_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(GOLD, 0.48)))
 	var scout_body := _card_body(scout_card, 16)
 	scout_body.add_child(_small_label("WEEKLY INTELLIGENCE CYCLE", GOLD))
 	scout_body.add_child(_section_title("SCOUTING OPERATIONS"))
@@ -348,6 +369,7 @@ func _build_ui() -> void:
 	actions.add_child(scout_card)
 
 	var draft_card := _card(Vector2(320, 390))
+	draft_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(ACCENT, 0.54)))
 	var draft_body := _card_body(draft_card, 16)
 	draft_body.add_child(_small_label("PHASE-LOCKED TRANSACTION", ACCENT))
 	draft_body.add_child(_section_title("DRAFT NIGHT DESK"))

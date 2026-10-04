@@ -1,7 +1,10 @@
 extends Control
 
+# Batch 22 franchise presentation macro
+
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+const PageIdentityV3 = preload("res://scripts/page_identity_v3.gd")
 
 const FRONT_OFFICE_URL := "http://127.0.0.1:8765/v3/front-office"
 
@@ -17,6 +20,9 @@ const GOLD := DesignSystemV3.GOLD
 const ACCENT := DesignSystemV3.ACCENT
 const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
 const TEAM_PRIMARY_HOVER := DesignSystemV3.TEAM_PRIMARY_HOVER
+
+var page_identity: Control
+var page_brand_bar: ColorRect
 
 var brand_heading: Label
 var refresh_button: Button
@@ -42,6 +48,10 @@ func _ready() -> void:
 
 
 func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	if page_identity != null:
+		page_identity.configure(_team, primary, _secondary)
+	if page_brand_bar != null:
+		page_brand_bar.color = primary
 	if brand_heading != null:
 		brand_heading.add_theme_color_override("font_color", TeamBrandingV3.hover_color(primary))
 	if refresh_button != null:
@@ -71,6 +81,12 @@ func _build_page() -> void:
 	header.add_theme_constant_override("separation", 14)
 	column.add_child(header)
 
+	page_brand_bar = ColorRect.new()
+	page_brand_bar.custom_minimum_size = Vector2(0, 4)
+	page_brand_bar.color = TEAM_PRIMARY
+	page_brand_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(page_brand_bar)
+
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	titles.add_theme_constant_override("separation", 4)
@@ -79,7 +95,7 @@ func _build_page() -> void:
 	var eyebrow := _label("FRANCHISE OPERATIONS • FRONT OFFICE", 10, TEAM_PRIMARY_HOVER)
 	brand_heading = eyebrow
 	titles.add_child(eyebrow)
-	var title := _label("FRONT OFFICE COMMAND CENTER", 31, TEXT)
+	var title := _label("FRONT OFFICE COMMAND CENTER", 36, TEXT)
 	titles.add_child(title)
 	var subtitle := _label(
 		"Team health, morale, workload, development, financial context, and staff visibility from the isolated V3 franchise.",
@@ -88,6 +104,9 @@ func _build_page() -> void:
 	)
 	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	titles.add_child(subtitle)
+
+	page_identity = PageIdentityV3.new()
+	header.add_child(page_identity)
 
 	var refresh := Button.new()
 	refresh_button = refresh
@@ -394,10 +413,21 @@ func _count_text(value: Variant) -> String:
 
 
 func _metric_card(parent: GridContainer, title: String, value: String) -> Label:
+	var tone := ACCENT
+	match title:
+		"SEASON":
+			tone = GOLD
+		"COMPETITIVE POSITION":
+			tone = GOOD
+		"CHEMISTRY":
+			tone = ACCENT
+		"ROSTER / ROTATION":
+			tone = TEAM_PRIMARY_HOVER
+
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(0, 92)
+	card.custom_minimum_size = Vector2(0, 104)
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 14, BORDER))
+	card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 14, Color(tone, 0.38)))
 	parent.add_child(card)
 	var margin := MarginContainer.new()
 	_set_margins(margin, 16, 12, 16, 12)
@@ -405,8 +435,15 @@ func _metric_card(parent: GridContainer, title: String, value: String) -> Label:
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 6)
 	margin.add_child(column)
-	column.add_child(_label(title, 10, MUTED))
-	var label := _label(value, 19, TEXT)
+
+	var accent := ColorRect.new()
+	accent.custom_minimum_size = Vector2(0, 3)
+	accent.color = tone
+	accent.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(accent)
+
+	column.add_child(_label(title, 10, Color(tone, 0.92)))
+	var label := _label(value, 20, TEXT)
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(label)
 	return label
@@ -416,7 +453,7 @@ func _section(parent: GridContainer, title: String, subtitle: String) -> Label:
 	var card := PanelContainer.new()
 	card.custom_minimum_size = Vector2(0, 285)
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card.add_theme_stylebox_override("panel", _box(PANEL, 14, BORDER))
+	card.add_theme_stylebox_override("panel", _box(PANEL, 14, Color(GOLD, 0.30)))
 	parent.add_child(card)
 	var margin := MarginContainer.new()
 	_set_margins(margin, 18, 16, 18, 18)

@@ -1,7 +1,10 @@
 extends Control
 
+# Batch 22 franchise presentation macro
+
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+const PageIdentityV3 = preload("res://scripts/page_identity_v3.gd")
 
 const LEAGUE_URL := "http://127.0.0.1:8765/v3/league-intelligence"
 
@@ -15,6 +18,9 @@ const GOOD := DesignSystemV3.GOOD
 const GOLD := DesignSystemV3.GOLD
 const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
 const BORDER := DesignSystemV3.BORDER
+
+var page_identity: Control
+var page_brand_bar: ColorRect
 
 var brand_heading: Label
 var standings_tables: Array = []
@@ -39,6 +45,10 @@ var refresh_button: Button
 
 
 func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	if page_identity != null:
+		page_identity.configure(_team, primary, _secondary)
+	if page_brand_bar != null:
+		page_brand_bar.color = primary
 	standings_team = _team
 	standings_highlight = primary.lerp(Color.WHITE, 0.45)
 	if brand_heading != null:
@@ -81,6 +91,12 @@ func _build_interface() -> void:
 	header.add_theme_constant_override("separation", 14)
 	root.add_child(header)
 
+	page_brand_bar = ColorRect.new()
+	page_brand_bar.custom_minimum_size = Vector2(0, 4)
+	page_brand_bar.color = TEAM_PRIMARY
+	page_brand_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(page_brand_bar)
+
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	titles.add_theme_constant_override("separation", 3)
@@ -89,7 +105,7 @@ func _build_interface() -> void:
 	var eyebrow := _label("FRANCHISE OPERATIONS • LEAGUE", 10, TEAM_PRIMARY)
 	brand_heading = eyebrow
 	titles.add_child(eyebrow)
-	var title := _label("LEAGUE INTELLIGENCE CENTER", 32, TEXT)
+	var title := _label("LEAGUE INTELLIGENCE CENTER", 36, TEXT)
 	titles.add_child(title)
 	var subtitle := _label(
 		"Full standings, playoff positioning, statistical leaders, award watch, schedule/results, and postseason history from the isolated V3 franchise.",
@@ -99,9 +115,12 @@ func _build_interface() -> void:
 	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	titles.add_child(subtitle)
 
+	page_identity = PageIdentityV3.new()
+	header.add_child(page_identity)
+
 	refresh_button = Button.new()
 	refresh_button.text = "REFRESH LEAGUE"
-	refresh_button.custom_minimum_size = Vector2(150, 38)
+	refresh_button.custom_minimum_size = Vector2(160, 52)
 	refresh_button.pressed.connect(refresh)
 	header.add_child(refresh_button)
 
