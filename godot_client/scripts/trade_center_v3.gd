@@ -1,27 +1,38 @@
 extends Control
 
+const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
+const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+
 const FOUNDATION_URL := "http://127.0.0.1:8765/v3/transaction-foundation?trade_finder=1"
 const TEAM_ASSETS_URL := "http://127.0.0.1:8765/v3/trade/team-assets"
 const TRADE_PREVIEW_URL := "http://127.0.0.1:8765/v3/trade/preview"
 const TRADE_EXECUTE_URL := "http://127.0.0.1:8765/v3/trade/execute"
 
-const PANEL := Color("121824")
-const PANEL_ALT := Color("171f2d")
-const PANEL_HOVER := Color("202b3d")
-const TEXT := Color("f7f8fb")
-const MUTED := Color("8d99aa")
-const ACCENT := Color("8ed8ff")
-const GOOD := Color("61d69b")
-const BAD := Color("ff6577")
-const BORDER := Color("263247")
-const TEAM_PRIMARY := Color("d9273c")
-const TEAM_PRIMARY_HOVER := Color("ef4055")
-const GOLD := Color("f3c96b")
+const PANEL := DesignSystemV3.PANEL
+const PANEL_ALT := DesignSystemV3.PANEL_ALT
+const PANEL_HOVER := DesignSystemV3.PANEL_HOVER
+const TEXT := DesignSystemV3.TEXT
+const MUTED := DesignSystemV3.MUTED
+const ACCENT := DesignSystemV3.ACCENT
+const GOOD := DesignSystemV3.GOOD
+const BAD := DesignSystemV3.BAD
+const BORDER := DesignSystemV3.BORDER
+const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
+const TEAM_PRIMARY_HOVER := DesignSystemV3.TEAM_PRIMARY_HOVER
+const GOLD := DesignSystemV3.GOLD
 
 var foundation_request: HTTPRequest
 var partner_assets_request: HTTPRequest
 var preview_request: HTTPRequest
 var execute_request: HTTPRequest
+
+var brand_heading: Label
+var active_assets_heading: Label
+var primary_buttons: Array = []
+var package_state: Label
+var outgoing_assets_label: Label
+var incoming_assets_label: Label
+var pending_preview_request_payload := {}
 
 var status_label: Label
 var proposal_rows: VBoxContainer
@@ -52,6 +63,40 @@ var selected_partner_picks := {}
 
 
 var long_action_manager = null
+
+
+func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	if brand_heading != null:
+		brand_heading.add_theme_color_override("font_color", TeamBrandingV3.hover_color(primary))
+	if active_assets_heading != null:
+		active_assets_heading.add_theme_color_override("font_color", TeamBrandingV3.hover_color(primary))
+	for button in primary_buttons:
+		TeamBrandingV3.apply_primary_button(button, primary)
+
+
+func _update_package_state() -> void:
+	if package_state == null:
+		return
+	if execute_in_flight:
+		package_state.text = "TRADE IN PROGRESS"
+	elif not execute_button.disabled and latest_preview_fingerprint != "" and latest_preview_working_sha != "":
+		package_state.text = "READY TO CONFIRM"
+	elif preview_label.get_theme_color("font_color") in [BAD, GOLD]:
+		package_state.text = "PREVIEW REJECTED"
+	else:
+		package_state.text = "PACKAGE NEEDS PREVIEW"
+
+
+func _display(value: Variant, fallback: String = "N/A") -> String:
+	return fallback if value == null or str(value).strip_edges() == "" else str(value)
+
+
+func _dict(value: Variant) -> Dictionary:
+	return value if typeof(value) == TYPE_DICTIONARY else {}
+
+
+func _array(value: Variant) -> Array:
+	return value if typeof(value) == TYPE_ARRAY else []
 
 
 func set_long_action_manager(manager) -> void:
@@ -102,6 +147,7 @@ func _build_http() -> void:
 
 func _build_ui() -> void:
 	var page_scroll := ScrollContainer.new()
+	page_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	page_scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	page_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	page_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -124,7 +170,8 @@ func _build_ui() -> void:
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(titles)
-	titles.add_child(_small_label("FRANCHISE OPERATIONS • TRANSACTIONS", TEAM_PRIMARY_HOVER))
+	brand_heading = _small_label("FRANCHISE OPERATIONS • TRANSACTIONS", TEAM_PRIMARY_HOVER)
+	titles.add_child(brand_heading)
 
 	var title := Label.new()
 	title.text = "TRADE CENTER"
@@ -210,6 +257,14 @@ func _build_ui() -> void:
 	package_label.add_theme_color_override("font_color", TEXT)
 	package_label.add_theme_font_size_override("font_size", 11)
 	command_body.add_child(package_label)
+	outgoing_assets_label = _small_label("SEND • None selected", MUTED)
+	outgoing_assets_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	command_body.add_child(outgoing_assets_label)
+	incoming_assets_label = _small_label("GET • None selected", MUTED)
+	incoming_assets_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	command_body.add_child(incoming_assets_label)
+	package_state = _small_label("PACKAGE NEEDS PREVIEW", GOLD)
+	command_body.add_child(package_state)
 
 	var control_spacer := Control.new()
 	control_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -220,7 +275,7 @@ func _build_ui() -> void:
 	preview_button.pressed.connect(_request_trade_preview)
 	command_body.add_child(preview_button)
 
-	execute_button = _action_button("EXECUTE TRADE", false)
+	execute_button = _action_button("EXECUTE TRADE", true)
 	execute_button.disabled = true
 	execute_button.pressed.connect(_confirm_execute_trade)
 	command_body.add_child(execute_button)
@@ -268,7 +323,10 @@ func _asset_panel(title_text: String, active_side: bool) -> PanelContainer:
 	var card := _card(Vector2(0, 0))
 	var body := _card_body(card, 14)
 	var side_color := TEAM_PRIMARY_HOVER if active_side else ACCENT
-	body.add_child(_small_label("ACTIVE FRANCHISE" if active_side else "TRADE PARTNER", side_color))
+	var side_heading := _small_label("ACTIVE FRANCHISE" if active_side else "TRADE PARTNER", side_color)
+	if active_side:
+		active_assets_heading = side_heading
+	body.add_child(side_heading)
 	body.add_child(_section_title(title_text))
 
 	var hint := Label.new()
@@ -296,6 +354,7 @@ func _asset_panel(title_text: String, active_side: bool) -> PanelContainer:
 
 
 func _request_foundation() -> void:
+	_invalidate_trade_execution()
 	if foundation_request == null:
 		return
 	if foundation_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
@@ -310,6 +369,8 @@ func _request_foundation() -> void:
 
 
 func _on_foundation_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	_invalidate_trade_execution()
+	preview_button.disabled = true
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		status_label.text = "Transaction foundation unavailable • HTTP %s" % response_code
 		status_label.add_theme_color_override("font_color", BAD)
@@ -328,13 +389,13 @@ func _on_foundation_completed(result: int, response_code: int, _headers: PackedS
 		return
 
 	active_team = str(foundation_payload.get("team", ""))
-	partner_codes = foundation_payload.get("teams", [])
-	proposals = foundation_payload.get("trade_finder", {}).get("proposals", [])
+	partner_codes = _array(foundation_payload.get("teams"))
+	proposals = _array(_dict(foundation_payload.get("trade_finder")).get("proposals"))
 	_render_active_assets()
 	_render_proposals()
 	_populate_partner_selector()
 
-	var finder = foundation_payload.get("trade_finder", {})
+	var finder := _dict(foundation_payload.get("trade_finder"))
 	status_label.text = "LIVE • %s • %s legal packages • %s proposal(s) • %.2fs search • working save unchanged • V2 protected" % [
 		active_team,
 		str(finder.get("legal_packages", 0)),
@@ -376,6 +437,9 @@ func _on_partner_selected(index: int) -> void:
 
 
 func _request_partner_assets(team_code: String) -> void:
+	partner_payload = {}
+	_invalidate_trade_execution()
+	preview_button.disabled = true
 	if partner_assets_request == null:
 		return
 	if partner_assets_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
@@ -392,6 +456,8 @@ func _request_partner_assets(team_code: String) -> void:
 
 
 func _on_partner_assets_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	_invalidate_trade_execution()
+	preview_button.disabled = true
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		status_label.text = "Partner asset request failed • HTTP %s" % response_code
 		status_label.add_theme_color_override("font_color", BAD)
@@ -412,8 +478,8 @@ func _on_partner_assets_completed(result: int, response_code: int, _headers: Pac
 
 func _render_active_assets() -> void:
 	_clear_children(active_assets_rows)
-	var players: Array = foundation_payload.get("trade_assets", {}).get("players", [])
-	var picks: Array = foundation_payload.get("draft_assets", {}).get("owned", [])
+	var players: Array = _array(_dict(foundation_payload.get("trade_assets")).get("players"))
+	var picks: Array = _array(_dict(foundation_payload.get("draft_assets")).get("owned"))
 	active_assets_rows.add_child(_small_label("PLAYERS", MUTED))
 	for raw_player in players:
 		if typeof(raw_player) == TYPE_DICTIONARY:
@@ -427,8 +493,8 @@ func _render_active_assets() -> void:
 
 func _render_partner_assets() -> void:
 	_clear_children(partner_assets_rows)
-	var players: Array = partner_payload.get("players", [])
-	var picks: Array = partner_payload.get("picks", [])
+	var players: Array = _array(partner_payload.get("players"))
+	var picks: Array = _array(partner_payload.get("picks"))
 	partner_assets_rows.add_child(_small_label("PLAYERS", MUTED))
 	for raw_player in players:
 		if typeof(raw_player) == TYPE_DICTIONARY:
@@ -446,9 +512,11 @@ func _player_checkbox(player_data: Dictionary, kind: String) -> CheckBox:
 	box.text = "%s  •  %s  •  OVR %s  •  %s" % [
 		str(player_data.get("name", player_id)),
 		str(player_data.get("position", "")),
-		str(player_data.get("overall", "N/A")),
+		_display(player_data.get("overall")),
 		_money_text(player_data.get("salary", null))
 	]
+	box.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	box.tooltip_text = box.text
 	box.button_pressed = _selection_dict(kind).has(player_id)
 	box.add_theme_color_override("font_color", TEXT)
 	box.add_theme_font_size_override("font_size", 10)
@@ -464,6 +532,8 @@ func _pick_checkbox(pick_data: Dictionary, kind: String) -> CheckBox:
 	var readiness := "READY" if bool(pick_data.get("engine_ready", false)) else "REVIEW"
 	var box := CheckBox.new()
 	box.text = "%s  •  %s" % [display, readiness]
+	box.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	box.tooltip_text = box.text
 	box.button_pressed = _selection_dict(kind).has(asset_id)
 	box.add_theme_color_override("font_color", TEXT if readiness == "READY" else GOLD)
 	box.add_theme_font_size_override("font_size", 10)
@@ -514,10 +584,12 @@ func _current_trade_request_payload() -> Dictionary:
 
 
 func _invalidate_trade_execution() -> void:
+	pending_preview_request_payload = {}
 	latest_preview_fingerprint = ""
 	latest_preview_working_sha = ""
 	latest_preview_request_payload = {}
 	execute_button.disabled = true
+	_update_package_state()
 
 
 func _update_package_summary() -> void:
@@ -532,10 +604,33 @@ func _update_package_summary() -> void:
 		str(selected_partner_players.size()),
 		str(selected_partner_picks.size())
 	]
-	preview_button.disabled = outgoing_count == 0 or incoming_count == 0 or partner_payload.is_empty()
+	outgoing_assets_label.text = "SEND • " + _selected_asset_names(selected_active_players, selected_active_picks, _array(_dict(foundation_payload.get("trade_assets")).get("players")), _array(_dict(foundation_payload.get("draft_assets")).get("owned")))
+	incoming_assets_label.text = "GET • " + _selected_asset_names(selected_partner_players, selected_partner_picks, _array(partner_payload.get("players")), _array(partner_payload.get("picks")))
+	preview_button.disabled = execute_in_flight or outgoing_count == 0 or incoming_count == 0 or partner_payload.is_empty()
 	preview_label.text = "Package changed. Run a fresh legality preview before execution."
 	preview_label.add_theme_color_override("font_color", MUTED)
 	_invalidate_trade_execution()
+
+
+func _selected_asset_names(players: Dictionary, picks: Dictionary, player_rows: Array, pick_rows: Array) -> String:
+	var names: Array = []
+	for id in _selected_ids(players):
+		var name := str(id)
+		for raw in player_rows:
+			var row := _dict(raw)
+			if _display(row.get("player_id"), "") == id:
+				name = _display(row.get("name"), id)
+				break
+		names.append(name)
+	for id in _selected_ids(picks):
+		var name := str(id)
+		for raw in pick_rows:
+			var row := _dict(raw)
+			if _display(row.get("asset_id"), "") == id:
+				name = _display(row.get("display_name"), id)
+				break
+		names.append(name)
+	return " + ".join(names) if not names.is_empty() else "None selected"
 
 
 func _clear_package() -> void:
@@ -623,6 +718,7 @@ func _request_trade_preview() -> void:
 		return
 	var request_payload := _current_trade_request_payload()
 	_invalidate_trade_execution()
+	pending_preview_request_payload = request_payload.duplicate(true)
 	preview_button.disabled = true
 	preview_label.text = "Running full embedded trade preview: ownership, salary/CBA, contracts, draft rights, Stepien, and canonical guards..."
 	preview_label.add_theme_color_override("font_color", ACCENT)
@@ -635,31 +731,44 @@ func _request_trade_preview() -> void:
 
 
 func _on_preview_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
-	preview_button.disabled = false
+	preview_button.disabled = execute_in_flight or selected_active_players.size() + selected_active_picks.size() == 0 or selected_partner_players.size() + selected_partner_picks.size() == 0 or partner_payload.is_empty()
+	if pending_preview_request_payload.is_empty() or pending_preview_request_payload != _current_trade_request_payload():
+		preview_label.text = "Package changed while preview was running. Run a fresh legality preview."
+		preview_label.add_theme_color_override("font_color", MUTED)
+		_invalidate_trade_execution()
+		return
+	latest_preview_fingerprint = ""
+	latest_preview_working_sha = ""
+	latest_preview_request_payload = {}
+	execute_button.disabled = true
 	if result != HTTPRequest.RESULT_SUCCESS:
 		preview_label.text = "Trade preview request failed before the Python engine responded."
 		preview_label.add_theme_color_override("font_color", BAD)
+		_invalidate_trade_execution()
 		return
 	var raw_payload = JSON.parse_string(body.get_string_from_utf8())
 	if typeof(raw_payload) != TYPE_DICTIONARY:
 		preview_label.text = "Trade preview returned invalid data."
 		preview_label.add_theme_color_override("font_color", BAD)
+		_invalidate_trade_execution()
 		return
 	if response_code != 200:
 		preview_label.text = str(raw_payload.get("detail", raw_payload.get("error", "Trade preview failed.")))
 		preview_label.add_theme_color_override("font_color", BAD)
+		_invalidate_trade_execution()
 		return
 	if not bool(raw_payload.get("working_save_unchanged", false)) or not bool(raw_payload.get("active_v2_unchanged", false)):
 		preview_label.text = "SAFETY FAILURE • preview changed a protected checkpoint"
 		preview_label.add_theme_color_override("font_color", BAD)
+		_invalidate_trade_execution()
 		return
 
-	var preview: Dictionary = raw_payload.get("preview", {})
+	var preview: Dictionary = _dict(raw_payload.get("preview"))
 	var preview_status := str(preview.get("status", "manual_review"))
-	var side_a: Dictionary = preview.get("side_a", {})
-	var side_b: Dictionary = preview.get("side_b", {})
+	var side_a: Dictionary = _dict(preview.get("side_a"))
+	var side_b: Dictionary = _dict(preview.get("side_b"))
 	var issue_lines: Array = []
-	for raw_check in preview.get("checks", []):
+	for raw_check in _array(preview.get("checks")):
 		if typeof(raw_check) != TYPE_DICTIONARY:
 			continue
 		var check: Dictionary = raw_check
@@ -672,11 +781,11 @@ func _on_preview_completed(result: int, response_code: int, _headers: PackedStri
 		preview_status.to_upper(),
 		"YES" if bool(preview.get("can_commit", false)) else "NO",
 		str(side_a.get("team", active_team)),
-		_money_text(side_a.get("outgoing_salary", 0.0)),
-		_money_text(side_a.get("incoming_salary", 0.0)),
+		_money_text(side_a.get("outgoing_salary")),
+		_money_text(side_a.get("incoming_salary")),
 		str(side_b.get("team", "")),
-		_money_text(side_b.get("outgoing_salary", 0.0)),
-		_money_text(side_b.get("incoming_salary", 0.0)),
+		_money_text(side_b.get("outgoing_salary")),
+		_money_text(side_b.get("incoming_salary")),
 		str(preview.get("financial_bridge_status", "")),
 		str(preview.get("player_contract_bridge_status", "")),
 		str(preview.get("draft_right_bridge_status", ""))
@@ -689,8 +798,8 @@ func _on_preview_completed(result: int, response_code: int, _headers: PackedStri
 	preview_label.text = detail
 	preview_label.add_theme_color_override("font_color", GOOD if committable else GOLD)
 
-	var fingerprint := str(preview.get("package_fingerprint", ""))
-	var working_sha := str(raw_payload.get("working_save_sha256", ""))
+	var fingerprint := _display(preview.get("package_fingerprint"), "")
+	var working_sha := _display(raw_payload.get("working_save_sha256"), "")
 	if committable and fingerprint != "" and working_sha != "":
 		latest_preview_fingerprint = fingerprint
 		latest_preview_working_sha = working_sha
@@ -701,6 +810,7 @@ func _on_preview_completed(result: int, response_code: int, _headers: PackedStri
 	else:
 		_invalidate_trade_execution()
 
+	_update_package_state()
 
 func _confirm_execute_trade() -> void:
 	if execute_in_flight or latest_preview_fingerprint == "" or latest_preview_working_sha == "":
@@ -747,6 +857,7 @@ func _execute_trade() -> void:
 	request_payload["expected_package_fingerprint"] = latest_preview_fingerprint
 	request_payload["expected_working_save_sha256"] = latest_preview_working_sha
 	execute_in_flight = true
+	_update_package_state()
 	execute_button.disabled = true
 	preview_button.disabled = true
 	preview_label.text = "Executing through the production transaction engine, then verifying the V3 save and protected V2 hash..."
@@ -819,7 +930,7 @@ func _join_assets(values: Array) -> String:
 
 
 func _money_text(value) -> String:
-	if value == null:
+	if typeof(value) != TYPE_INT and typeof(value) != TYPE_FLOAT:
 		return "N/A"
 	var amount := float(value)
 	if abs(amount) >= 1000000.0:
@@ -837,6 +948,8 @@ func _clear_children(node: Node) -> void:
 
 func _action_button(text_value: String, primary: bool = false) -> Button:
 	var button := Button.new()
+	if primary:
+		primary_buttons.append(button)
 	button.custom_minimum_size = Vector2(0, 38)
 	button.text = text_value
 	button.add_theme_font_size_override("font_size", 10)
