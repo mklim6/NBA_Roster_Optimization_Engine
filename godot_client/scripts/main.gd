@@ -111,6 +111,8 @@ var roster_count_value: Label
 var roster_payroll_value: Label
 var roster_cap_value: Label
 var roster_chemistry_value: Label
+var roster_brand_accents: Array = []
+var roster_brand_labels: Array = []
 var roster_rows: VBoxContainer
 var player_detail_overlay: Control
 var rotation_overlay: Control
@@ -892,7 +894,8 @@ func _build_roster_area() -> Control:
 
 	var eyebrow := Label.new()
 	eyebrow.text = "TEAM OPERATIONS"
-	eyebrow.add_theme_color_override("font_color", TEAM_PRIMARY_HOVER)
+	eyebrow.add_theme_color_override("font_color", active_team_primary.lightened(0.45))
+	roster_brand_labels.append(eyebrow)
 	eyebrow.add_theme_font_size_override("font_size", 10)
 	titles.add_child(eyebrow)
 
@@ -993,16 +996,16 @@ func _roster_summary_card(label_text: String, value_text: String) -> Control:
 
 	var accent := ColorRect.new()
 	accent.custom_minimum_size = Vector2(0, 3)
-	accent.color = TEAM_PRIMARY if label_text == "ROSTER" else Color(TEAM_PRIMARY, 0.34)
+	accent.color = active_team_primary if label_text == "ROSTER" else Color(active_team_primary, 0.34)
+	accent.set_meta("emphasized", label_text == "ROSTER")
+	roster_brand_accents.append(accent)
 	accent.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	body.add_child(accent)
 
-	body.add_child(
-		_small_label(
-			label_text,
-			TEAM_PRIMARY_HOVER if label_text == "ROSTER" else MUTED
-		)
-	)
+	var title := _small_label(label_text, active_team_primary.lightened(0.45) if label_text == "ROSTER" else MUTED)
+	body.add_child(title)
+	if label_text == "ROSTER":
+		roster_brand_labels.append(title)
 
 	var value := Label.new()
 	value.text = value_text
@@ -1042,23 +1045,26 @@ func _roster_summary_card(label_text: String, value_text: String) -> Control:
 func _roster_table_header() -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
-	row.add_child(_roster_cell("PLAYER", 220, MUTED))
-	row.add_child(_roster_cell("POS", 62, MUTED))
+	row.add_child(_roster_cell("PLAYER", 230, MUTED))
+	row.add_child(_roster_cell("POS", 52, MUTED))
 	row.add_child(_roster_cell("OVR", 48, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	row.add_child(_roster_cell("AGE", 44, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	row.add_child(_roster_cell("ROLE", 140, MUTED))
-	row.add_child(_roster_cell("MIN", 48, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	row.add_child(_roster_cell("SALARY", 78, MUTED))
-	row.add_child(_roster_cell("MORALE", 82, MUTED))
-	row.add_child(_roster_cell("HEALTH", 128, MUTED))
-	row.add_child(_roster_cell("PPG", 50, MUTED, HORIZONTAL_ALIGNMENT_RIGHT))
-	return row
+	row.add_child(_roster_cell("AGE", 36, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	row.add_child(_roster_cell("ROLE", 78, MUTED))
+	row.add_child(_roster_cell("MIN", 38, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	row.add_child(_roster_cell("SALARY", 70, MUTED))
+	row.add_child(_roster_cell("MORALE", 70, MUTED))
+	row.add_child(_roster_cell("HEALTH", 82, MUTED))
+	row.add_child(_roster_cell("PPG", 42, MUTED, HORIZONTAL_ALIGNMENT_RIGHT))
+	var inset := MarginContainer.new()
+	_set_margins(inset, 14, 0, 14, 0)
+	inset.add_child(row)
+	return inset
 
 
 func _roster_row(player: Dictionary) -> Control:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	panel.custom_minimum_size = Vector2(0, 60)
+	panel.custom_minimum_size = Vector2(0, 82)
 	panel.add_theme_stylebox_override("panel", _box(PANEL_ALT, 10, SOFT_BORDER))
 	panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -1067,7 +1073,7 @@ func _roster_row(player: Dictionary) -> Control:
 
 	var margin := MarginContainer.new()
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_set_margins(margin, 12, 8, 12, 8)
+	_set_margins(margin, 14, 10, 14, 10)
 	panel.add_child(margin)
 
 	var row := HBoxContainer.new()
@@ -1079,38 +1085,42 @@ func _roster_row(player: Dictionary) -> Control:
 	var starter := bool(player.get("is_starter", false))
 	var in_rotation := bool(player.get("in_rotation", false))
 	var depth_state := "STARTER" if starter else ("ROTATION" if in_rotation else "RESERVE")
-	var name_color := TEAM_PRIMARY_HOVER if starter else TEXT
-	if starter:
-		panel.add_theme_stylebox_override(
-			"panel",
-			_box(Color("171b23"), 10, Color(TEAM_PRIMARY, 0.60))
-		)
+	var name_color := TEXT
+	var resting := _box(PANEL_ALT.lerp(active_team_primary, 0.06) if starter else PANEL_ALT, 12, SOFT_BORDER)
+	resting.border_width_left = 3 if starter else 1
+	resting.border_color = active_team_primary.lightened(0.18) if starter else SOFT_BORDER
+	var hovering := resting.duplicate() as StyleBoxFlat
+	hovering.bg_color = PANEL_ALT.lerp(active_team_primary, 0.16)
+	hovering.border_color = active_team_primary.lightened(0.25)
+	panel.add_theme_stylebox_override("panel", resting)
+	panel.mouse_entered.connect(func(): panel.add_theme_stylebox_override("panel", hovering))
+	panel.mouse_exited.connect(func(): panel.add_theme_stylebox_override("panel", resting))
 
-	var morale = player.get("morale", {})
-	var morale_text := str(morale.get("status", ""))
+	var morale = player.get("morale", {}) if player.get("morale") is Dictionary else {}
+	var morale_text := str(morale.get("status", "N/A"))
 	var morale_color := MUTED
 	if morale_text in ["Happy", "Thriving", "Content"]:
 		morale_color = GOOD
 	elif morale_text in ["Frustrated", "Angry", "Demanding Trade"]:
 		morale_color = BAD
 
-	var health = player.get("health", {})
+	var health = player.get("health", {}) if player.get("health") is Dictionary else {}
 	var health_text := str(health.get("display", "Unknown"))
 	var health_status := str(health.get("status", "unknown"))
-	var health_color := GOOD if health_status == "healthy" else BAD
+	var health_color := GOOD if health_status == "healthy" else (MUTED if health_status == "unknown" else BAD)
 
-	var contract = player.get("contract", {})
-	var stats = player.get("season_stats", {})
+	var contract = player.get("contract", {}) if player.get("contract") is Dictionary else {}
+	var stats = player.get("season_stats", {}) if player.get("season_stats") is Dictionary else {}
 
 	var player_identity := HBoxContainer.new()
-	player_identity.custom_minimum_size = Vector2(220, 44)
+	player_identity.custom_minimum_size = Vector2(230, 60)
 	player_identity.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	player_identity.add_theme_constant_override("separation", 9)
 
 	var portrait_script = load("res://scripts/player_portrait_v3.gd")
 	if portrait_script != null:
 		var portrait = portrait_script.new()
-		portrait.custom_minimum_size = Vector2(48, 42)
+		portrait.custom_minimum_size = Vector2(64, 60)
 		player_identity.add_child(portrait)
 		portrait.configure(player)
 
@@ -1124,26 +1134,26 @@ func _roster_row(player: Dictionary) -> Control:
 	player_name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	player_name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	player_name_label.add_theme_color_override("font_color", name_color)
-	player_name_label.add_theme_font_size_override("font_size", 12)
+	player_name_label.add_theme_font_size_override("font_size", 15)
 	identity_copy.add_child(player_name_label)
 
 	var identity_meta := Label.new()
 	identity_meta.text = "%s  •  %s" % [depth_state, str(player.get("development_direction", "")).to_upper()]
 	identity_meta.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	identity_meta.add_theme_color_override("font_color", TEAM_PRIMARY_HOVER if starter else MUTED)
-	identity_meta.add_theme_font_size_override("font_size", 9)
+	identity_meta.add_theme_color_override("font_color", active_team_primary.lightened(0.45) if starter else MUTED)
+	identity_meta.add_theme_font_size_override("font_size", 10)
 	identity_copy.add_child(identity_meta)
 
 	row.add_child(player_identity)
-	row.add_child(_roster_cell(str(player.get("position", "")), 62, TEXT))
+	row.add_child(_roster_cell(str(player.get("position", "")), 52, TEXT))
 	row.add_child(_roster_rating_badge(player.get("overall", null)))
-	row.add_child(_roster_cell(_number_text(player.get("age", null), 1), 44, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
-	row.add_child(_roster_cell(str(player.get("role", "")), 140, TEXT))
-	row.add_child(_roster_cell(_number_text(player.get("target_minutes", 0.0), 0), 48, TEXT, HORIZONTAL_ALIGNMENT_CENTER))
-	row.add_child(_roster_cell(str(contract.get("salary_display", "N/A")), 78, TEXT))
-	row.add_child(_roster_cell(morale_text, 82, morale_color))
-	row.add_child(_roster_cell(health_text, 128, health_color))
-	row.add_child(_roster_cell(_number_text(stats.get("ppg", 0.0), 1), 50, TEXT, HORIZONTAL_ALIGNMENT_RIGHT))
+	row.add_child(_roster_cell(_number_text(player.get("age", null), 1), 36, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	row.add_child(_roster_cell(str(player.get("role", "")), 78, TEXT))
+	row.add_child(_roster_cell(_number_text(player.get("target_minutes", null), 0), 38, TEXT, HORIZONTAL_ALIGNMENT_CENTER))
+	row.add_child(_roster_cell(str(contract.get("salary_display", "N/A")), 70, TEXT))
+	row.add_child(_roster_cell(morale_text, 70, morale_color))
+	row.add_child(_roster_cell(health_text, 82, health_color))
+	row.add_child(_roster_cell(_number_text(stats.get("ppg", null), 1), 42, TEXT, HORIZONTAL_ALIGNMENT_RIGHT))
 
 	return panel
 
@@ -2319,6 +2329,8 @@ func _roster_cell(
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.custom_minimum_size = Vector2(width, 0)
 	label.text = text_value
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	label.tooltip_text = text_value
 	label.horizontal_alignment = alignment
 	label.add_theme_color_override("font_color", color)
 	label.add_theme_font_size_override("font_size", 11)
@@ -2966,6 +2978,11 @@ func _apply_active_team_brand(team_abbreviation: String) -> void:
 	active_team_hover = TeamBrandingV3.hover_color(active_team_primary)
 	active_team_foreground = TeamBrandingV3.readable_foreground(active_team_primary)
 
+	for accent in roster_brand_accents:
+		accent.color = active_team_primary if accent.get_meta("emphasized", false) else Color(active_team_primary, 0.34)
+	for label in roster_brand_labels:
+		label.add_theme_color_override("font_color", active_team_primary.lightened(0.45))
+
 	if background_top_band != null:
 		background_top_band.color = Color(active_team_primary, 0.075)
 	if background_accent_line != null:
@@ -3353,6 +3370,9 @@ func _apply_roster_payload(payload: Dictionary) -> void:
 	var financial = payload.get("financial", {})
 	var chemistry = payload.get("chemistry", {})
 	var players = payload.get("players", [])
+
+	if team is Dictionary and team.get("abbreviation", "") != "":
+		_apply_active_team_brand(str(team.abbreviation))
 
 	var source_label := "V3 WORKING SAVE" if str(payload.get("source", "")) == "v3_working_checkpoint" else "PROTECTED V2 SAVE"
 
