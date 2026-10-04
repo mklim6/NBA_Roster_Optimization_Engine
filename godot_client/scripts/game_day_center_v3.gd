@@ -81,6 +81,7 @@ var postgame_meta_label: Label
 var postgame_active_box: VBoxContainer
 var postgame_opponent_box: VBoxContainer
 
+var postgame_spotlight: VBoxContainer
 var game_payload := {}
 var roster_payload := {}
 var active_team := ""
@@ -628,6 +629,11 @@ func _build_postgame_card() -> Control:
 	postgame_away_team_label = _label("AWAY", 14, TEXT)
 	postgame_away_team_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	away_identity.add_child(postgame_away_team_label)
+
+	postgame_spotlight = preload("res://scripts/postgame_spotlight_v3.gd").new()
+	postgame_spotlight.name = "PostgameSpotlight"
+	body.add_child(postgame_spotlight)
+	postgame_spotlight.configure({}, "")
 
 	var box_header := HBoxContainer.new()
 	box_header.add_theme_constant_override("separation", 10)
@@ -1410,6 +1416,7 @@ func _render_postgame(game: Dictionary) -> void:
 
 	_render_team_box_score(postgame_active_box, game, active_box_team, active_box_name, active_box_score, postgame_team_color)
 	_render_team_box_score(postgame_opponent_box, game, opponent_box_team, opponent_box_name, opponent_box_score, MUTED)
+	postgame_spotlight.configure(game, controlled_team)
 	_animate_postgame_reveal()
 
 
@@ -1548,6 +1555,7 @@ func _animate_postgame_reveal() -> void:
 
 
 func _reset_postgame() -> void:
+	postgame_spotlight.configure({}, "")
 	postgame_result_label.text = "POSTGAME REVIEW"
 	postgame_result_label.add_theme_color_override("font_color", MUTED)
 	postgame_title_label.text = "--   —   --"
