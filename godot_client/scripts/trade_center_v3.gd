@@ -5,6 +5,9 @@ extends Control
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
 const PageIdentityV3 = preload("res://scripts/page_identity_v3.gd")
+const TradeAssetCardV3 = preload("res://scripts/trade_asset_card_v3.gd")
+const TradePackageStageV3 = preload("res://scripts/trade_package_stage_v3.gd")
+const TeamLogoV3 = preload("res://scripts/team_logo_v3.gd")
 
 const FOUNDATION_URL := "http://127.0.0.1:8765/v3/transaction-foundation?trade_finder=1"
 const TEAM_ASSETS_URL := "http://127.0.0.1:8765/v3/trade/team-assets"
@@ -26,6 +29,10 @@ const GOLD := DesignSystemV3.GOLD
 
 var page_identity: Control
 var page_brand_bar: ColorRect
+var package_stage: Control
+var active_asset_logo: Control
+var partner_asset_logo: Control
+var active_color = TEAM_PRIMARY
 
 var foundation_request: HTTPRequest
 var partner_assets_request: HTTPRequest
@@ -72,6 +79,7 @@ var long_action_manager = null
 
 
 func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	active_color = primary
 	if page_identity != null:
 		page_identity.configure(_team, primary, _secondary)
 	if page_brand_bar != null:
@@ -82,6 +90,9 @@ func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
 		active_assets_heading.add_theme_color_override("font_color", TeamBrandingV3.hover_color(primary))
 	for button in primary_buttons:
 		TeamBrandingV3.apply_primary_button(button, primary)
+	if package_stage != null:
+		_refresh_package_stage()
+		_render_active_assets()
 
 
 func _update_package_state() -> void:
@@ -95,6 +106,8 @@ func _update_package_state() -> void:
 		package_state.text = "PREVIEW REJECTED"
 	else:
 		package_state.text = "PACKAGE NEEDS PREVIEW"
+	if package_stage != null:
+		package_stage.set_preview_state(package_state.text, GOOD if package_state.text == "READY TO CONFIRM" else GOLD)
 
 
 func _display(value: Variant, fallback: String = "N/A") -> String:
@@ -157,6 +170,7 @@ func _build_http() -> void:
 
 func _build_ui() -> void:
 	var page_scroll := ScrollContainer.new()
+	page_scroll.name = "TradeCenterPageScroll"
 	page_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	page_scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	page_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -196,7 +210,7 @@ func _build_ui() -> void:
 	titles.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "Production Trade Finder, exact live assets, and CBA-aware package previews."
+	subtitle.text = "Build the next chapter of your franchise. Compare both sides of the deal."
 	subtitle.add_theme_color_override("font_color", MUTED)
 	subtitle.add_theme_font_size_override("font_size", 12)
 	titles.add_child(subtitle)
@@ -217,6 +231,9 @@ func _build_ui() -> void:
 	status_label.add_theme_font_size_override("font_size", 11)
 	safety_body.add_child(status_label)
 	column.add_child(safety)
+	package_stage = TradePackageStageV3.new()
+	column.add_child(package_stage)
+	package_stage.configure("", "", [], [], [], [])
 
 	var finder_card := _card(Vector2(0, 205))
 	finder_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(GOLD, 0.46)))
@@ -236,7 +253,8 @@ func _build_ui() -> void:
 	finder_body.add_child(finder_hint)
 
 	var proposal_scroll := ScrollContainer.new()
-	proposal_scroll.custom_minimum_size = Vector2(0, 120)
+	proposal_scroll.name = "TradeFinderScroll"
+	proposal_scroll.custom_minimum_size = Vector2(0, 180)
 	proposal_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	finder_body.add_child(proposal_scroll)
 
@@ -244,7 +262,6 @@ func _build_ui() -> void:
 	proposal_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	proposal_rows.add_theme_constant_override("separation", 5)
 	proposal_scroll.add_child(proposal_rows)
-	column.add_child(finder_card)
 
 	var builder_row := HBoxContainer.new()
 	builder_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -252,11 +269,11 @@ func _build_ui() -> void:
 	column.add_child(builder_row)
 
 	var active_panel := _asset_panel("YOUR ASSETS", true)
-	active_panel.custom_minimum_size = Vector2(345, 500)
+	active_panel.custom_minimum_size = Vector2(345, 560)
 	active_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	builder_row.add_child(active_panel)
 
-	var command_card := _card(Vector2(280, 500))
+	var command_card := _card(Vector2(280, 560))
 	command_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(ACCENT, 0.46)))
 	var command_body := _card_body(command_card, 16)
 	command_body.add_child(_small_label("TRADE BUILDER", GOLD))
@@ -302,7 +319,7 @@ func _build_ui() -> void:
 	command_body.add_child(execute_button)
 
 	var locked := Label.new()
-	locked.text = "BATCH 08 WRITE GATE\nExecution requires a fresh PASS preview, the exact working-save SHA, confirmation, durable reload verification, and an unchanged V2 checkpoint."
+	locked.text = "Preview checks contract, salary, and draft-right rules. Execution requires a valid preview and your confirmation."
 	locked.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	locked.add_theme_color_override("font_color", MUTED)
 	locked.add_theme_font_size_override("font_size", 9)
@@ -310,7 +327,7 @@ func _build_ui() -> void:
 	builder_row.add_child(command_card)
 
 	var partner_panel := _asset_panel("PARTNER ASSETS", false)
-	partner_panel.custom_minimum_size = Vector2(345, 500)
+	partner_panel.custom_minimum_size = Vector2(345, 560)
 	partner_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	builder_row.add_child(partner_panel)
 
@@ -331,6 +348,7 @@ func _build_ui() -> void:
 	preview_label.add_theme_font_size_override("font_size", 11)
 	preview_body.add_child(preview_label)
 	column.add_child(preview_card)
+	column.add_child(finder_card)
 
 	execute_dialog = ConfirmationDialog.new()
 	execute_dialog.title = "Confirm franchise trade"
@@ -347,8 +365,22 @@ func _asset_panel(title_text: String, active_side: bool) -> PanelContainer:
 	var side_heading := _small_label("ACTIVE FRANCHISE" if active_side else "TRADE PARTNER", side_color)
 	if active_side:
 		active_assets_heading = side_heading
-	body.add_child(side_heading)
-	body.add_child(_section_title(title_text))
+	var identity = HBoxContainer.new()
+	identity.add_theme_constant_override("separation", 8)
+	body.add_child(identity)
+	var logo = TeamLogoV3.new()
+	logo.custom_minimum_size = Vector2(58, 58)
+	identity.add_child(logo)
+	if active_side:
+		active_asset_logo = logo
+	else:
+		partner_asset_logo = logo
+	var titles = VBoxContainer.new()
+	titles.alignment = BoxContainer.ALIGNMENT_CENTER
+	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	identity.add_child(titles)
+	titles.add_child(side_heading)
+	titles.add_child(_section_title(title_text))
 
 	var hint := Label.new()
 	hint.text = "Select players and exact draft-right assets to include."
@@ -358,6 +390,8 @@ func _asset_panel(title_text: String, active_side: bool) -> PanelContainer:
 	body.add_child(hint)
 
 	var scroll := ScrollContainer.new()
+	scroll.name = "OutgoingAssetsScroll" if active_side else "IncomingAssetsScroll"
+	scroll.custom_minimum_size = Vector2(0, 400)
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(scroll)
@@ -424,6 +458,7 @@ func _on_foundation_completed(result: int, response_code: int, _headers: PackedS
 		float(finder.get("search_elapsed_seconds", 0.0))
 	]
 	status_label.add_theme_color_override("font_color", GOOD)
+	_refresh_package_stage()
 
 
 func _populate_partner_selector() -> void:
@@ -459,6 +494,7 @@ func _on_partner_selected(index: int) -> void:
 
 func _request_partner_assets(team_code: String) -> void:
 	partner_payload = {}
+	_refresh_package_stage()
 	_invalidate_trade_execution()
 	preview_button.disabled = true
 	if partner_assets_request == null:
@@ -529,18 +565,9 @@ func _render_partner_assets() -> void:
 
 func _player_checkbox(player_data: Dictionary, kind: String) -> CheckBox:
 	var player_id := str(player_data.get("player_id", ""))
-	var box := CheckBox.new()
-	box.text = "%s  •  %s  •  OVR %s  •  %s" % [
-		str(player_data.get("name", player_id)),
-		str(player_data.get("position", "")),
-		_display(player_data.get("overall")),
-		_money_text(player_data.get("salary", null))
-	]
-	box.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	box.tooltip_text = box.text
-	box.button_pressed = _selection_dict(kind).has(player_id)
-	box.add_theme_color_override("font_color", TEXT)
-	box.add_theme_font_size_override("font_size", 10)
+	var box = TradeAssetCardV3.new()
+	var partner_color: Color = TeamBrandingV3.palette(str(partner_payload.get("team", ""))).get("primary", ACCENT)
+	box.configure(player_data, _selection_dict(kind).has(player_id), active_color if kind == "active_player" else partner_color)
 	box.toggled.connect(_on_asset_toggled.bind(kind, player_id))
 	return box
 
@@ -552,12 +579,17 @@ func _pick_checkbox(pick_data: Dictionary, kind: String) -> CheckBox:
 		display = "%s R%s • %s" % [str(pick_data.get("draft_year", "")), str(pick_data.get("round", "")), str(pick_data.get("origin_team", ""))]
 	var readiness := "READY" if bool(pick_data.get("engine_ready", false)) else "REVIEW"
 	var box := CheckBox.new()
+	box.name = "TradePick_" + asset_id
+	box.set_meta("asset_id", asset_id)
+	box.flat = false
+	box.custom_minimum_size = Vector2(0, 60)
+	box.add_theme_stylebox_override("normal", _box(Color(GOLD, 0.07), 10, Color(GOLD, 0.30)))
 	box.text = "%s  •  %s" % [display, readiness]
 	box.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	box.tooltip_text = box.text
 	box.button_pressed = _selection_dict(kind).has(asset_id)
 	box.add_theme_color_override("font_color", TEXT if readiness == "READY" else GOLD)
-	box.add_theme_font_size_override("font_size", 10)
+	box.add_theme_font_size_override("font_size", 11)
 	box.toggled.connect(_on_asset_toggled.bind(kind, asset_id))
 	return box
 
@@ -630,7 +662,41 @@ func _update_package_summary() -> void:
 	preview_button.disabled = execute_in_flight or outgoing_count == 0 or incoming_count == 0 or partner_payload.is_empty()
 	preview_label.text = "Package changed. Run a fresh legality preview before execution."
 	preview_label.add_theme_color_override("font_color", MUTED)
+	_refresh_package_stage()
 	_invalidate_trade_execution()
+
+
+func _refresh_package_stage() -> void:
+	if package_stage == null:
+		return
+	var partner = partner_selector.get_item_text(partner_selector.selected) if partner_selector != null and partner_selector.item_count > 0 else ""
+	package_stage.configure(
+		active_team, partner,
+		_selected_asset_rows(selected_active_players, _array(_dict(foundation_payload.get("trade_assets")).get("players")), "player_id"),
+		_selected_asset_rows(selected_partner_players, _array(partner_payload.get("players")), "player_id"),
+		_selected_asset_rows(selected_active_picks, _array(_dict(foundation_payload.get("draft_assets")).get("owned")), "asset_id"),
+		_selected_asset_rows(selected_partner_picks, _array(partner_payload.get("picks")), "asset_id")
+	)
+	if active_asset_logo != null:
+		active_asset_logo.configure(active_team)
+	if partner_asset_logo != null:
+		partner_asset_logo.configure(partner)
+	if package_state != null:
+		package_stage.set_preview_state(package_state.text, GOOD if package_state.text == "READY TO CONFIRM" else GOLD)
+
+
+func _selected_asset_rows(selection: Dictionary, rows: Array, id_key: String) -> Array:
+	var result: Array = []
+	for id in _selected_ids(selection):
+		var found = false
+		for raw in rows:
+			if raw is Dictionary and str(raw.get(id_key, "")) == id:
+				result.append(raw)
+				found = true
+				break
+		if not found:
+			result.append({id_key: id, "name": id, "display_name": id})
+	return result
 
 
 func _selected_asset_names(players: Dictionary, picks: Dictionary, player_rows: Array, pick_rows: Array) -> String:
@@ -680,7 +746,9 @@ func _render_proposals() -> void:
 			continue
 		var proposal: Dictionary = raw_proposal
 		var button := Button.new()
-		button.custom_minimum_size = Vector2(0, 62)
+		button.custom_minimum_size = Vector2(0, 88)
+		button.name = "TradeFinderProposal_" + str(proposal.get("partner_team", ""))
+		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		button.text = "%s • %s • %s\nGET %s   |   SEND %s" % [
 			str(proposal.get("partner_team", "")),
@@ -689,10 +757,20 @@ func _render_proposals() -> void:
 			_join_assets(proposal.get("incoming", [])),
 			_join_assets(proposal.get("outgoing", []))
 		]
+		button.tooltip_text = button.text
 		button.add_theme_color_override("font_color", TEXT)
-		button.add_theme_font_size_override("font_size", 10)
-		button.add_theme_stylebox_override("normal", _box(PANEL_ALT, 8, BORDER))
-		button.add_theme_stylebox_override("hover", _box(PANEL_HOVER, 8, ACCENT))
+		button.add_theme_font_size_override("font_size", 12)
+		var normal = _box(PANEL_ALT, 12, BORDER)
+		normal.content_margin_left = 82
+		var hover = _box(PANEL_HOVER, 12, ACCENT)
+		hover.content_margin_left = 82
+		button.add_theme_stylebox_override("normal", normal)
+		button.add_theme_stylebox_override("hover", hover)
+		var logo = TeamLogoV3.new()
+		logo.position = Vector2(12, 12)
+		logo.size = Vector2(58, 64)
+		button.add_child(logo)
+		logo.configure(str(proposal.get("partner_team", "")))
 		button.pressed.connect(_load_proposal.bind(proposal))
 		proposal_rows.add_child(button)
 
