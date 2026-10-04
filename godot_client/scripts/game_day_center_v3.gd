@@ -47,6 +47,10 @@ var postgame_away_team_label: Label
 var readiness_values := {}
 var primary_buttons: Array = []
 
+var coaching_board: VBoxContainer
+var coaching_request: HTTPRequest
+var coaching_team := ""
+var rotation_card: Control
 var game_request: HTTPRequest
 var roster_request: HTTPRequest
 var simulate_request: HTTPRequest
@@ -100,6 +104,9 @@ var long_action_manager = null
 
 
 func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	coaching_team = _team
+	if coaching_board != null:
+		coaching_board.clear_board("Refresh to load this team’s coaching plan.")
 	postgame_team_color = TeamBrandingV3.hover_color(primary)
 	if branded_top_band != null:
 		branded_top_band.color = Color(primary, 0.08)
@@ -198,7 +205,14 @@ func _build_page() -> void:
 	content.add_child(_build_matchup_card())
 	content.add_child(_build_readiness_metrics())
 	content.add_child(_build_readiness_row())
-	content.add_child(_build_rotation_card())
+	coaching_board = preload("res://scripts/coaching_board_v3.gd").new()
+	content.add_child(coaching_board)
+	coaching_board.edit_rotation.connect(func():
+		var scroller = rotation_card.get_parent().get_parent()
+		if scroller is ScrollContainer:
+			scroller.ensure_control_visible(rotation_card))
+	rotation_card = _build_rotation_card()
+	content.add_child(rotation_card)
 	content.add_child(_build_postgame_card())
 
 
@@ -670,6 +684,19 @@ func _build_postgame_card() -> Control:
 
 
 func _build_http() -> void:
+	coaching_request = HTTPRequest.new()
+	coaching_request.timeout = 15.0
+	add_child(coaching_request)
+	coaching_request.request_completed.connect(func(result, code, _headers, body):
+		if result != HTTPRequest.RESULT_SUCCESS or code != 200:
+			coaching_board.clear_board("Coaching intelligence unavailable. Refresh to retry.")
+			return
+		var data = JSON.parse_string(body.get_string_from_utf8())
+		if typeof(data) != TYPE_DICTIONARY or str(data.get("team", "")) != coaching_team:
+			coaching_board.clear_board("Refresh to load this team’s coaching plan.")
+			return
+		coaching_board.configure(data))
+
 	game_request = HTTPRequest.new()
 	game_request.timeout = 8.0
 	game_request.request_completed.connect(_on_game_request_completed)
@@ -692,6 +719,12 @@ func _build_http() -> void:
 
 
 func _request_game_day() -> void:
+	if coaching_request != null:
+		coaching_request.cancel_request()
+		coaching_board.clear_board("Loading matchup intelligence…")
+		if coaching_request.request("http://127.0.0.1:8765/v3/coaching-plan") != OK:
+			coaching_board.clear_board("Coaching request could not start. Refresh to retry.")
+
 	if game_request == null:
 		return
 	if game_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:

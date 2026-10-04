@@ -3562,6 +3562,41 @@ async def rotation_apply(request: Request) -> JSONResponse:
         )
 
 
+async def coaching_plan(_: Request) -> JSONResponse:
+    """Production tactical analysis on an isolated state; never persist or simulate."""
+    from franchise_coaching_matchup_tactics_v1 import (
+        apply_matchup_tactical_counters_v1, coach_tendency_profile_v1,
+        opponent_threat_profile_v1,
+    )
+    from single_game_simulator_v1 import GameSimulationConfig, build_team_game_plan
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse({"error": "working_save_missing"}, status_code=409)
+        team = _active_team_from_checkpoint(checkpoint)
+        state = copy.deepcopy(checkpoint.simulation_state)
+        next_game = _game_day_payload(state, team).get("next_game")
+        payload = {"team": team, "available": False, "working_save_write_performed": False}
+        if not next_game:
+            payload["detail"] = "No upcoming regular-season matchup available."
+            return JSONResponse(payload)
+        config = GameSimulationConfig()
+        plans = [build_team_game_plan(state, next_game[key], sit_player_ids=set(),
+                 overtime_periods=0, config=config) for key in ("home_team", "away_team")]
+        _, _, report = apply_matchup_tactical_counters_v1(state, *plans,
+            offense_rating_weight=config.offense_rating_weight,
+            opponent_rating_weight=config.opponent_rating_weight)
+        home = team == next_game["home_team"]
+        opponent = plans[1 if home else 0]
+        payload.update(available=True, opponent=opponent.team_abbreviation,
+            decision=asdict(report.home_defense if home else report.away_defense),
+            staff=asdict(coach_tendency_profile_v1(state, team)),
+            threats=asdict(opponent_threat_profile_v1(state, opponent)))
+        return JSONResponse(payload)
+    except Exception as exc:
+        return JSONResponse({"error": "coaching_plan_unavailable", "detail": str(exc)}, status_code=500)
+
+
 async def game_day_summary(_: Request) -> JSONResponse:
     try:
         checkpoint = _working_checkpoint()
@@ -4922,6 +4957,7 @@ routes = [
     Route("/v3/working-save/reset", reset_working_save, methods=["POST"]),
     Route("/v3/rotation/preview", rotation_preview, methods=["POST"]),
     Route("/v3/rotation/apply", rotation_apply, methods=["POST"]),
+    Route("/v3/coaching-plan", coaching_plan, methods=["GET"]),
     Route("/v3/game-day", game_day_summary, methods=["GET"]),
     Route("/v3/game-day/simulate", game_day_simulate, methods=["POST"]),
 ]
