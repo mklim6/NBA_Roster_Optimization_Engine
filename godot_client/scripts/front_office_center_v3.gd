@@ -1,19 +1,25 @@
 extends Control
 
+const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
+const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+
 const FRONT_OFFICE_URL := "http://127.0.0.1:8765/v3/front-office"
 
-const BG := Color("080b12")
-const PANEL := Color("121824")
-const PANEL_ALT := Color("171f2d")
-const TEXT := Color("f7f8fb")
-const MUTED := Color("8d99aa")
-const GOOD := Color("61d69b")
-const BAD := Color("ff6577")
-const BORDER := Color("263247")
-const GOLD := Color("f3c96b")
-const ACCENT := Color("8ed8ff")
-const TEAM_PRIMARY := Color("d9273c")
-const TEAM_PRIMARY_HOVER := Color("ef4055")
+const BG := DesignSystemV3.BG
+const PANEL := DesignSystemV3.PANEL
+const PANEL_ALT := DesignSystemV3.PANEL_ALT
+const TEXT := DesignSystemV3.TEXT
+const MUTED := DesignSystemV3.MUTED
+const GOOD := DesignSystemV3.GOOD
+const BAD := DesignSystemV3.BAD
+const BORDER := DesignSystemV3.BORDER
+const GOLD := DesignSystemV3.GOLD
+const ACCENT := DesignSystemV3.ACCENT
+const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
+const TEAM_PRIMARY_HOVER := DesignSystemV3.TEAM_PRIMARY_HOVER
+
+var brand_heading: Label
+var refresh_button: Button
 
 var request: HTTPRequest
 var status_label: Label
@@ -33,6 +39,13 @@ var payload := {}
 func _ready() -> void:
 	_build_page()
 	_build_http()
+
+
+func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	if brand_heading != null:
+		brand_heading.add_theme_color_override("font_color", TeamBrandingV3.hover_color(primary))
+	if refresh_button != null:
+		TeamBrandingV3.apply_primary_button(refresh_button, primary)
 
 
 func refresh() -> void:
@@ -64,6 +77,7 @@ func _build_page() -> void:
 	header.add_child(titles)
 
 	var eyebrow := _label("FRANCHISE OPERATIONS • FRONT OFFICE", 10, TEAM_PRIMARY_HOVER)
+	brand_heading = eyebrow
 	titles.add_child(eyebrow)
 	var title := _label("FRONT OFFICE COMMAND CENTER", 31, TEXT)
 	titles.add_child(title)
@@ -76,6 +90,7 @@ func _build_page() -> void:
 	titles.add_child(subtitle)
 
 	var refresh := Button.new()
+	refresh_button = refresh
 	refresh.text = "REFRESH FRONT OFFICE"
 	refresh.custom_minimum_size = Vector2(165, 62)
 	refresh.pressed.connect(_refresh)
@@ -96,6 +111,7 @@ func _build_page() -> void:
 	roster_value = _metric_card(metrics, "ROSTER / ROTATION", "LOADING...")
 
 	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(scroll)
@@ -186,9 +202,8 @@ func _render_payload() -> void:
 	else:
 		chemistry_value.text = "UNAVAILABLE"
 
-	var roster_size := _int_value(team.get("roster_size"), 0)
-	var rotation_players := _int_value(rotation.get("rotation_players"), 0)
-	roster_value.text = "%d PLAYERS • %d ROTATION" % [roster_size, rotation_players]
+	roster_value.text = "%s PLAYERS • %s ROTATION" % [
+		_count_text(team.get("roster_size")), _count_text(rotation.get("rotation_players"))]
 
 	health_text.text = _render_health(health)
 	morale_text.text = _render_morale(morale, chemistry)
@@ -206,8 +221,10 @@ func _render_payload() -> void:
 
 func _render_health(health: Dictionary) -> String:
 	var lines: Array[String] = []
-	var injured_count := _int_value(health.get("injured_count"), 0)
-	lines.append("Injured / limited: %d" % injured_count)
+	lines.append("Injured / limited: %s" % _count_text(health.get("injured_count")))
+	if typeof(health.get("injuries")) != TYPE_ARRAY:
+		lines.append("Injury availability has not been evaluated for this snapshot.")
+		return "\n".join(lines)
 	var injuries := _array(health.get("injuries"))
 	if injuries.is_empty():
 		lines.append("No active injuries in the current roster snapshot.")
@@ -228,14 +245,26 @@ func _render_health(health: Dictionary) -> String:
 
 
 func _render_morale(morale: Dictionary, chemistry: Dictionary) -> String:
+	var roster := _array(morale.get("full_roster"))
+	if not roster.is_empty():
+		var evaluated := false
+		for raw in roster:
+			var row := _dict(raw)
+			if row.get("score") != null or row.get("trade_request_risk") != null or _text(row.get("status"), "") != "":
+				evaluated = true
+		if not evaluated:
+			return "Morale and trade-request risk have not been evaluated for this snapshot."
 	var lines: Array[String] = []
 	var alignment := _float_value(chemistry.get("role_alignment"), -1.0)
-	var frustrated := _int_value(chemistry.get("frustrated_players"), 0)
-	var pressure := _int_value(chemistry.get("trade_pressure_players"), 0)
+	var frustrated := _count_text(chemistry.get("frustrated_players"))
+	var pressure := _count_text(chemistry.get("trade_pressure_players"))
 	if alignment >= 0.0:
 		lines.append("Role alignment: %.1f" % alignment)
-	lines.append("Frustrated: %d • Trade pressure: %d" % [frustrated, pressure])
+	lines.append("Frustrated: %s • Trade pressure: %s" % [frustrated, pressure])
 
+	if typeof(morale.get("attention")) != TYPE_ARRAY:
+		lines.append("Morale alerts have not been evaluated for this snapshot.")
+		return "\n".join(lines)
 	var attention := _array(morale.get("attention"))
 	if attention.is_empty():
 		lines.append("No major morale alerts in the current snapshot.")
@@ -282,11 +311,10 @@ func _render_development(development: Dictionary) -> String:
 
 func _render_workload(health: Dictionary, rotation: Dictionary) -> String:
 	var lines: Array[String] = []
-	var total_minutes := _float_value(rotation.get("total_target_minutes"), 0.0)
-	lines.append("Rotation: %d players • %.0f target minutes" % [
-		_int_value(rotation.get("rotation_players"), 0),
-		total_minutes
-	])
+	lines.append("Rotation: %s players • %s target minutes" % [
+		_count_text(rotation.get("rotation_players")), _count_text(rotation.get("total_target_minutes"))])
+	if typeof(health.get("workload_watch")) != TYPE_ARRAY:
+		lines.append("Workload watch is unavailable for this snapshot.")
 	var rows := _array(health.get("workload_watch"))
 	for raw in rows.slice(0, 8):
 		var row := _dict(raw)
@@ -308,10 +336,10 @@ func _render_workload(health: Dictionary, rotation: Dictionary) -> String:
 
 func _render_financial(financial: Dictionary, team: Dictionary) -> String:
 	var lines: Array[String] = []
-	lines.append("Roster size: %d • Active: %d • Inactive: %d" % [
-		_int_value(team.get("roster_size"), 0),
-		_int_value(team.get("active_players"), 0),
-		_int_value(team.get("inactive_players"), 0)
+	lines.append("Roster size: %s • Active: %s • Inactive: %s" % [
+		_count_text(team.get("roster_size")),
+		_count_text(team.get("active_players")),
+		_count_text(team.get("inactive_players"))
 	])
 
 	var preferred_keys := [
@@ -357,6 +385,12 @@ func _render_staff(staff: Dictionary) -> String:
 	lines.append("Staff writes: DISABLED")
 	lines.append("A real production staff-hiring authority will be wired before this page is allowed to mutate the franchise.")
 	return "\n".join(lines)
+
+
+func _count_text(value: Variant) -> String:
+	if typeof(value) != TYPE_INT and typeof(value) != TYPE_FLOAT:
+		return "N/A"
+	return "%.0f" % float(value)
 
 
 func _metric_card(parent: GridContainer, title: String, value: String) -> Label:

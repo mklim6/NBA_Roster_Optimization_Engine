@@ -22,6 +22,7 @@ from simulation_franchise_checkpoint_v1 import (  # noqa: E402
 from desktop_bridge.front_office_foundation import (  # noqa: E402
     FRONT_OFFICE_FOUNDATION_VERSION,
     build_front_office_intelligence_payload,
+    _morale_rows,
 )
 from desktop_bridge.server import (  # noqa: E402
     TEAM_NAMES,
@@ -261,9 +262,22 @@ def dynamic_checks(results: dict[str, bool]) -> dict[str, Any]:
                 pass
         check(
             "dynamic_trade_risk_is_percent_point_scale",
-            bool(trade_risks) and all(0.0 <= value <= 100.0 for value in trade_risks),
+            bool(morale_rows) and all(
+                isinstance(row, dict) and "trade_request_risk" in row and (
+                    row["trade_request_risk"] is None
+                    or (type(row["trade_request_risk"]) in (int, float)
+                        and 0.0 <= row["trade_request_risk"] <= 100.0)
+                ) for row in morale_rows
+            ),
             results,
         )
+        fixture_risks = _morale_rows([
+            {"name": "Evaluated", "morale": {"trade_request_risk": 20.0}},
+            {"name": "Unevaluated", "morale": {}},
+        ])
+        check("fixture_trade_risk_preserves_percent_points_and_missing", {
+            row["name"]: row["trade_request_risk"] for row in fixture_risks
+        } == {"Evaluated": 20.0, "Unevaluated": None}, results)
         check(
             "dynamic_staff_truthful_and_read_only",
             "standalone_authority_exposed" in staff
