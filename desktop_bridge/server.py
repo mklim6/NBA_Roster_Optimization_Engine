@@ -1450,8 +1450,10 @@ def _franchise_intelligence_payload(
     state: Any,
     active_team: str,
 ) -> dict[str, Any]:
+    from desktop_bridge.season_momentum import build_season_momentum
     draft = _draft_summary(state)
     return {
+        "momentum": build_season_momentum(state, active_team),
         "api_version": API_VERSION,
         "source": "v3_working_checkpoint",
         "read_only": True,
