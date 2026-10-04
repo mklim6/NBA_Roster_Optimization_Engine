@@ -96,6 +96,11 @@ func _render() -> void:
 	add_child(_label("YOUR FRANCHISE • " + str(season.get("label", "")), 12, DS.GOLD))
 	add_child(_label(headline, 28))
 	add_child(_label("%s • %s • %s games played" % [team.get("name", "Your team"), record.get("display", "Record unavailable"), played], 15, DS.MUTED))
+	var inbox_link := Button.new()
+	inbox_link.text = "OPEN FRANCHISE INBOX"
+	inbox_link.custom_minimum_size.y = 42
+	inbox_link.pressed.connect(func(): navigate.emit("INBOX"))
+	add_child(inbox_link)
 	var office: Dictionary = intelligence.get("front_office", {})
 	var rotation: Dictionary = office.get("rotation", {})
 	var injuries: Array = office.get("injured_players", [])

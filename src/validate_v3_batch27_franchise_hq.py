@@ -35,15 +35,15 @@ func _initialize():
         return
     var routed = []
     hq.navigate.connect(func(page): routed.append(page))
-    var next_button = hq.get_child(3).get_child(0).get_child(2)
+    var next_button = hq.get_child(4).get_child(0).get_child(2)
     next_button.pressed.emit()
     if not check(routed == ["GAME DAY"], "next_move_routes_without_simulating"):
         return
     hq.configure_intelligence({"team": "BOS", "front_office": {"injured_players": [{"name": "Player"}], "rotation": {"starters": 5, "total_minutes": 240}}, "league": {"recent_results": []}})
-    if not check("availability" in hq.get_child(3).get_child(0).get_child(0).text, "injury_priority"):
+    if not check("availability" in hq.get_child(4).get_child(0).get_child(0).text, "injury_priority"):
         return
     hq.configure_intelligence({"team": "BOS", "front_office": {"rotation": {"starters": 4, "total_minutes": 200}}, "league": {"recent_results": [{"away_team": "BOS", "away_score": 110, "home_team": "SAS", "home_score": 100}]}})
-    if not check("Check your rotation" in hq.get_child(3).get_child(0).get_child(0).text, "rotation_priority"):
+    if not check("Check your rotation" in hq.get_child(4).get_child(0).get_child(0).text, "rotation_priority"):
         return
     if not check("110" in hq.get_child(hq.get_child_count()-1).get_child(0).get_child(1).text, "actual_result_rendered"):
         return

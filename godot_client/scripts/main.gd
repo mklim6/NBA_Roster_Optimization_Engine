@@ -65,6 +65,7 @@ var market_intelligence_request: HTTPRequest
 var transaction_foundation_request: HTTPRequest
 
 var hq_story: VBoxContainer
+var inbox_page: Control
 var home_page: Control
 var roster_page: Control
 var trades_page: Control
@@ -366,6 +367,11 @@ func _build_interface() -> void:
 	content_stack.add_child(league_page)
 	league_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	inbox_page = preload("res://scripts/decision_inbox_v3.gd").new()
+	content_stack.add_child(inbox_page)
+	inbox_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	inbox_page.navigate.connect(_show_page)
+
 	front_office_page = FrontOfficeCenterV3.new()
 	content_stack.add_child(front_office_page)
 	front_office_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -446,6 +452,7 @@ func _build_sidebar() -> Control:
 
 	column.add_child(UiComponentsV3.sidebar_group_label("COMMAND"))
 	column.add_child(_nav_button("HOME", true))
+	column.add_child(_nav_button("INBOX"))
 	column.add_child(_nav_button("FRANCHISES"))
 
 	column.add_child(UiComponentsV3.sidebar_group_label("TEAM"))
@@ -2721,6 +2728,8 @@ func _on_intelligence_completed(
 
 func _page_control(page_name: String):
 	match page_name:
+		"INBOX":
+			return inbox_page
 		"HOME":
 			return home_page
 		"FRANCHISES":
@@ -2757,6 +2766,7 @@ func _all_page_controls() -> Array:
 		scouting_page,
 		season_page,
 		league_page,
+		inbox_page,
 		front_office_page,
 		settings_page,
 	]
@@ -2803,6 +2813,8 @@ func _show_page(page_name: String, force_refresh: bool = false) -> void:
 	elif page_name == "LEAGUE":
 		if league_page != null and league_page.has_method("refresh"):
 			league_page.call("refresh")
+	elif page_name == "INBOX":
+		inbox_page.refresh()
 	elif page_name == "FRONT OFFICE":
 		if front_office_page != null and front_office_page.has_method("refresh"):
 			front_office_page.call("refresh")
@@ -2820,6 +2832,7 @@ func _show_page(page_name: String, force_refresh: bool = false) -> void:
 			free_agency_page.call("refresh")
 
 func _on_active_save_changed() -> void:
+	inbox_page.invalidate()
 	# A save switch changes the authoritative V3 working universe. Clear client
 	# request reuse state before loading the destination franchise.
 	if request_coordinator != null:
@@ -2938,6 +2951,7 @@ func _broadcast_team_brand() -> void:
 		scouting_page,
 		season_page,
 		league_page,
+		inbox_page,
 		front_office_page,
 		save_manager_page,
 		settings_page
@@ -3023,6 +3037,7 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 	)
 
 	if text_value in [
+		"INBOX",
 		"HOME",
 		"FRANCHISES",
 		"ROSTER",
