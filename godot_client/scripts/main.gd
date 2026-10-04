@@ -1056,7 +1056,7 @@ func _roster_summary_card(label_text: String, value_text: String) -> Control:
 func _roster_table_header() -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
-	row.add_child(_roster_cell("PLAYER", 230, MUTED))
+	row.add_child(_roster_cell("PLAYER", 310, MUTED))
 	row.add_child(_roster_cell("POS", 52, MUTED))
 	row.add_child(_roster_cell("OVR", 48, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
 	row.add_child(_roster_cell("AGE", 36, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
@@ -1072,10 +1072,11 @@ func _roster_table_header() -> Control:
 	return inset
 
 
+# Batch 21A.1 roster portrait scale polish
 func _roster_row(player: Dictionary) -> Control:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	panel.custom_minimum_size = Vector2(0, 82)
+	panel.custom_minimum_size = Vector2(0, 108)
 	panel.add_theme_stylebox_override("panel", _box(PANEL_ALT, 10, SOFT_BORDER))
 	panel.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -1124,14 +1125,14 @@ func _roster_row(player: Dictionary) -> Control:
 	var stats = player.get("season_stats", {}) if player.get("season_stats") is Dictionary else {}
 
 	var player_identity := HBoxContainer.new()
-	player_identity.custom_minimum_size = Vector2(230, 60)
+	player_identity.custom_minimum_size = Vector2(310, 88)
 	player_identity.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	player_identity.add_theme_constant_override("separation", 9)
 
 	var portrait_script = load("res://scripts/player_portrait_v3.gd")
 	if portrait_script != null:
 		var portrait = portrait_script.new()
-		portrait.custom_minimum_size = Vector2(64, 60)
+		portrait.custom_minimum_size = Vector2(120, 88)
 		player_identity.add_child(portrait)
 		portrait.configure(player)
 
@@ -1145,7 +1146,7 @@ func _roster_row(player: Dictionary) -> Control:
 	player_name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	player_name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	player_name_label.add_theme_color_override("font_color", name_color)
-	player_name_label.add_theme_font_size_override("font_size", 15)
+	player_name_label.add_theme_font_size_override("font_size", 16)
 	identity_copy.add_child(player_name_label)
 
 	var identity_meta := Label.new()
