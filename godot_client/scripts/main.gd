@@ -1143,6 +1143,7 @@ func _show_player_detail(player: Dictionary) -> void:
 	_close_player_detail()
 
 	player_detail_overlay = Control.new()
+	player_detail_overlay.name = "PlayerProfileOverlay"
 	player_detail_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	player_detail_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(player_detail_overlay)
@@ -1233,7 +1234,7 @@ func _show_player_detail(player: Dictionary) -> void:
 	)
 
 	var morale = player.get("morale", {})
-	var morale_status := str(morale.get("status", "Unknown"))
+	var morale_status := _display_text(morale.get("status", null), "Not evaluated")
 	var morale_color := MUTED
 	if morale_status in ["Happy", "Thriving", "Content"]:
 		morale_color = GOOD
@@ -1259,34 +1260,15 @@ func _show_player_detail(player: Dictionary) -> void:
 	content.add_child(grid)
 
 	var stats = player.get("season_stats", {})
-	grid.add_child(
-		_detail_card(
-			"SEASON PRODUCTION",
-			[
-				"PPG   %s" % _number_text(stats.get("ppg", null), 1),
-				"RPG   %s" % _number_text(stats.get("rpg", null), 1),
-				"APG   %s" % _number_text(stats.get("apg", null), 1),
-				"MPG   %s" % _number_text(stats.get("mpg", null), 1),
-				"SPG   %s" % _number_text(stats.get("spg", null), 1),
-				"BPG   %s" % _number_text(stats.get("bpg", null), 1),
-				"FG%%   %s" % _pct_text(stats.get("fg_pct", null)),
-				"3P%%   %s" % _pct_text(stats.get("three_pct", null)),
-				"FT%%   %s" % _pct_text(stats.get("ft_pct", null)),
-				"GP / GS   %s / %s" % [
-					str(stats.get("games_played", 0)),
-					str(stats.get("games_started", 0))
-				]
-			]
-		)
-	)
+	grid.add_child(_profile_stats_card(stats))
 
 	var contract = player.get("contract", {})
 	var contract_lines := [
 		"Role   %s" % str(player.get("role", "")),
 		"Target minutes   %s" % _number_text(player.get("target_minutes", 0), 0),
-		"Salary   %s" % str(contract.get("salary_display", "N/A")),
+		"Salary   %s" % _display_text(contract.get("salary_display", null)),
 		"Years remaining   %s" % str(contract.get("years_remaining", 0)),
-		"Contract status   %s" % _pretty_phase(str(contract.get("status", ""))),
+		"Contract status   %s" % _pretty_phase(_display_text(contract.get("status", null))),
 		"Option   %s" % _friendly_value(str(contract.get("option_type", ""))),
 		"Rotation order   %s" % _friendly_value(str(player.get("rotation_order", "")))
 	]
@@ -1299,7 +1281,7 @@ func _show_player_detail(player: Dictionary) -> void:
 		morale_reasons += "• " + str(reason)
 
 	if morale_reasons == "":
-		morale_reasons = "No active morale concerns."
+		morale_reasons = "Morale has not been evaluated for this player." if morale_status == "Not evaluated" else "No active morale concerns."
 
 	grid.add_child(
 		_detail_card(
@@ -1310,7 +1292,7 @@ func _show_player_detail(player: Dictionary) -> void:
 				"Role satisfaction   %s" % _number_text(morale.get("role_satisfaction", null), 1),
 				"Expected role   %s" % _friendly_value(str(morale.get("expected_role", ""))),
 				"Recent minutes   %s" % _number_text(morale.get("recent_minutes", null), 1),
-				"Trade request risk   %s%%" % _number_text(morale.get("trade_request_risk", null), 1),
+				"Trade request risk   %s" % _pct_text(morale.get("trade_request_risk", null)),
 				"Trade status   %s" % _friendly_value(str(morale.get("trade_request_status", ""))),
 				morale_reasons
 			]
@@ -1355,26 +1337,110 @@ func _show_player_detail(player: Dictionary) -> void:
 	)
 
 	var skills = player.get("skills", {})
-	grid.add_child(
-		_detail_card(
-			"SKILL RATINGS",
-			[
-				"Scoring   %s" % _number_text(skills.get("scoring_rating", null), 1),
-				"Shooting   %s" % _number_text(skills.get("shooting_rating", null), 1),
-				"Playmaking   %s" % _number_text(skills.get("playmaking_rating", null), 1),
-				"Rebounding   %s" % _number_text(skills.get("rebounding_rating", null), 1),
-				"Defense   %s" % _number_text(skills.get("defense_rating", null), 1),
-				"Efficiency   %s" % _number_text(skills.get("efficiency_rating", null), 1),
-				"Availability   %s" % _number_text(skills.get("availability_rating", null), 1)
-			]
-		)
-	)
+	grid.add_child(_profile_skill_card(skills))
 
 	var footer := Label.new()
 	footer.text = "ACTIVE V3 PLAYER PROFILE • Data comes from the isolated V3 working franchise; protected V2 remains unchanged."
 	footer.add_theme_color_override("font_color", MUTED)
 	footer.add_theme_font_size_override("font_size", 10)
 	content.add_child(footer)
+
+
+# Batch 20C player profile presentation
+func _profile_stats_card(stats: Dictionary) -> Control:
+	var card := _card(Vector2(0, 0))
+	card.name = "ProfileSeasonProduction"
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 12, SOFT_BORDER))
+	var body := _card_body(card, 15)
+	body.add_theme_constant_override("separation", 12)
+	body.add_child(_small_label("SEASON PRODUCTION", TEAM_PRIMARY_HOVER))
+	var metrics := HBoxContainer.new()
+	metrics.add_theme_constant_override("separation", 8)
+	body.add_child(metrics)
+	for metric in [["PPG", "ppg"], ["RPG", "rpg"], ["APG", "apg"]]:
+		metrics.add_child(_profile_stat_tile(metric[0], stats.get(metric[1], null)))
+	for entry in [
+		["Games / starts", "%s / %s" % [_display_text(stats.get("games_played", null)), _display_text(stats.get("games_started", null))]],
+		["Minutes per game", _number_text(stats.get("mpg", null), 1)],
+		["Steals / blocks", "%s / %s" % [_number_text(stats.get("spg", null), 1), _number_text(stats.get("bpg", null), 1)]],
+		["Field goal", _pct_text(stats.get("fg_pct", null))],
+		["Three point", _pct_text(stats.get("three_pct", null))],
+		["Free throw", _pct_text(stats.get("ft_pct", null))]
+	]:
+		body.add_child(_profile_value_row(entry[0], entry[1]))
+	return card
+
+
+func _profile_stat_tile(label_text: String, value) -> Control:
+	var tile := PanelContainer.new()
+	tile.name = "ProfileStat" + label_text
+	tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tile.add_theme_stylebox_override("panel", _box(PANEL, 9, SOFT_BORDER))
+	var body := _card_body(tile, 10)
+	body.add_theme_constant_override("separation", 4)
+	body.add_child(_small_label(label_text, MUTED))
+	var number := Label.new()
+	number.text = _number_text(value, 1)
+	number.add_theme_font_size_override("font_size", 24)
+	number.add_theme_color_override("font_color", TEXT)
+	body.add_child(number)
+	return tile
+
+
+func _profile_value_row(label_text: String, value_text: String) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	var label := Label.new()
+	label.text = label_text
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_color_override("font_color", MUTED)
+	row.add_child(label)
+	var value := Label.new()
+	value.text = value_text
+	value.add_theme_font_size_override("font_size", 12)
+	value.add_theme_color_override("font_color", TEXT)
+	row.add_child(value)
+	return row
+
+
+func _profile_skill_card(skills: Dictionary) -> Control:
+	var card := _card(Vector2(0, 0))
+	card.name = "ProfileSkillRatings"
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 12, SOFT_BORDER))
+	var body := _card_body(card, 15)
+	body.add_theme_constant_override("separation", 8)
+	body.add_child(_small_label("SKILL RATINGS", TEAM_PRIMARY_HOVER))
+	for entry in [
+		["Scoring", "scoring_rating"], ["Shooting", "shooting_rating"],
+		["Playmaking", "playmaking_rating"], ["Rebounding", "rebounding_rating"],
+		["Defense", "defense_rating"], ["Efficiency", "efficiency_rating"],
+		["Availability", "availability_rating"]
+	]:
+		var rating = skills.get(entry[1], null)
+		body.add_child(_profile_value_row(entry[0], _number_text(rating, 1)))
+		if rating != null:
+			var bar := ProgressBar.new()
+			bar.name = "ProfileSkill" + entry[0]
+			bar.custom_minimum_size = Vector2(0, 5)
+			bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			bar.min_value = 0
+			bar.max_value = 100
+			bar.value = clampf(float(rating), 0, 100)
+			bar.show_percentage = false
+			bar.add_theme_stylebox_override("background", _box(PANEL, 3, PANEL))
+			bar.add_theme_stylebox_override("fill", _box(_rating_tone(rating), 3, _rating_tone(rating)))
+			body.add_child(bar)
+	return card
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_cancel") and not event.is_echo():
+		if player_detail_overlay != null and is_instance_valid(player_detail_overlay):
+			_close_player_detail()
+			get_viewport().set_input_as_handled()
 
 
 func _detail_card(title_text: String, lines: Array) -> Control:
