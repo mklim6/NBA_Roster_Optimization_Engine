@@ -1,10 +1,13 @@
 extends Control
 
 # Batch 22 franchise presentation macro
+# Batch 23 league + season experience macro
 
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
 const PageIdentityV3 = preload("res://scripts/page_identity_v3.gd")
+const TeamLogoV3 = preload("res://scripts/team_logo_v3.gd")
+const LeagueMediaShowcaseV3 = preload("res://scripts/league_media_showcase_v3.gd")
 
 const LEAGUE_URL := "http://127.0.0.1:8765/v3/league-intelligence"
 
@@ -21,6 +24,10 @@ const BORDER := DesignSystemV3.BORDER
 
 var page_identity: Control
 var page_brand_bar: ColorRect
+var league_showcase: Control
+var league_payload: Dictionary = {}
+var league_brand_primary := DesignSystemV3.TEAM_PRIMARY
+var league_brand_secondary := DesignSystemV3.GOLD
 
 var brand_heading: Label
 var standings_tables: Array = []
@@ -45,6 +52,8 @@ var refresh_button: Button
 
 
 func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	league_brand_primary = primary
+	league_brand_secondary = _secondary
 	if page_identity != null:
 		page_identity.configure(_team, primary, _secondary)
 	if page_brand_bar != null:
@@ -58,6 +67,8 @@ func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
 	if standings_tables.size() == 2:
 		_render_standings_table(standings_tables[0], _array(last_standings.get("east")))
 		_render_standings_table(standings_tables[1], _array(last_standings.get("west")))
+	if league_showcase != null and not league_payload.is_empty():
+		league_showcase.configure(league_payload, standings_team, league_brand_primary, league_brand_secondary)
 
 
 func _ready() -> void:
@@ -105,10 +116,10 @@ func _build_interface() -> void:
 	var eyebrow := _label("FRANCHISE OPERATIONS • LEAGUE", 10, TEAM_PRIMARY)
 	brand_heading = eyebrow
 	titles.add_child(eyebrow)
-	var title := _label("LEAGUE INTELLIGENCE CENTER", 36, TEXT)
+	var title := _label("LEAGUE HUB", 40, TEXT)
 	titles.add_child(title)
 	var subtitle := _label(
-		"Full standings, playoff positioning, statistical leaders, award watch, schedule/results, and postseason history from the isolated V3 franchise.",
+		"Standings, star races, schedule, playoff pressure, postseason state, and league history in one broadcast-style command hub.",
 		12,
 		MUTED
 	)
@@ -142,8 +153,11 @@ func _build_interface() -> void:
 
 	var content := VBoxContainer.new()
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content.add_theme_constant_override("separation", 14)
+	content.add_theme_constant_override("separation", 18)
 	scroll.add_child(content)
+
+	league_showcase = LeagueMediaShowcaseV3.new()
+	content.add_child(league_showcase)
 
 	var standings_row := HBoxContainer.new()
 	standings_row.add_theme_constant_override("separation", 14)
@@ -152,18 +166,21 @@ func _build_interface() -> void:
 	standings_west = _section(standings_row, "WESTERN CONFERENCE", "Loading standings...", Vector2(470, 485))
 
 	var middle_row := HBoxContainer.new()
+	middle_row.visible = false
 	middle_row.add_theme_constant_override("separation", 14)
 	content.add_child(middle_row)
 	leaders_label = _section(middle_row, "STATISTICAL LEADERS", "Loading leaders...", Vector2(470, 420))
 	playoff_label = _section(middle_row, "PLAYOFF PICTURE", "Loading playoff race...", Vector2(470, 420))
 
 	var schedule_row := HBoxContainer.new()
+	schedule_row.visible = false
 	schedule_row.add_theme_constant_override("separation", 14)
 	content.add_child(schedule_row)
 	schedule_label = _section(schedule_row, "SCHEDULE + RESULTS", "Loading league calendar...", Vector2(470, 420))
 	awards_label = _section(schedule_row, "AWARD WATCH", "Loading award context...", Vector2(470, 420))
 
 	var history_row := HBoxContainer.new()
+	history_row.visible = false
 	history_row.add_theme_constant_override("separation", 14)
 	content.add_child(history_row)
 	postseason_label = _section(history_row, "POSTSEASON / BRACKET", "Loading postseason context...", Vector2(470, 260))
@@ -201,6 +218,7 @@ func _on_request_completed(_result: int, response_code: int, _headers: PackedStr
 
 
 func _render(payload: Dictionary) -> void:
+	league_payload = payload
 	var season := _dict(payload.get("season"))
 	var schedule := _dict(payload.get("schedule"))
 	var standing := _dict(payload.get("active_team_standing"))
@@ -225,6 +243,8 @@ func _render(payload: Dictionary) -> void:
 	standings_west.text = _standings_text(_array(standings.get("west")))
 	last_standings = standings
 	standings_team = _s(standing.get("team"), standings_team)
+	if league_showcase != null:
+		league_showcase.configure(payload, standings_team, league_brand_primary, league_brand_secondary)
 	_render_standings_table(standings_tables[0], _array(standings.get("east")))
 	_render_standings_table(standings_tables[1], _array(standings.get("west")))
 	leaders_label.text = _leaders_text(_dict(payload.get("leaders")), _i(payload.get("leader_minimum_games")))
@@ -242,29 +262,42 @@ func _render_standings_table(table: GridContainer, rows: Array) -> void:
 	for child in table.get_children():
 		table.remove_child(child)
 		child.queue_free()
-	for heading in ["#", "TEAM", "W-L", "DIFF", "STREAK"]:
+
+	for heading in ["#", "", "TEAM", "W-L", "DIFF", "STREAK"]:
 		table.add_child(_label(heading, 10, MUTED))
+
 	if rows.is_empty():
 		table.add_child(_label("—", 12, MUTED))
+		table.add_child(_label("", 12, MUTED))
 		table.add_child(_label("Unavailable", 12, MUTED))
 		return
+
 	for raw in rows:
 		if typeof(raw) != TYPE_DICTIONARY:
 			continue
 		var row: Dictionary = raw
-		var team := _s(row.get("team"), "N/A")
+		var team := _s(row.get("team"), "N/A").to_upper()
 		var is_active := team == standings_team and standings_team != ""
 		var diff := _s(row.get("point_diff"), "N/A")
 		if typeof(row.get("point_diff")) in [TYPE_INT, TYPE_FLOAT]:
 			diff = "%+d" % int(row.get("point_diff"))
-		var cells := [_s(row.get("rank"), "N/A"), team + (" • YOU" if is_active else ""), _s(row.get("record"), "N/A"), diff, _s(row.get("streak"), "N/A")]
-		for i in range(cells.size()):
-			var cell := _label(cells[i], 12, standings_highlight if is_active else TEXT)
-			cell.tooltip_text = _s(row.get("team_name"), team) if i == 1 else cells[i]
-			if i == 1:
-				cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			elif i > 1:
-				cell.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+
+		var rank := _label(_s(row.get("rank"), "N/A"), 12, standings_highlight if is_active else MUTED)
+		table.add_child(rank)
+
+		var logo := TeamLogoV3.new()
+		logo.custom_minimum_size = Vector2(28, 26)
+		logo.configure(team)
+		table.add_child(logo)
+
+		var team_cell := _label(team + (" • YOU" if is_active else ""), 12, standings_highlight if is_active else TEXT)
+		team_cell.tooltip_text = _s(row.get("team_name"), team)
+		team_cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		table.add_child(team_cell)
+
+		for value in [_s(row.get("record"), "N/A"), diff, _s(row.get("streak"), "N/A")]:
+			var cell := _label(str(value), 12, standings_highlight if is_active else TEXT)
+			cell.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 			table.add_child(cell)
 
 
@@ -409,18 +442,36 @@ func _history_text(history: Array) -> String:
 
 
 func _metric(parent: HBoxContainer, title: String, value_text: String) -> Label:
+	var tone := ACCENT
+	match title:
+		"SEASON":
+			tone = GOLD
+		"LEAGUE PROGRESS":
+			tone = ACCENT
+		"YOUR POSITION":
+			tone = GOOD
+
 	var card := PanelContainer.new()
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card.custom_minimum_size = Vector2(0, 92)
-	card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 12, BORDER))
+	card.custom_minimum_size = Vector2(0, 100)
+	card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 13, Color(tone, 0.38)))
 	parent.add_child(card)
+
 	var margin := MarginContainer.new()
 	_set_margins(margin, 14, 12, 14, 12)
 	card.add_child(margin)
+
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 5)
 	margin.add_child(column)
-	column.add_child(_label(title, 10, MUTED))
+
+	var bar := ColorRect.new()
+	bar.custom_minimum_size = Vector2(0, 3)
+	bar.color = tone
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(bar)
+
+	column.add_child(_label(title, 10, Color(tone, 0.95)))
 	var value := _label(value_text, 19, TEXT)
 	column.add_child(value)
 	return value
@@ -445,7 +496,7 @@ func _section(parent: HBoxContainer, title: String, initial: String, minimum: Ve
 	if title in ["EASTERN CONFERENCE", "WESTERN CONFERENCE"]:
 		body.hide()
 		var table := GridContainer.new()
-		table.columns = 5
+		table.columns = 6
 		table.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		table.add_theme_constant_override("h_separation", 10)
 		table.add_theme_constant_override("v_separation", 8)

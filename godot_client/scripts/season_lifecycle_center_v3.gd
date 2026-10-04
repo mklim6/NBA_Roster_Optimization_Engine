@@ -1,7 +1,11 @@
 extends Control
 
+# Batch 23 league + season experience macro
+
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
+const PageIdentityV3 = preload("res://scripts/page_identity_v3.gd")
+const SeasonExperienceV3 = preload("res://scripts/season_experience_v3.gd")
 
 const SUMMARY_URL := "http://127.0.0.1:8765/v3/lifecycle"
 const PREVIEW_URL := "http://127.0.0.1:8765/v3/lifecycle/preview"
@@ -19,6 +23,13 @@ const BORDER := DesignSystemV3.BORDER
 const TEAM_PRIMARY := DesignSystemV3.TEAM_PRIMARY
 const TEAM_PRIMARY_HOVER := DesignSystemV3.TEAM_PRIMARY_HOVER
 const GOLD := DesignSystemV3.GOLD
+
+var page_identity: Control
+var page_brand_bar: ColorRect
+var season_showcase: Control
+var season_team := ""
+var season_brand_primary := DesignSystemV3.TEAM_PRIMARY
+var season_brand_secondary := DesignSystemV3.GOLD
 
 var summary_request: HTTPRequest
 var preview_request: HTTPRequest
@@ -54,6 +65,15 @@ var long_action_manager = null
 
 
 func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
+	season_team = _team
+	season_brand_primary = primary
+	season_brand_secondary = _secondary
+	if page_identity != null:
+		page_identity.configure(_team, primary, _secondary)
+	if page_brand_bar != null:
+		page_brand_bar.color = primary
+	if season_showcase != null and not summary_payload.is_empty():
+		season_showcase.configure(summary_payload, season_team, season_brand_primary, season_brand_secondary)
 	if brand_heading != null:
 		brand_heading.add_theme_color_override("font_color", TeamBrandingV3.hover_color(primary))
 	if season_progress != null:
@@ -132,6 +152,12 @@ func _build_ui() -> void:
 	header.add_theme_constant_override("separation", 12)
 	column.add_child(header)
 
+	page_brand_bar = ColorRect.new()
+	page_brand_bar.custom_minimum_size = Vector2(0, 4)
+	page_brand_bar.color = TEAM_PRIMARY
+	page_brand_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(page_brand_bar)
+
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	titles.add_theme_constant_override("separation", 4)
@@ -139,21 +165,35 @@ func _build_ui() -> void:
 	brand_heading = _small_label("FRANCHISE OPERATIONS • SEASON CONTROL", TEAM_PRIMARY_HOVER)
 	titles.add_child(brand_heading)
 	var title := Label.new()
-	title.text = "SEASON LIFECYCLE"
+	title.text = "SEASON COMMAND"
 	title.add_theme_color_override("font_color", TEXT)
-	title.add_theme_font_size_override("font_size", 29)
+	title.add_theme_font_size_override("font_size", 40)
 	titles.add_child(title)
 	var subtitle := Label.new()
-	subtitle.text = "Certified phase progression from the current season through the offseason and into the next year."
+	subtitle.text = "Your season, postseason, Draft pipeline, and certified franchise boundaries presented as one connected basketball calendar."
 	subtitle.add_theme_color_override("font_color", MUTED)
 	subtitle.add_theme_font_size_override("font_size", 12)
 	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	titles.add_child(subtitle)
 
+	page_identity = PageIdentityV3.new()
+	header.add_child(page_identity)
+
 	refresh_button = _action_button("REFRESH")
 	refresh_button.custom_minimum_size = Vector2(105, 50)
 	refresh_button.pressed.connect(refresh)
 	header.add_child(refresh_button)
+
+	season_showcase = SeasonExperienceV3.new()
+	column.add_child(season_showcase)
+
+	var telemetry_header := HBoxContainer.new()
+	telemetry_header.add_child(_small_label("CERTIFIED ENGINE TELEMETRY", MUTED))
+	var telemetry_spacer := Control.new()
+	telemetry_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	telemetry_header.add_child(telemetry_spacer)
+	telemetry_header.add_child(_small_label("READ-ONLY UNTIL PREVIEW + COMMIT", GOOD))
+	column.add_child(telemetry_header)
 
 	var metrics := HBoxContainer.new()
 	metrics.add_theme_constant_override("separation", 10)
@@ -166,7 +206,7 @@ func _build_ui() -> void:
 	season_progress_label = _small_label("REGULAR SEASON • Waiting for schedule data", MUTED)
 	column.add_child(season_progress_label)
 	season_progress = ProgressBar.new()
-	season_progress.custom_minimum_size.y = 10
+	season_progress.custom_minimum_size.y = 14
 	season_progress.show_percentage = false
 	season_progress.add_theme_stylebox_override("background", _box(PANEL_ALT, 4))
 	season_progress.add_theme_stylebox_override("fill", _box(TEAM_PRIMARY, 4))
@@ -178,6 +218,7 @@ func _build_ui() -> void:
 	column.add_child(content)
 
 	var timeline_card := _card(Vector2(0, 0))
+	timeline_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(ACCENT, 0.38)))
 	timeline_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	timeline_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var timeline_body := _card_body(timeline_card, 18)
@@ -206,6 +247,7 @@ func _build_ui() -> void:
 	content.add_child(action_column)
 
 	var action_card := _card(Vector2(410, 330))
+	action_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(GOLD, 0.48)))
 	var action_body := _card_body(action_card, 18)
 	action_body.add_child(_small_label("WRITE-SAFE LIFECYCLE GATE", GOLD))
 	action_title = _section_title("CURRENT GATE")
@@ -238,6 +280,7 @@ func _build_ui() -> void:
 	action_column.add_child(action_card)
 
 	var safety_card := _card(Vector2(410, 0))
+	safety_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(GOOD, 0.34)))
 	safety_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var safety_body := _card_body(safety_card, 18)
 	safety_body.add_child(_small_label("BOUNDARY SAFETY", GOOD))
@@ -354,6 +397,9 @@ func _render_summary() -> void:
 			timeline_rows.add_child(_timeline_row(item))
 
 	var versions: Dictionary = _summary_dict(summary_payload.get("engine_versions"))
+	if season_showcase != null:
+		season_showcase.configure(summary_payload, season_team, season_brand_primary, season_brand_secondary)
+
 	engine_detail.text = "Postseason %s\nCloseout %s\nDraft %s\nPost-Draft trim %s\nSeason boundary %s" % [
 		str(versions.get("postseason", "production")),
 		str(versions.get("closeout", "production")),
@@ -525,12 +571,22 @@ func _timeline_row(item: Dictionary) -> Control:
 	elif status == "current":
 		color = GOLD
 		marker = "CURRENT"
-	var card := _card(Vector2(0, 58))
+
+	var card := _card(Vector2(0, 70))
+	card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 13, Color(color, 0.40)))
 	var body := _card_body(card, 11)
+
+	var accent := ColorRect.new()
+	accent.custom_minimum_size = Vector2(0, 3)
+	accent.color = color
+	accent.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.add_child(accent)
+
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	body.add_child(row)
 	row.add_child(_pill(marker, color))
+
 	var label := Label.new()
 	label.text = str(item.get("label", item.get("key", "")))
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -630,15 +686,34 @@ func _summary_array(value: Variant) -> Array:
 
 
 func _metric(parent: HBoxContainer, title: String, value: String) -> Label:
-	var card := _card(Vector2(0, 84))
+	var tone := ACCENT
+	match title:
+		"SEASON":
+			tone = GOLD
+		"PHASE":
+			tone = ACCENT
+		"LEAGUE PROGRESS":
+			tone = GOOD
+		"NEXT GATE":
+			tone = TEAM_PRIMARY_HOVER
+
+	var card := _card(Vector2(0, 94))
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 13, Color(tone, 0.38)))
 	var body := _card_body(card, 12)
-	body.add_child(_small_label(title, MUTED))
+
+	var bar := ColorRect.new()
+	bar.custom_minimum_size = Vector2(0, 3)
+	bar.color = tone
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.add_child(bar)
+
+	body.add_child(_small_label(title, Color(tone, 0.95)))
 	var label := Label.new()
 	label.text = value
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	label.add_theme_color_override("font_color", TEXT)
-	label.add_theme_font_size_override("font_size", 16)
+	label.add_theme_font_size_override("font_size", 17)
 	body.add_child(label)
 	parent.add_child(card)
 	return label
