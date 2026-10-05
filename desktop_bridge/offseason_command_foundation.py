@@ -1068,12 +1068,12 @@ def build_offseason_command_payload(
         ],
         "system_scope": {
             "summer_league_simulation_available": False,
-            "training_camp_simulation_available": False,
+            "training_camp_simulation_available": True,
             "planning_surfaces_available": True,
             "note": (
                 "Expansion 40 uses real lifecycle, Draft, market, roster, and contract state. "
-                "Summer Development and Training Camp are planning/readiness surfaces in this release; "
-                "they do not fabricate games, ratings changes, or transactions."
+                "Summer Development remains a planning surface. Expansion 41 adds one focused skill camp "
+                "per offseason with previewed, saved outcomes and CPU participation. Summer League games are not simulated."
             ),
         },
         "diagnostics": diagnostics,

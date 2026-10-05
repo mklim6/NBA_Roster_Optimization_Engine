@@ -18,7 +18,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.18.1"
+API_VERSION = "0.19.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -123,6 +123,7 @@ from desktop_bridge.season_lifecycle_foundation import (
 from desktop_bridge.league_intelligence_foundation import build_league_intelligence_payload
 from desktop_bridge.franchise_legacy_foundation import build_franchise_legacy_payload
 from desktop_bridge.offseason_command_foundation import build_offseason_command_payload
+from desktop_bridge.training_camp_foundation import camp_summary, build_camp_candidate
 from desktop_bridge.front_office_foundation import build_front_office_intelligence_payload
 from desktop_bridge.decision_inbox import build_decision_inbox
 from desktop_bridge.save_manager_foundation import (
@@ -2517,6 +2518,53 @@ async def front_office_intelligence(_: Request) -> JSONResponse:
             },
             status_code=500,
         )
+
+
+async def training_camp(request: Request) -> JSONResponse:
+    """Preview without writes; commit a verified candidate behind a save hash."""
+    import os
+    import tempfile
+    before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_before = _file_sha256(Path(DEFAULT_CHECKPOINT_PATH))
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            raise ValueError("Initialize a V3 working save first.")
+        team = _active_team_from_checkpoint(checkpoint)
+        if request.method == "GET":
+            return JSONResponse({**camp_summary(checkpoint, team), "working_save_sha256": before})
+        body = await request.json()
+        if not isinstance(body, dict) or body.get("action") not in {"preview", "execute"}:
+            raise ValueError("Choose preview or execute.")
+        if body.get("expected_working_save_sha256") != before:
+            raise ValueError("The save changed. Refresh camp before continuing.")
+        candidate = build_camp_candidate(checkpoint, team, body.get("assignments"))
+        report = camp_summary(candidate, team)
+        if body["action"] == "preview":
+            return JSONResponse({**report, "preview": True, "working_save_sha256": before})
+        # No await between the hash check and replacement: serialize bridge commits.
+        with tempfile.TemporaryDirectory(dir=V3_WORKING_CHECKPOINT_PATH.parent) as temp:
+            staged = Path(temp) / "camp.pkl.gz"
+            save_franchise_checkpoint(candidate.simulation_state, candidate.trade_state,
+                preferences=candidate.preferences, reason="Expansion 41 training camp",
+                path=staged, copy_payload=False, force_replace=True)
+            verified = load_franchise_checkpoint(path=staged)
+            if camp_summary(verified, team)["results"] != report["results"]:
+                raise RuntimeError("Camp reload verification failed.")
+            if _file_sha256(V3_WORKING_CHECKPOINT_PATH) != before or _file_sha256(Path(DEFAULT_CHECKPOINT_PATH)) != v2_before:
+                raise ValueError("Checkpoint changed during camp. Refresh and retry.")
+            recovery = REPO_ROOT / "outputs/runtime/v3_camp_recovery"
+            recovery.mkdir(parents=True, exist_ok=True)
+            recovery_path = recovery / (str(before) + ".pkl.gz")
+            shutil.copy2(V3_WORKING_CHECKPOINT_PATH, recovery_path)
+            if _file_sha256(recovery_path) != before:
+                raise RuntimeError("Camp recovery copy verification failed.")
+            os.replace(staged, V3_WORKING_CHECKPOINT_PATH)
+        return JSONResponse({**report, "applied": True, "working_save_sha256": _file_sha256(V3_WORKING_CHECKPOINT_PATH)})
+    except ValueError as exc:
+        return JSONResponse({"error": "camp_rejected", "detail": str(exc)}, status_code=409)
+    except Exception as exc:
+        return JSONResponse({"error": "camp_failed", "detail": str(exc)}, status_code=500)
 
 
 async def offseason_command(_: Request) -> JSONResponse:
@@ -5055,6 +5103,7 @@ routes = [
     Route("/v3/league-intelligence", league_intelligence, methods=["GET"]),
     Route("/v3/franchise-legacy", franchise_legacy, methods=["GET"]),
     Route("/v3/offseason-command", offseason_command, methods=["GET"]),
+    Route("/v3/training-camp", training_camp, methods=["GET", "POST"]),
     Route("/v3/front-office", front_office_intelligence, methods=["GET"]),
     Route("/v3/decision-inbox", decision_inbox, methods=["GET"]),
     Route("/v3/market-intelligence", market_intelligence, methods=["GET"]),

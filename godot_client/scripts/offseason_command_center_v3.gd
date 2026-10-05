@@ -5,6 +5,7 @@ const TeamLogoV3 = preload("res://scripts/team_logo_v3.gd")
 const Portrait = preload("res://scripts/player_portrait_v3.gd")
 const OffseasonTimelineV3 = preload("res://scripts/offseason_timeline_v3.gd")
 const OffseasonRosterWarRoomV3 = preload("res://scripts/offseason_roster_war_room_v3.gd")
+const TrainingCampV3 = preload("res://scripts/training_camp_v3.gd")
 
 const OFFSEASON_URL = "http://127.0.0.1:8765/v3/offseason-command"
 
@@ -68,7 +69,7 @@ func configure(data: Dictionary) -> void:
 
 	_clear_below_status()
 
-	status_label.text = "LIVE V3 OFFSEASON INTELLIGENCE • READ-ONLY • %s" % str(
+	status_label.text = "LIVE V3 OFFSEASON INTELLIGENCE • %s" % str(
 		data.get("foundation_version", "Expansion 40")
 	)
 	status_label.add_theme_color_override("font_color", DS.GOOD)
@@ -79,6 +80,7 @@ func configure(data: Dictionary) -> void:
 	_build_roadmap(data)
 	_build_split_operations(data)
 	_build_roster_war_room(data)
+	content.add_child(TrainingCampV3.new())
 	_build_decision_board(data)
 	_build_scope_card(data)
 	_build_bottom_safe_area()

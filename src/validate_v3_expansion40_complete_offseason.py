@@ -243,7 +243,7 @@ def validate_synthetic(results: dict[str, bool]) -> None:
     )
     results["synthetic_scope_truthful"] = (
         payload["system_scope"]["summer_league_simulation_available"] is False
-        and payload["system_scope"]["training_camp_simulation_available"] is False
+        and payload["system_scope"]["training_camp_simulation_available"] is True
         and payload["system_scope"]["planning_surfaces_available"] is True
     )
     results["synthetic_last_season_recap"] = (
@@ -414,9 +414,9 @@ def validate_static(results: dict[str, bool]) -> None:
         token in foundation_text
         for token in [
             '"summer_league_simulation_available": False',
-            '"training_camp_simulation_available": False',
+            '"training_camp_simulation_available": True',
             '"planning_surfaces_available": True',
-            "they do not fabricate games, ratings changes, or transactions",
+            "Summer League games are not simulated",
         ]
     )
 
