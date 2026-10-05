@@ -1469,6 +1469,8 @@ func _render_postgame(game: Dictionary) -> void:
 	_render_team_box_score(postgame_active_box, game, active_box_team, active_box_name, active_box_score, postgame_team_color)
 	_render_team_box_score(postgame_opponent_box, game, opponent_box_team, opponent_box_name, opponent_box_score, MUTED)
 	postgame_spotlight.configure(game, controlled_team)
+	if coaching_board != null:
+		coaching_board.configure_postgame(game, controlled_team)
 	_animate_postgame_reveal()
 
 
@@ -1607,6 +1609,8 @@ func _animate_postgame_reveal() -> void:
 
 
 func _reset_postgame() -> void:
+	if coaching_board != null:
+		coaching_board.clear_postgame()
 	postgame_spotlight.configure({}, "")
 	postgame_result_label.text = "POSTGAME REVIEW"
 	postgame_result_label.add_theme_color_override("font_color", MUTED)
