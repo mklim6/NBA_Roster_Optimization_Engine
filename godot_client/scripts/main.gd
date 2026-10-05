@@ -7,6 +7,7 @@ const FreeAgencyCenterV3 = preload("res://scripts/free_agency_center_v3.gd")
 const ScoutingDraftCenterV3 = preload("res://scripts/scouting_draft_center_v3.gd")
 const SeasonLifecycleCenterV3 = preload("res://scripts/season_lifecycle_center_v3.gd")
 const LeagueIntelligenceCenterV3 = preload("res://scripts/league_intelligence_center_v3.gd")
+const FranchiseLegacyCenterV3 = preload("res://scripts/franchise_legacy_center_v3.gd")
 const FrontOfficeCenterV3 = preload("res://scripts/front_office_center_v3.gd")
 const GameDayCenterV3 = preload("res://scripts/game_day_center_v3.gd")
 const SaveManagerV3 = preload("res://scripts/save_manager_v3.gd")
@@ -73,6 +74,7 @@ var free_agency_page: Control
 var scouting_page: Control
 var season_page: Control
 var league_page: Control
+var legacy_page: Control
 var front_office_page: Control
 var game_day_page: Control
 var save_manager_page: Control
@@ -367,6 +369,10 @@ func _build_interface() -> void:
 	content_stack.add_child(league_page)
 	league_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	legacy_page = FranchiseLegacyCenterV3.new()
+	content_stack.add_child(legacy_page)
+	legacy_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
 	inbox_page = preload("res://scripts/decision_inbox_v3.gd").new()
 	content_stack.add_child(inbox_page)
 	inbox_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -467,6 +473,7 @@ func _build_sidebar() -> Control:
 	column.add_child(UiComponentsV3.sidebar_group_label("LEAGUE"))
 	column.add_child(_nav_button("SEASON"))
 	column.add_child(_nav_button("LEAGUE"))
+	column.add_child(_nav_button("LEGACY"))
 
 	column.add_child(UiComponentsV3.sidebar_group_label("ORGANIZATION"))
 	column.add_child(_nav_button("FRONT OFFICE"))
@@ -2748,6 +2755,8 @@ func _page_control(page_name: String):
 			return season_page
 		"LEAGUE":
 			return league_page
+		"LEGACY":
+			return legacy_page
 		"FRONT OFFICE":
 			return front_office_page
 		"SETTINGS":
@@ -2766,6 +2775,7 @@ func _all_page_controls() -> Array:
 		scouting_page,
 		season_page,
 		league_page,
+		legacy_page,
 		inbox_page,
 		front_office_page,
 		settings_page,
@@ -2813,6 +2823,9 @@ func _show_page(page_name: String, force_refresh: bool = false) -> void:
 	elif page_name == "LEAGUE":
 		if league_page != null and league_page.has_method("refresh"):
 			league_page.call("refresh")
+	elif page_name == "LEGACY":
+		if legacy_page != null and legacy_page.has_method("refresh"):
+			legacy_page.call("refresh")
 	elif page_name == "INBOX":
 		inbox_page.refresh()
 	elif page_name == "FRONT OFFICE":
@@ -2951,6 +2964,7 @@ func _broadcast_team_brand() -> void:
 		scouting_page,
 		season_page,
 		league_page,
+		legacy_page,
 		inbox_page,
 		front_office_page,
 		save_manager_page,
@@ -3047,6 +3061,7 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 		"SCOUTING",
 		"SEASON",
 		"LEAGUE",
+		"LEGACY",
 		"FRONT OFFICE",
 		"SETTINGS"
 	]:

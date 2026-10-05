@@ -121,6 +121,7 @@ from desktop_bridge.season_lifecycle_foundation import (
     verify_lifecycle_action_persisted,
 )
 from desktop_bridge.league_intelligence_foundation import build_league_intelligence_payload
+from desktop_bridge.franchise_legacy_foundation import build_franchise_legacy_payload
 from desktop_bridge.front_office_foundation import build_front_office_intelligence_payload
 from desktop_bridge.decision_inbox import build_decision_inbox
 from desktop_bridge.save_manager_foundation import (
@@ -2512,6 +2513,69 @@ async def front_office_intelligence(_: Request) -> JSONResponse:
                 "active_v2_unchanged": (
                     v2_before == _file_sha256(v2_path)
                 ),
+            },
+            status_code=500,
+        )
+
+
+async def franchise_legacy(_: Request) -> JSONResponse:
+    # Read-only franchise universe and legacy archive from the isolated V3 save.
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_path = Path(DEFAULT_CHECKPOINT_PATH)
+    v2_before = _file_sha256(v2_path)
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse(
+                {
+                    "error": "v3_working_checkpoint_not_found",
+                    "read_only": True,
+                    "active_v2_read_only": True,
+                },
+                status_code=404,
+            )
+
+        payload = build_franchise_legacy_payload(
+            checkpoint,
+            team_names=TEAM_NAMES,
+        )
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        v2_after = _file_sha256(v2_path)
+
+        payload.update(
+            {
+                "api_version": API_VERSION,
+                "working_save_unchanged": working_before == working_after,
+                "active_v2_unchanged": v2_before == v2_after,
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+
+        if not payload["working_save_unchanged"] or not payload["active_v2_unchanged"]:
+            return JSONResponse(
+                {
+                    "error": "read_only_franchise_legacy_changed_checkpoint",
+                    **payload,
+                },
+                status_code=500,
+            )
+
+        return JSONResponse(payload)
+
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "franchise_legacy_failed",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "read_only": True,
+                "working_save_unchanged": (
+                    working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+                ),
+                "active_v2_unchanged": (
+                    v2_before == _file_sha256(v2_path)
+                ),
+                "active_v2_read_only": True,
             },
             status_code=500,
         )
@@ -4924,6 +4988,7 @@ routes = [
     Route("/v3/franchise-summary", franchise_summary, methods=["GET"]),
     Route("/v3/franchise-intelligence", franchise_intelligence, methods=["GET"]),
     Route("/v3/league-intelligence", league_intelligence, methods=["GET"]),
+    Route("/v3/franchise-legacy", franchise_legacy, methods=["GET"]),
     Route("/v3/front-office", front_office_intelligence, methods=["GET"]),
     Route("/v3/decision-inbox", decision_inbox, methods=["GET"]),
     Route("/v3/market-intelligence", market_intelligence, methods=["GET"]),
