@@ -18,7 +18,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.21.0"
+API_VERSION = "0.22.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -127,6 +127,7 @@ from desktop_bridge.training_camp_foundation import camp_summary, build_camp_can
 from desktop_bridge.development_goals import goals_board, build_goals_candidate, KEY as DEVELOPMENT_GOALS_KEY
 from desktop_bridge.front_office_foundation import build_front_office_intelligence_payload
 from desktop_bridge.decision_inbox import build_decision_inbox
+from desktop_bridge.franchise_pulse import build_franchise_pulse
 from desktop_bridge.save_manager_foundation import (
     V3SaveManagerError,
     bootstrap_save_manager,
@@ -2432,6 +2433,29 @@ async def decision_inbox(_: Request) -> JSONResponse:
         return JSONResponse(payload)
     except Exception as exc:
         return JSONResponse({"error": "decision_inbox_unavailable", "detail": str(exc)}, status_code=500)
+
+
+async def franchise_pulse(_: Request) -> JSONResponse:
+    before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    protected = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse({"error": "v3_working_save_not_initialized"}, status_code=409)
+        state = checkpoint.simulation_state
+        team = _active_team_from_checkpoint(checkpoint)
+        if not team:
+            return JSONResponse({"error": "active_franchise_not_found"}, status_code=404)
+        roster = _roster_payload(state, team, source="v3_working_checkpoint", editable=True)
+        office = build_front_office_intelligence_payload(state, team, roster, team_names=TEAM_NAMES)
+        inbox = build_decision_inbox(state, team, office, _game_day_payload(state, team), _draft_summary(state))
+        payload = build_franchise_pulse(checkpoint, team, inbox, TEAM_NAMES)
+        if before != _file_sha256(V3_WORKING_CHECKPOINT_PATH) or protected != _file_sha256(DEFAULT_CHECKPOINT_PATH):
+            return JSONResponse({"error": "franchise_pulse_checkpoint_changed"}, status_code=409)
+        payload.update(api_version=API_VERSION, working_save_write_performed=False)
+        return JSONResponse(payload)
+    except Exception as exc:
+        return JSONResponse({"error": "franchise_pulse_unavailable", "detail": str(exc)}, status_code=500)
 
 
 async def front_office_intelligence(_: Request) -> JSONResponse:
@@ -5152,6 +5176,7 @@ routes = [
     Route("/v3/development-goals", development_goals, methods=["GET", "POST"]),
     Route("/v3/front-office", front_office_intelligence, methods=["GET"]),
     Route("/v3/decision-inbox", decision_inbox, methods=["GET"]),
+    Route("/v3/franchise-pulse", franchise_pulse, methods=["GET"]),
     Route("/v3/market-intelligence", market_intelligence, methods=["GET"]),
     Route("/v3/transaction-foundation", transaction_foundation, methods=["GET"]),
     Route("/v3/trade/team-assets", trade_team_assets, methods=["GET"]),

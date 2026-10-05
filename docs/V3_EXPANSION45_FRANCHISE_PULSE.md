@@ -1,0 +1,13 @@
+# Expansion 45 — Franchise Pulse
+
+PULSE adds an evidence-based weekly briefing to the command navigation. It combines the active franchise's completed games from the inclusive rolling seven-day window with current availability, role, rotation, trade-offer, draft and game-preparation decisions already derived by the Decision Inbox. Season development commitments produce player spotlights with actual progress. Committed trades appear only when their recorded season, date and participating teams match the briefing.
+
+The hero presents the saved season record and leading story. Weekly scorecards show opponent logos, final scores, outcome colors and proportional score comparisons. Player stories use existing portraits. ALL, DECISIONS and DEVELOPMENT filters have selected states, and each story opens its appropriate destination. The page includes refresh, retry, wrapped text, vertical scrolling and a bottom safe area. A brief entrance animation and optional synthesized arrival chord add presentation polish. Sound defaults off and remains a session preference; it does not change the franchise save.
+
+Results without a recorded schedule date are excluded rather than assigned an invented date. Future and unrelated games are excluded. Current concerns and goal progress are explicitly snapshot evidence, not invented weekly changes. A met development target is provisional and does not award ratings or declare a final season outcome. No games, transactions, goals or ratings are changed by reading the briefing.
+
+GET /v3/franchise-pulse is read-only with working-save and protected-checkpoint hash checks. API version is 0.22.0. Briefings are generated from the saved state on refresh; no permanent news archive or dismissal state is introduced in this expansion.
+
+Validation covers weekly boundaries, home/away scores, missing dates, future/unrelated games, dated committed trades, exclusion of old-season/preview/undated deals, deterministic payloads, unchanged checkpoint objects, live endpoint and unavailable-save response, Godot filters, destination signals, sidebar registration, main-page integration and audio waveform construction. Expansion 40 and 44 regressions pass. Native desktop checks verified the live Boston opening briefing and populated fixture scorecards, portraits and development filtering. The live franchise remains untouched.
+
+Next proposed expansion: Game Night Theater. First audit which play-by-play or possession events the simulator actually persists, then build a watchable court and broadcast scoreboard around that event stream. Any additional event recording must be deterministic and preserve existing simulation results.
