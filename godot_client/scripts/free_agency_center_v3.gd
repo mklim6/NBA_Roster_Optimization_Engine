@@ -149,18 +149,23 @@ func _build_ui() -> void:
 	var page_scroll := ScrollContainer.new()
 	page_scroll.name = "FreeAgencyPageScroll"
 	page_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	page_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	page_scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	page_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	page_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(page_scroll)
 
 	var outer := MarginContainer.new()
+	outer.name = "FreeAgencyOuterMargin"
 	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_set_margins(outer, 28, 24, 28, 28)
+	outer.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_set_margins(outer, 28, 24, 28, 120)
 	page_scroll.add_child(outer)
 
 	var column := VBoxContainer.new()
+	column.name = "FreeAgencyPageColumn"
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	column.add_theme_constant_override("separation", 16)
 	outer.add_child(column)
 
@@ -280,6 +285,8 @@ func _build_ui() -> void:
 	market_scroll.name = "FreeAgencyMarketScroll"
 	market_scroll.custom_minimum_size = Vector2(0, 400)
 	market_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	market_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	market_scroll.mouse_force_pass_scroll_events = true
 	market_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	market_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	market_body.add_child(market_scroll)
@@ -371,6 +378,12 @@ func _build_ui() -> void:
 
 	content_row.add_child(market_card)
 	content_row.add_child(negotiation_card)
+
+	var page_bottom_spacer := Control.new()
+	page_bottom_spacer.name = "FreeAgencyBottomSafeArea"
+	page_bottom_spacer.custom_minimum_size = Vector2(0, 180)
+	page_bottom_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(page_bottom_spacer)
 
 	execute_dialog = ConfirmationDialog.new()
 	execute_dialog.title = "Confirm free-agent signing"

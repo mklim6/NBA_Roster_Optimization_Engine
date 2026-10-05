@@ -4,6 +4,7 @@ extends Control
 
 const TradeCenterV3 = preload("res://scripts/trade_center_v3.gd")
 const FreeAgencyCenterV3 = preload("res://scripts/free_agency_center_v3.gd")
+const OffseasonCommandCenterV3 = preload("res://scripts/offseason_command_center_v3.gd")
 const ScoutingDraftCenterV3 = preload("res://scripts/scouting_draft_center_v3.gd")
 const SeasonLifecycleCenterV3 = preload("res://scripts/season_lifecycle_center_v3.gd")
 const LeagueIntelligenceCenterV3 = preload("res://scripts/league_intelligence_center_v3.gd")
@@ -71,6 +72,7 @@ var home_page: Control
 var roster_page: Control
 var trades_page: Control
 var free_agency_page: Control
+var offseason_page: Control
 var scouting_page: Control
 var season_page: Control
 var league_page: Control
@@ -357,6 +359,12 @@ func _build_interface() -> void:
 	content_stack.add_child(free_agency_page)
 	free_agency_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
+	offseason_page = OffseasonCommandCenterV3.new()
+	content_stack.add_child(offseason_page)
+	offseason_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if offseason_page.has_signal("navigate_requested"):
+		offseason_page.connect("navigate_requested", _show_page)
+
 	scouting_page = ScoutingDraftCenterV3.new()
 	content_stack.add_child(scouting_page)
 	scouting_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -466,6 +474,7 @@ func _build_sidebar() -> Control:
 	column.add_child(_nav_button("GAME DAY"))
 
 	column.add_child(UiComponentsV3.sidebar_group_label("ROSTER BUILDING"))
+	column.add_child(_nav_button("OFFSEASON"))
 	column.add_child(_nav_button("TRADES"))
 	column.add_child(_nav_button("FREE AGENCY"))
 	column.add_child(_nav_button("SCOUTING"))
@@ -2749,6 +2758,8 @@ func _page_control(page_name: String):
 			return trades_page
 		"FREE AGENCY":
 			return free_agency_page
+		"OFFSEASON":
+			return offseason_page
 		"SCOUTING":
 			return scouting_page
 		"SEASON":
@@ -2772,6 +2783,7 @@ func _all_page_controls() -> Array:
 		game_day_page,
 		trades_page,
 		free_agency_page,
+		offseason_page,
 		scouting_page,
 		season_page,
 		league_page,
@@ -2843,6 +2855,9 @@ func _show_page(page_name: String, force_refresh: bool = false) -> void:
 	elif page_name == "FREE AGENCY":
 		if free_agency_page != null and free_agency_page.has_method("refresh"):
 			free_agency_page.call("refresh")
+	elif page_name == "OFFSEASON":
+		if offseason_page != null and offseason_page.has_method("refresh"):
+			offseason_page.call("refresh")
 
 func _on_active_save_changed() -> void:
 	inbox_page.invalidate()
@@ -2961,6 +2976,7 @@ func _broadcast_team_brand() -> void:
 		game_day_page,
 		trades_page,
 		free_agency_page,
+		offseason_page,
 		scouting_page,
 		season_page,
 		league_page,
@@ -3056,6 +3072,7 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 		"FRANCHISES",
 		"ROSTER",
 		"GAME DAY",
+		"OFFSEASON",
 		"TRADES",
 		"FREE AGENCY",
 		"SCOUTING",
