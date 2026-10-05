@@ -15,12 +15,16 @@ var audio_player: AudioStreamPlayer
 var pending_action = ""
 var preview_ready = false
 var submitted_plans = ""
+var mentors: Dictionary = {}
+var mentor_selectors: Dictionary = {}
+var mentor_choices: Dictionary = {}
 
 func _ready() -> void:
 	name = "TrainingCamp"
 	add_theme_constant_override("separation", 14)
 	add_child(_label("THE DEVELOPMENT FACILITY", 24, DS.GOLD))
 	add_child(_label("Shape the next chapter of your roster. Three focused coaching slots. One camp each offseason.", 14, DS.MUTED))
+	add_child(_label("VETERAN PARTNERSHIPS • Age 28+ • One learner age 24 or younger • Eight-point skill edge • Mentors give up focused training this camp.", 12, DS.GOLD))
 	status = _label("Connecting to training staff…", 14)
 	add_child(status)
 	grid = GridContainer.new()
@@ -64,11 +68,11 @@ func _submit(action: String) -> void:
 	if action == "execute" and not preview_ready:
 		return
 	pending_action = action
-	submitted_plans = JSON.stringify(plans)
+	submitted_plans = JSON.stringify([plans, mentors])
 	preview_button.disabled = true
 	confirm_button.disabled = true
 	status.text = "Staff is reviewing your plan…"
-	var body = {"action": action, "assignments": plans, "expected_working_save_sha256": report.get("working_save_sha256", "")}
+	var body = {"action": action, "assignments": plans, "mentors": mentors, "expected_working_save_sha256": report.get("working_save_sha256", "")}
 	var error = request.request(URL, ["Content-Type: application/json"], HTTPClient.METHOD_POST, JSON.stringify(body))
 	if error != OK:
 		status.text = "Unable to start camp request. Refresh the Offseason page."
@@ -87,7 +91,7 @@ func _completed(result: int, code: int, _headers: PackedStringArray, body: Packe
 		preview_button.disabled = false
 		return
 	if pending_action == "preview":
-		if JSON.stringify(plans) != submitted_plans:
+		if JSON.stringify([plans, mentors]) != submitted_plans:
 			status.text = "Plan changed during preview. Preview your updated plan."
 			preview_button.disabled = plans.is_empty()
 			pending_action = ""
@@ -114,6 +118,8 @@ func _completed(result: int, code: int, _headers: PackedStringArray, body: Packe
 
 func _render_roster() -> void:
 	_clear(grid)
+	mentor_selectors.clear()
+	mentor_choices.clear()
 	var available = bool(report.get("available", false))
 	preview_button.disabled = not available or plans.is_empty()
 	for player in report.get("players", []):
@@ -144,20 +150,81 @@ func _render_roster() -> void:
 		choices.disabled = not available
 		card.add_child(choices)
 		choices.item_selected.connect(_choose.bind(str(player.player_id), choices))
+		if float(player.age) <= 24:
+			var partner = OptionButton.new()
+			partner.custom_minimum_size.y = 40
+			partner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			partner.clip_text = true
+			card.add_child(partner)
+			mentor_selectors[str(player.player_id)] = partner
+			partner.item_selected.connect(_choose_mentor.bind(str(player.player_id)))
+	_refresh_mentors()
 	_resize_cards()
 
 func _choose(index: int, id: String, choices: OptionButton) -> void:
 	if index == 0:
 		plans.erase(id)
+		mentors.erase(id)
 	elif plans.has(id) or plans.size() < 3:
 		plans[id] = report.focuses[index - 1]
 	else:
 		choices.select(0)
+	_refresh_mentors()
+	_invalidate_preview()
+
+func _invalidate_preview() -> void:
 	preview_ready = false
 	confirm_button.visible = false
 	_clear(results)
-	status.text = "%s / 3 COACHING SLOTS • Preview to review gains and skill tradeoffs." % plans.size()
+	status.text = "%s / 3 COACHING SLOTS • %s PARTNERSHIPS • Preview to review gains and skill tradeoffs." % [plans.size(), mentors.size()]
 	preview_button.disabled = plans.is_empty()
+
+func _refresh_mentors() -> void:
+	for learner_id in mentor_selectors:
+		var selector: OptionButton = mentor_selectors[learner_id]
+		selector.clear()
+		var ids: Array = []
+		var learner: Dictionary = {}
+		for row in report.get("players", []):
+			if str(row.player_id) == learner_id:
+				learner = row
+		if not plans.has(learner_id):
+			selector.add_item("Choose focused work to find a mentor")
+			selector.disabled = true
+			mentors.erase(learner_id)
+			mentor_choices[learner_id] = ids
+			continue
+		selector.add_item("Solo training • no veteran partner")
+		var focus = str(plans[learner_id])
+		for row in report.get("players", []):
+			var id = str(row.player_id)
+			if float(row.age) < 28 or plans.has(id):
+				continue
+			if float(row.skills.get(focus,0)) - float(learner.get("skills",{}).get(focus,0)) < 8:
+				continue
+			var used = false
+			for other in mentors:
+				if other != learner_id and str(mentors[other]) == id:
+					used = true
+			if used:
+				continue
+			ids.append(id)
+			selector.add_item("%s • %s %.1f" % [str(row.name), focus.capitalize(), float(row.skills.get(focus,0))])
+		mentor_choices[learner_id] = ids
+		selector.disabled = not bool(report.get("available",false)) or ids.is_empty()
+		var selected = str(mentors.get(learner_id,""))
+		if ids.has(selected):
+			selector.select(ids.find(selected)+1)
+		else:
+			mentors.erase(learner_id)
+
+func _choose_mentor(index: int, id: String) -> void:
+	if index == 0:
+		mentors.erase(id)
+	else:
+		mentors[id] = mentor_choices[id][index-1]
+	_refresh_mentors()
+	_invalidate_preview()
 
 func _render_results(rows: Array, preview: bool) -> void:
 	_clear(results)
@@ -166,6 +233,8 @@ func _render_results(rows: Array, preview: bool) -> void:
 		card.add_child(_label(str(row.name) + " • " + str(row.focus).to_upper(), 18, DS.GOLD))
 		card.add_child(_label("%.2f → %.2f   (+%.2f)" % [float(row.before), float(row.after), float(row.gain)], 24, DS.GOOD))
 		card.add_child(_label("%s: %.2f → %.2f • Overall: %.2f → %.2f" % [str(row.tradeoff).capitalize(), float(row.tradeoff_before), float(row.tradeoff_after), float(row.overall_before), float(row.overall_after)], 13, DS.MUTED))
+		if str(row.get("mentor_name", "")) != "":
+			card.add_child(_label("MENTORED BY %s • SOLO GAIN %+.2f • PARTNERSHIP GAIN %+.2f" % [str(row.mentor_name).to_upper(), float(row.get("unmentored_gain",0)), float(row.gain)], 12, DS.GOLD))
 		if not preview:
 			card.modulate.a = 0.0
 			create_tween().tween_property(card, "modulate:a", 1.0, 0.45)

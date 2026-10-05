@@ -9,6 +9,32 @@ import random
 FOCUSES = {"shooting": "shooting_rating", "playmaking": "playmaking_rating", "defense": "defense_rating", "rebounding": "rebounding_rating"}
 WEIGHTS = {"scoring_rating": .24, "shooting_rating": .12, "playmaking_rating": .16, "rebounding_rating": .12, "defense_rating": .18, "efficiency_rating": .13, "availability_rating": .05}
 HISTORY_KEY = "v3_training_camp_history"
+MENTOR_MIN_AGE = 28
+LEARNER_MAX_AGE = 24
+MENTOR_SKILL_EDGE = 8.0
+
+
+def mentor_options(players, learner_id, focus):
+    learner = next((row for row in players if row["player_id"] == learner_id), None)
+    if learner is None or learner["age"] > LEARNER_MAX_AGE or focus not in FOCUSES:
+        return []
+    return sorted([dict(player_id=row["player_id"], name=row["name"], skill=row["skills"][focus],
+                        edge=round(row["skills"][focus]-learner["skills"][focus], 2))
+                   for row in players if row["player_id"] != learner_id and row["age"] >= MENTOR_MIN_AGE
+                   and row["skills"][focus]-learner["skills"][focus] >= MENTOR_SKILL_EDGE],
+                  key=lambda row: (-row["skill"], row["player_id"]))
+
+
+def validate_mentors(report, plans, mentors):
+    if not isinstance(mentors, dict):
+        raise ValueError("Mentorships must be a player-to-mentor object.")
+    used = set()
+    for learner, mentor in mentors.items():
+        if learner not in plans or not isinstance(mentor, str) or mentor in plans or mentor in used:
+            raise ValueError("Mentors serve one focused learner and cannot train in the same camp.")
+        if mentor not in {row["player_id"] for row in mentor_options(report["players"], learner, plans[learner])}:
+            raise ValueError("Mentorship requires a healthy roster veteran age 28+, a learner age 24 or younger, and an 8-point skill advantage.")
+        used.add(mentor)
 
 
 def _number(player, field):
@@ -48,10 +74,11 @@ def camp_summary(checkpoint, team):
     return dict(team=team, season=season, phase=phase, available=phase == "offseason" and completed is None,
                 completed=completed is not None, slots=3, focuses=list(FOCUSES), players=rows,
                 results=[] if completed is None else completed.get(team, []),
-                detail="One camp per offseason. Up to three focused players; gains are uncertain and capped at 1.5 skill points. Focus trades 0.25 points from another skill. Annual development remains separate.")
+                mentor_rules=dict(minimum_age=MENTOR_MIN_AGE, learner_maximum_age=LEARNER_MAX_AGE, skill_edge=MENTOR_SKILL_EDGE, gain_multiplier=1.2),
+                detail="One camp per offseason. Up to three focused players; gains are uncertain and capped at 1.5 skill points. Focus trades 0.25 points from another skill. Eligible mentors increase modeled gains by 20% before the cap. Annual development remains separate.")
 
 
-def build_camp_candidate(checkpoint, team, assignments):
+def build_camp_candidate(checkpoint, team, assignments, mentors=None):
     summary = camp_summary(checkpoint, team)
     if not summary["available"]:
         raise ValueError("Camp requires an offseason and may run only once per season.")
@@ -60,6 +87,8 @@ def build_camp_candidate(checkpoint, team, assignments):
     eligible = {p["player_id"] for p in summary["players"]}
     if any(pid not in eligible or not isinstance(focus, str) or focus not in FOCUSES for pid, focus in assignments.items()):
         raise ValueError("Choose roster players with valid ratings and a supported focus.")
+    mentors = {} if mentors is None else mentors
+    validate_mentors(summary, assignments, mentors)
     candidate = copy.deepcopy(checkpoint)
     state = candidate.simulation_state
     league_results = {}
@@ -69,6 +98,16 @@ def build_camp_candidate(checkpoint, team, assignments):
             p["player_id"]: min(p["skills"], key=p["skills"].get)
             for p in sorted(report["players"], key=lambda p: (-(p["potential"] - p["overall"]), p["age"], p["player_id"]))[:3]
         }
+        partnerships = dict(mentors) if abbreviation == team else {}
+        if abbreviation != team:
+            used = set()
+            for pid, focus in plans.items():
+                options = [row for row in mentor_options(report["players"], pid, focus)
+                           if row["player_id"] not in plans and row["player_id"] not in used]
+                if options:
+                    partnerships[pid] = options[0]["player_id"]
+                    used.add(options[0]["player_id"])
+        validate_mentors(report, plans, partnerships)
         results = []
         for pid, focus in sorted(plans.items()):
             p = state.players[pid]
@@ -80,7 +119,9 @@ def build_camp_candidate(checkpoint, team, assignments):
             other_before = _number(p, other)
             youth = max(.15, min(1.0, (35 - float(p.age)) / 15))
             headroom = max(0.0, min(1.0, (float(p.potential_rating) + .75 - float(p.overall_rating)) / 4))
-            gain = round(min(1.5, rng.uniform(.15, 1.5) * youth * headroom), 2)
+            base_gain = rng.uniform(.15, 1.5) * youth * headroom
+            mentor_id = partnerships.get(pid)
+            gain = round(min(1.5, base_gain * (1.2 if mentor_id else 1.0)), 2)
             after = round(min(99.9, before + gain), 2)
             # No opportunity cost when camp produces no gain.
             other_after = round(max(60.0, other_before - .25), 2) if after > before else other_before
@@ -99,12 +140,21 @@ def build_camp_candidate(checkpoint, team, assignments):
             entry = dict(player_id=pid, name=str(p.player_name), focus=focus, before=before, after=after,
                          gain=round(after-before, 2), tradeoff=other.removesuffix("_rating"), tradeoff_before=other_before,
                          tradeoff_after=other_after, overall_before=old_overall, overall_after=p.overall_rating,
-                         season=summary["season"], event="training_camp", engine_version="expansion41-v1")
+                         season=summary["season"], event="training_camp", engine_version="expansion43-v1",
+                         mentor_id=mentor_id, mentor_name=str(state.players[mentor_id].player_name) if mentor_id else "",
+                         unmentored_gain=round(min(99.9-before, base_gain), 2))
             # Annual history length is used as a service-time fallback.
             # Camp events must not add a year of service.
             if not hasattr(p, "training_camp_history"):
                 p.training_camp_history = []
             p.training_camp_history.append(copy.deepcopy(entry))
+            if mentor_id:
+                mentor = state.players[mentor_id]
+                if not hasattr(mentor, "mentorship_history"):
+                    mentor.mentorship_history = []
+                mentor.mentorship_history.append(dict(season=summary["season"], learner_id=pid,
+                    learner_name=str(p.player_name), focus=focus, gain=entry["gain"],
+                    overall_before=float(mentor.overall_rating), overall_after=float(mentor.overall_rating)))
             results.append(entry)
         league_results[abbreviation] = results
     candidate.preferences.setdefault(HISTORY_KEY, {})[summary["season"]] = league_results

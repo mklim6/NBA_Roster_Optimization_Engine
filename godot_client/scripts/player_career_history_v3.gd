@@ -23,7 +23,7 @@ class ChangeChart extends Control:
 			var event = events[i]
 			var x = 12 + step * i
 			var value = event.get("delta", null)
-			var color = Color("f0c866") if str(event.get("kind", "")) == "camp" else Color("72c7f5")
+			var color = Color("72c7f5") if str(event.get("kind", "")) == "season" else Color("f0c866")
 			if value == null:
 				draw_string(font, Vector2(x+4,baseline-10), "?", HORIZONTAL_ALIGNMENT_LEFT, step, 13, Color("9ba8bb"))
 			else:
@@ -32,7 +32,8 @@ class ChangeChart extends Control:
 				draw_rect(Rect2(x + 3, top, max(3.0, step-10), max(2.0,height)), color)
 				draw_string(font, Vector2(x+3, 16), "%+.2f" % float(value), HORIZONTAL_ALIGNMENT_LEFT, step-5, 11, color)
 			draw_string(font, Vector2(x+3, 126), str(event.get("season", "")).left(4), HORIZONTAL_ALIGNMENT_LEFT, step-5, 11, Color("9ba8bb"))
-			draw_string(font, Vector2(x+3, 142), "CAMP" if str(event.get("kind", "")) == "camp" else "YEAR", HORIZONTAL_ALIGNMENT_LEFT, step-5, 9, color)
+			var kind = str(event.get("kind", ""))
+			draw_string(font, Vector2(x+3, 142), "YEAR" if kind == "season" else "MENTOR" if kind == "mentor" else "CAMP", HORIZONTAL_ALIGNMENT_LEFT, step-5, 9, color)
 
 func configure(data: Dictionary) -> void:
 	history = data.duplicate(true)
@@ -46,14 +47,14 @@ func configure(data: Dictionary) -> void:
 		add_child(_label("Your story starts here. Complete a season or training camp to record the first chapter of this player's development.", 14, DS.MUTED))
 		return
 	var change = history.get("recorded_change", null)
-	add_child(_label("%s ANNUAL CHAPTERS • %s CAMPS • RECORDED OVR CHANGE %s" % [history.get("annual_events", 0), history.get("camp_events", 0), "Unavailable" if change == null else "%+.2f" % float(change)], 13))
+	add_child(_label("%s ANNUAL CHAPTERS • %s CAMPS • %s MENTORSHIPS • RECORDED OVR CHANGE %s" % [history.get("annual_events", 0), history.get("camp_events", 0), history.get("mentor_events",0), "Unavailable" if change == null else "%+.2f" % float(change)], 13))
 	add_child(_label(str(history.get("coverage", "")), 12, DS.MUTED))
 	var events: Array = history.get("events", [])
 	var chart = ChangeChart.new()
 	chart.name = "CareerChangeChart"
 	chart.events = events.slice(max(0,events.size()-12))
 	add_child(chart)
-	add_child(_label("LAST %s RECORDED EVENTS • ANNUAL DEVELOPMENT IN BLUE • CAMP IN GOLD" % chart.events.size(), 11, DS.MUTED))
+	add_child(_label("LAST %s RECORDED EVENTS • ANNUAL DEVELOPMENT IN BLUE • CAMP & MENTORSHIPS IN GOLD" % chart.events.size(), 11, DS.MUTED))
 	timeline = VBoxContainer.new()
 	timeline.name = "CareerTimeline"
 	timeline.add_theme_constant_override("separation", 8)
@@ -63,7 +64,7 @@ func configure(data: Dictionary) -> void:
 		var panel = PanelContainer.new()
 		var style = StyleBoxFlat.new()
 		style.bg_color = DS.PANEL
-		style.border_color = Color(DS.GOLD,.4) if event.get("kind", "") == "camp" else DS.BORDER
+		style.border_color = DS.BORDER if event.get("kind", "") == "season" else Color(DS.GOLD,.4)
 		style.set_border_width_all(1)
 		style.set_corner_radius_all(10)
 		style.content_margin_left = 12
@@ -76,10 +77,13 @@ func configure(data: Dictionary) -> void:
 		panel.add_child(body)
 		var destination = str(event.get("target_season", ""))
 		var title = str(event.get("season", "")) + (" → " + destination if destination != "" else "")
-		body.add_child(_label(title + " • " + str(event.get("headline", "")), 15, DS.GOLD if event.get("kind", "") == "camp" else DS.ACCENT))
+		body.add_child(_label(title + " • " + str(event.get("headline", "")), 15, DS.ACCENT if event.get("kind", "") == "season" else DS.GOLD))
 		var before = event.get("before", null)
 		var after = event.get("after", null)
 		body.add_child(_label("OVR %s → %s" % [_number(before), _number(after)], 18))
+		var mentor = str(event.get("mentor_name", ""))
+		if mentor != "":
+			body.add_child(_label("MENTORED BY " + mentor.to_upper(), 12, DS.GOLD))
 		var detail = _label(_skills(event.get("skills", {})), 12, DS.MUTED)
 		detail.visible = false
 		var button = Button.new()

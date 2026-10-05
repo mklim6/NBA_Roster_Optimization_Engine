@@ -18,7 +18,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.19.0"
+API_VERSION = "0.20.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -2538,7 +2538,7 @@ async def training_camp(request: Request) -> JSONResponse:
             raise ValueError("Choose preview or execute.")
         if body.get("expected_working_save_sha256") != before:
             raise ValueError("The save changed. Refresh camp before continuing.")
-        candidate = build_camp_candidate(checkpoint, team, body.get("assignments"))
+        candidate = build_camp_candidate(checkpoint, team, body.get("assignments"), body.get("mentors", {}))
         report = camp_summary(candidate, team)
         if body["action"] == "preview":
             return JSONResponse({**report, "preview": True, "working_save_sha256": before})

@@ -36,11 +36,21 @@ def career_history(player):
             skills[str(raw["tradeoff"])] = round(cost_after-cost_before, 3)
         events.append(dict(kind="camp", season=str(raw.get("season", "Unknown season")), target_season="",
                            before=before, after=after, delta=None if before is None or after is None else round(after-before, 3),
-                           skills=skills, headline="Focused training camp", focus=focus))
-    events.sort(key=lambda row: (row["season"], 0 if row["kind"] == "camp" else 1))
+                           skills=skills, headline="Mentored training camp" if raw.get("mentor_name") else "Focused training camp",
+                           mentor_name=str(raw.get("mentor_name", "")), focus=focus))
+    for raw in getattr(player, "mentorship_history", ()) or ():
+        if not isinstance(raw, dict):
+            continue
+        before, after = number(raw.get("overall_before")), number(raw.get("overall_after"))
+        focus = str(raw.get("focus", ""))
+        events.append(dict(kind="mentor", season=str(raw.get("season", "Unknown season")), target_season="",
+                           before=before, after=after, delta=None if before is None or after is None else round(after-before,3),
+                           headline="Mentored " + str(raw.get("learner_name", "a young player")),
+                           skills={"Learner's " + focus: number(raw.get("gain"))}, mentor_name="", focus=focus))
+    events.sort(key=lambda row: (row["season"], 1 if row["kind"] == "season" else 0))
     known = [row for row in events if row["delta"] is not None]
     return dict(events=events[-40:], total_events=len(events), camp_events=sum(e["kind"] == "camp" for e in events),
-                annual_events=sum(e["kind"] == "season" for e in events),
+                annual_events=sum(e["kind"] == "season" for e in events), mentor_events=sum(e["kind"] == "mentor" for e in events),
                 recorded_change=round(sum(e["delta"] for e in known), 3) if known else None,
                 best_gain=max((e["delta"] for e in known), default=None),
                 coverage="Recorded events only. Gaps and unrecorded changes are not inferred.")

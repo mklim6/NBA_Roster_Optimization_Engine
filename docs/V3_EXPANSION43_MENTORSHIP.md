@@ -1,0 +1,11 @@
+# Expansion 43 — Veteran development partnerships
+
+Focused training camp now supports optional veteran mentorship. Eligible learners are age 24 or younger; mentors must be healthy roster players age 28 or older with at least an eight-point advantage in the selected skill. A mentor can serve one learner and cannot receive focused work in the same camp. The three focused-player limit remains unchanged.
+
+The same deterministic camp draw is used for solo and paired plans. A valid partnership multiplies the modeled skill gain by 1.2 before the existing 1.5-point cap and rating ceiling. The existing opportunity cost still applies. Preview cards show mentor name and solo versus paired gains. Pairing changes invalidate the previous preview. CPU teams select eligible mentors using the same rules and exclusivity constraints.
+
+Learner camp history records mentor identity; veteran mentorship history records the learner, focus and result. The career timeline displays both sides: the learner's mentored camp and the veteran's mentorship chapter, whose own rating is unchanged. Neither history adds service time. This is a camp partnership mechanic; ongoing relationship scores, morale effects, staff budgets and role promises are not introduced.
+
+The bridge retains the existing temporary candidate/reload/recovery/atomic replacement boundary and working-save hash checks. API version is 0.20.0. Pre-expansion camps remain completed; installing mentorship does not reopen them.
+
+Validation: focused mentorship checks cover age and skill requirements, roster ownership, exclusivity, rejection of focused mentors, bounded deterministic benefit, CPU pairing, player memory, and real-checkpoint reload entirely in scratch storage. Godot checks cover mentor choices, clearing invalid partnerships, result comparisons and preview invalidation. Expansion 40, camp, career history and Development Lab regressions pass. Desktop fixture testing verified picking/removing a mentor; the real save remains at regular-season day zero and was not simulated or used to execute camp. Live Boston portraits and the career empty state were checked during this expansion sequence. The focused camp headless test retains its known Godot ObjectDB exit warning; it completes without script errors.

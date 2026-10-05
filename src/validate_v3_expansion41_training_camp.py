@@ -124,6 +124,8 @@ func run():
     assert(page.results.get_child_count() == 1)
     page._play_chime()
     assert(page.audio_player.stream.data.size() == 22050)
+    page.audio_player.stop()
+    page.audio_player.stream = null
     page.size.x = 600
     page._resize_cards()
     assert(page.grid.columns == 1)
