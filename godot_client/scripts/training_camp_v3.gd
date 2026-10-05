@@ -143,6 +143,14 @@ func _render_roster() -> void:
 			bar.add_theme_stylebox_override("fill", fill)
 			card.add_child(bar)
 		var choices = OptionButton.new()
+		for goal in report.get("development_goals",[]):
+			if str(goal.get("player_id","")) != str(player.player_id):
+				continue
+			var value = goal.get("current",null)
+			var current_text = "Unavailable" if value == null else "%.1f" % float(value)
+			card.add_child(_label("SEASON COMMITMENT • %s • %s / %.1f" % [str(goal.metric).to_upper(),current_text,float(goal.target)],12,DS.GOLD))
+			if str(goal.metric) == "opportunity":
+				card.add_child(_label("Playing opportunity is earned in games; review your rotation in Game Day.",11,DS.MUTED))
 		choices.custom_minimum_size.y = 42
 		choices.add_item("Standard preparation • no focused slot")
 		for focus in report.get("focuses", []):

@@ -5,6 +5,7 @@ extends Control
 const TradeCenterV3 = preload("res://scripts/trade_center_v3.gd")
 const FreeAgencyCenterV3 = preload("res://scripts/free_agency_center_v3.gd")
 const OffseasonCommandCenterV3 = preload("res://scripts/offseason_command_center_v3.gd")
+const DevelopmentCommandCenterV3 = preload("res://scripts/development_command_center_v3.gd")
 const ScoutingDraftCenterV3 = preload("res://scripts/scouting_draft_center_v3.gd")
 const SeasonLifecycleCenterV3 = preload("res://scripts/season_lifecycle_center_v3.gd")
 const LeagueIntelligenceCenterV3 = preload("res://scripts/league_intelligence_center_v3.gd")
@@ -73,6 +74,7 @@ var roster_page: Control
 var trades_page: Control
 var free_agency_page: Control
 var offseason_page: Control
+var development_page: Control
 var scouting_page: Control
 var season_page: Control
 var league_page: Control
@@ -364,6 +366,10 @@ func _build_interface() -> void:
 	offseason_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	if offseason_page.has_signal("navigate_requested"):
 		offseason_page.connect("navigate_requested", _show_page)
+	development_page = DevelopmentCommandCenterV3.new()
+	content_stack.add_child(development_page)
+	development_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	development_page.navigate_requested.connect(_show_page)
 
 	scouting_page = ScoutingDraftCenterV3.new()
 	content_stack.add_child(scouting_page)
@@ -404,9 +410,16 @@ func _build_sidebar() -> Control:
 		DesignSystemV3.style_box(SIDEBAR, 0, SOFT_BORDER, 1, 0.12)
 	)
 
+	var sidebar_scroll := ScrollContainer.new()
+	sidebar_scroll.name = "SidebarNavigationScroll"
+	sidebar_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sidebar_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	sidebar_panel.add_child(sidebar_scroll)
 	var margin := MarginContainer.new()
-	_set_margins(margin, 18, 20, 18, 18)
-	sidebar_panel.add_child(margin)
+	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	margin.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_set_margins(margin, 18, 20, 18, 28)
+	sidebar_scroll.add_child(margin)
 
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", 6)
@@ -475,6 +488,7 @@ func _build_sidebar() -> Control:
 
 	column.add_child(UiComponentsV3.sidebar_group_label("ROSTER BUILDING"))
 	column.add_child(_nav_button("OFFSEASON"))
+	column.add_child(_nav_button("DEVELOPMENT"))
 	column.add_child(_nav_button("TRADES"))
 	column.add_child(_nav_button("FREE AGENCY"))
 	column.add_child(_nav_button("SCOUTING"))
@@ -2760,6 +2774,8 @@ func _page_control(page_name: String):
 			return free_agency_page
 		"OFFSEASON":
 			return offseason_page
+		"DEVELOPMENT":
+			return development_page
 		"SCOUTING":
 			return scouting_page
 		"SEASON":
@@ -2784,6 +2800,7 @@ func _all_page_controls() -> Array:
 		trades_page,
 		free_agency_page,
 		offseason_page,
+		development_page,
 		scouting_page,
 		season_page,
 		league_page,
@@ -2858,6 +2875,8 @@ func _show_page(page_name: String, force_refresh: bool = false) -> void:
 	elif page_name == "OFFSEASON":
 		if offseason_page != null and offseason_page.has_method("refresh"):
 			offseason_page.call("refresh")
+	elif page_name == "DEVELOPMENT":
+		development_page.refresh()
 
 func _on_active_save_changed() -> void:
 	inbox_page.invalidate()
@@ -2977,6 +2996,7 @@ func _broadcast_team_brand() -> void:
 		trades_page,
 		free_agency_page,
 		offseason_page,
+		development_page,
 		scouting_page,
 		season_page,
 		league_page,
@@ -3073,6 +3093,7 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 		"ROSTER",
 		"GAME DAY",
 		"OFFSEASON",
+		"DEVELOPMENT",
 		"TRADES",
 		"FREE AGENCY",
 		"SCOUTING",

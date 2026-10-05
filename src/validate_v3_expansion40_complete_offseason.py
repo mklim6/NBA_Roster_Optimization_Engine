@@ -341,7 +341,8 @@ def validate_static(results: dict[str, bool]) -> None:
             'elif page_name == "OFFSEASON":',
             'offseason_page.call("refresh")',
             'offseason_page.connect("navigate_requested", _show_page)',
-            '\t\t"OFFSEASON",\n\t\t"TRADES",',
+            '\t\t"OFFSEASON",',
+            '\t\t"TRADES",',
         ]
     )
 

@@ -5,6 +5,7 @@ import copy
 import hashlib
 import math
 import random
+from desktop_bridge.development_goals import goals_board
 
 FOCUSES = {"shooting": "shooting_rating", "playmaking": "playmaking_rating", "defense": "defense_rating", "rebounding": "rebounding_rating"}
 WEIGHTS = {"scoring_rating": .24, "shooting_rating": .12, "playmaking_rating": .16, "rebounding_rating": .12, "defense_rating": .18, "efficiency_rating": .13, "availability_rating": .05}
@@ -74,6 +75,7 @@ def camp_summary(checkpoint, team):
     return dict(team=team, season=season, phase=phase, available=phase == "offseason" and completed is None,
                 completed=completed is not None, slots=3, focuses=list(FOCUSES), players=rows,
                 results=[] if completed is None else completed.get(team, []),
+                development_goals=goals_board(checkpoint,team)["goals"],
                 mentor_rules=dict(minimum_age=MENTOR_MIN_AGE, learner_maximum_age=LEARNER_MAX_AGE, skill_edge=MENTOR_SKILL_EDGE, gain_multiplier=1.2),
                 detail="One camp per offseason. Up to three focused players; gains are uncertain and capped at 1.5 skill points. Focus trades 0.25 points from another skill. Eligible mentors increase modeled gains by 20% before the cap. Annual development remains separate.")
 

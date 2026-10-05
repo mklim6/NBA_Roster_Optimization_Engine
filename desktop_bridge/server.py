@@ -18,7 +18,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.20.0"
+API_VERSION = "0.21.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -124,6 +124,7 @@ from desktop_bridge.league_intelligence_foundation import build_league_intellige
 from desktop_bridge.franchise_legacy_foundation import build_franchise_legacy_payload
 from desktop_bridge.offseason_command_foundation import build_offseason_command_payload
 from desktop_bridge.training_camp_foundation import camp_summary, build_camp_candidate
+from desktop_bridge.development_goals import goals_board, build_goals_candidate, KEY as DEVELOPMENT_GOALS_KEY
 from desktop_bridge.front_office_foundation import build_front_office_intelligence_payload
 from desktop_bridge.decision_inbox import build_decision_inbox
 from desktop_bridge.save_manager_foundation import (
@@ -2518,6 +2519,50 @@ async def front_office_intelligence(_: Request) -> JSONResponse:
             },
             status_code=500,
         )
+
+
+async def development_goals(request: Request) -> JSONResponse:
+    import os
+    import tempfile
+    before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    v2_before = _file_sha256(Path(DEFAULT_CHECKPOINT_PATH))
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            raise ValueError("Initialize a V3 working save first.")
+        team = _active_team_from_checkpoint(checkpoint)
+        if request.method == "GET":
+            return JSONResponse({**goals_board(checkpoint,team), "working_save_sha256":before})
+        body = await request.json()
+        if not isinstance(body,dict) or body.get("action") not in {"preview","execute"}:
+            raise ValueError("Choose preview or execute.")
+        if body.get("expected_working_save_sha256") != before:
+            raise ValueError("The working save changed. Refresh the development board.")
+        candidate = build_goals_candidate(checkpoint,team,body.get("selections"))
+        board = goals_board(candidate,team)
+        if body["action"] == "preview":
+            return JSONResponse({**board,"preview":True,"working_save_sha256":before})
+        with tempfile.TemporaryDirectory(dir=V3_WORKING_CHECKPOINT_PATH.parent) as directory:
+            staged = Path(directory)/"goals.pkl.gz"
+            save_franchise_checkpoint(candidate.simulation_state,candidate.trade_state,preferences=candidate.preferences,
+                reason="Expansion 44 season development commitments",path=staged,copy_payload=False,force_replace=True)
+            verified = load_franchise_checkpoint(path=staged)
+            if verified.preferences.get(DEVELOPMENT_GOALS_KEY) != candidate.preferences.get(DEVELOPMENT_GOALS_KEY):
+                raise RuntimeError("Development goals failed checkpoint reload verification.")
+            if _file_sha256(V3_WORKING_CHECKPOINT_PATH)!=before or _file_sha256(Path(DEFAULT_CHECKPOINT_PATH))!=v2_before:
+                raise ValueError("Checkpoint changed during planning. Refresh and retry.")
+            recovery = REPO_ROOT/"outputs/runtime/v3_development_goals_recovery"
+            recovery.mkdir(parents=True,exist_ok=True)
+            recovery_path = recovery/(str(before)+".pkl.gz")
+            shutil.copy2(V3_WORKING_CHECKPOINT_PATH,recovery_path)
+            if _file_sha256(recovery_path)!=before:
+                raise RuntimeError("Development goal recovery copy verification failed.")
+            os.replace(staged,V3_WORKING_CHECKPOINT_PATH)
+        return JSONResponse({**board,"applied":True,"working_save_sha256":_file_sha256(V3_WORKING_CHECKPOINT_PATH)})
+    except ValueError as exc:
+        return JSONResponse({"error":"development_goals_rejected","detail":str(exc)},status_code=409)
+    except Exception as exc:
+        return JSONResponse({"error":"development_goals_failed","detail":str(exc)},status_code=500)
 
 
 async def training_camp(request: Request) -> JSONResponse:
@@ -5104,6 +5149,7 @@ routes = [
     Route("/v3/franchise-legacy", franchise_legacy, methods=["GET"]),
     Route("/v3/offseason-command", offseason_command, methods=["GET"]),
     Route("/v3/training-camp", training_camp, methods=["GET", "POST"]),
+    Route("/v3/development-goals", development_goals, methods=["GET", "POST"]),
     Route("/v3/front-office", front_office_intelligence, methods=["GET"]),
     Route("/v3/decision-inbox", decision_inbox, methods=["GET"]),
     Route("/v3/market-intelligence", market_intelligence, methods=["GET"]),
