@@ -40,6 +40,7 @@ function Warm-V3DesktopReadCache {
 
     $warmPaths = @(
         "/v3/franchise-summary",
+        "/v3/rebuild-hq",
         "/v3/roster",
         "/v3/game-day",
         "/v3/preferences",

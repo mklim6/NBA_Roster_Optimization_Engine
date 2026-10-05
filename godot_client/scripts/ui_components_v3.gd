@@ -120,14 +120,14 @@ static func _nav_box(fill: Color, border: Color, active: bool, focus: bool = fal
 		1,
 		0.10 if active else 0.0
 	)
-	box.border_width_left = 3 if active else 1
+	box.border_width_left = 2 if active else 1
 	box.border_color = DesignSystemV3.TEAM_PRIMARY_HOVER if active and not focus else (
 		DesignSystemV3.ACCENT if focus else border
 	)
-	box.content_margin_left = 14.0
-	box.content_margin_right = 12.0
-	box.content_margin_top = 9.0
-	box.content_margin_bottom = 9.0
+	box.content_margin_left = 10.0
+	box.content_margin_right = 9.0
+	box.content_margin_top = 6.0
+	box.content_margin_bottom = 6.0
 	return box
 
 
@@ -137,7 +137,7 @@ static func nav_button(
 	brand_color: Color = DesignSystemV3.TEAM_PRIMARY_HOVER
 ) -> Button:
 	var button := Button.new()
-	button.custom_minimum_size = Vector2(0, 39)
+	button.custom_minimum_size = Vector2(0, 32)
 	button.text = text_value
 	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND

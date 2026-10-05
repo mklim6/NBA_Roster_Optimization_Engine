@@ -18,7 +18,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.25.0"
+API_VERSION = "0.26.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -75,6 +75,12 @@ V3_DESKTOP_PREFERENCES_PATH = (
     / "outputs"
     / "runtime"
     / "v3_desktop_preferences.json"
+)
+V3_REBUILD_EXPERIENCE_PATH = (
+    REPO_ROOT
+    / "outputs"
+    / "runtime"
+    / "v3_rebuild_experience.json"
 )
 
 # V2 checkpoints were serialized with top-level src module names.
@@ -149,6 +155,12 @@ from desktop_bridge.desktop_preferences_foundation import (
     complete_tutorial,
     reset_desktop_preferences,
     update_desktop_preferences,
+)
+from desktop_bridge.rebuild_experience_foundation import (
+    RebuildExperienceError,
+    build_rebuild_hq_payload,
+    load_rebuild_experience,
+    update_rebuild_experience,
 )
 from desktop_bridge.runtime_performance_foundation import (
     RUNTIME_PERFORMANCE,
@@ -2410,6 +2422,136 @@ async def free_agency_execute(request: Request) -> JSONResponse:
                 "recovery_checkpoint_path": str(recovery_path or ""),
                 "working_save_write_performed": bool(write_started),
                 **_safety_payload(),
+            },
+            status_code=500,
+        )
+
+async def rebuild_hq(request: Request) -> JSONResponse:
+    working_before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    protected_before = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse(
+                {"error": "v3_working_save_not_initialized"},
+                status_code=409,
+            )
+
+        team = _active_team_from_checkpoint(checkpoint)
+        if not team:
+            return JSONResponse(
+                {"error": "active_franchise_not_found"},
+                status_code=404,
+            )
+
+        metadata_write_performed = False
+        tutorial_preferences_updated = False
+        if request.method == "POST":
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise RebuildExperienceError(
+                    "Rebuild HQ action must be a JSON object."
+                )
+            experience = update_rebuild_experience(
+                V3_REBUILD_EXPERIENCE_PATH,
+                checkpoint,
+                team,
+                body,
+            )
+            metadata_write_performed = True
+            if str(body.get("action", "")).strip().lower() == "complete_onboarding":
+                complete_tutorial(V3_DESKTOP_PREFERENCES_PATH)
+                tutorial_preferences_updated = True
+        else:
+            experience = load_rebuild_experience(
+                V3_REBUILD_EXPERIENCE_PATH,
+                checkpoint,
+                team,
+            )
+
+        state = checkpoint.simulation_state
+        roster = _roster_payload(
+            state,
+            team,
+            source="v3_working_checkpoint",
+            editable=True,
+        )
+        office = build_front_office_intelligence_payload(
+            state,
+            team,
+            roster,
+            team_names=TEAM_NAMES,
+        )
+        office["development_goals"] = goals_board(checkpoint, team)
+        scouting = build_scouting_draft_payload(checkpoint, team)
+        transactions = build_transaction_foundation_payload(
+            checkpoint,
+            team,
+            include_trade_finder=False,
+        )
+
+        payload = build_rebuild_hq_payload(
+            checkpoint,
+            team,
+            roster_payload=roster,
+            office_payload=office,
+            game_day_payload=_game_day_payload(state, team),
+            scouting_payload=scouting,
+            transaction_payload=transactions,
+            experience=experience,
+            team_names=TEAM_NAMES,
+        )
+
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        protected_after = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+        if working_after != working_before or protected_after != protected_before:
+            return JSONResponse(
+                {
+                    "error": "rebuild_hq_checkpoint_changed",
+                    "working_save_unchanged": working_after == working_before,
+                    "active_v2_unchanged": protected_after == protected_before,
+                },
+                status_code=409,
+            )
+
+        payload.update(
+            {
+                "api_version": API_VERSION,
+                "working_save_unchanged": True,
+                "active_v2_unchanged": True,
+                "working_save_write_performed": False,
+                "desktop_metadata_write_performed": metadata_write_performed,
+                "tutorial_preferences_updated": tutorial_preferences_updated,
+            }
+        )
+        return JSONResponse(payload)
+
+    except (RebuildExperienceError, ValueError) as exc:
+        return JSONResponse(
+            {
+                "error": "rebuild_hq_action_rejected",
+                "detail": str(exc),
+                "working_save_unchanged": (
+                    working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+                ),
+                "active_v2_unchanged": (
+                    protected_before == _file_sha256(DEFAULT_CHECKPOINT_PATH)
+                ),
+            },
+            status_code=409,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "rebuild_hq_unavailable",
+                "exception_type": type(exc).__name__,
+                "detail": str(exc),
+                "working_save_unchanged": (
+                    working_before == _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+                ),
+                "active_v2_unchanged": (
+                    protected_before == _file_sha256(DEFAULT_CHECKPOINT_PATH)
+                ),
             },
             status_code=500,
         )
@@ -5299,6 +5441,7 @@ routes = [
     Route("/v3/preferences/reset", desktop_preferences_reset, methods=["POST"]),
     Route("/v3/preferences/tutorial-complete", desktop_preferences_tutorial_complete, methods=["POST"]),
     Route("/v3/franchise-summary", franchise_summary, methods=["GET"]),
+    Route("/v3/rebuild-hq", rebuild_hq, methods=["GET", "POST"]),
     Route("/v3/franchise-intelligence", franchise_intelligence, methods=["GET"]),
     Route("/v3/league-intelligence", league_intelligence, methods=["GET"]),
     Route("/v3/franchise-legacy", franchise_legacy, methods=["GET"]),
@@ -5363,6 +5506,7 @@ app.add_middleware(
         V3_WORKING_CHECKPOINT_PATH,
         Path(DEFAULT_CHECKPOINT_PATH),
         V3_DESKTOP_PREFERENCES_PATH,
+        V3_REBUILD_EXPERIENCE_PATH,
         V3_SAVE_MANAGER_ROOT / "manifest.json",
     ),
 )

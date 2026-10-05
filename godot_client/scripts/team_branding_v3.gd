@@ -69,12 +69,12 @@ static func active_nav_box(primary: Color) -> StyleBoxFlat:
 		1,
 		0.12
 	)
-	box.border_width_left = 3
+	box.border_width_left = 2
 	box.border_color = primary
-	box.content_margin_left = 14.0
-	box.content_margin_right = 12.0
-	box.content_margin_top = 9.0
-	box.content_margin_bottom = 9.0
+	box.content_margin_left = 10.0
+	box.content_margin_right = 9.0
+	box.content_margin_top = 6.0
+	box.content_margin_bottom = 6.0
 	return box
 
 
@@ -95,10 +95,10 @@ static func apply_nav_state(button: Button, active: bool, primary: Color) -> voi
 			1,
 			0.0
 		)
-		box.content_margin_left = 14.0
-		box.content_margin_right = 12.0
-		box.content_margin_top = 9.0
-		box.content_margin_bottom = 9.0
+		box.content_margin_left = 10.0
+		box.content_margin_right = 9.0
+		box.content_margin_top = 6.0
+		box.content_margin_bottom = 6.0
 		button.add_theme_stylebox_override("normal", box)
 
 

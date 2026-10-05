@@ -9,6 +9,7 @@ const LockerRoomV3 = preload("res://scripts/locker_room_v3.gd")
 const GameNightTheaterV3 = preload("res://scripts/game_night_theater_v3.gd")
 const FranchisePulseV3 = preload("res://scripts/franchise_pulse_v3.gd")
 const RivalryStoryCenterV3 = preload("res://scripts/rivalry_story_center_v3.gd")
+const RebuildHQV3 = preload("res://scripts/rebuild_hq_v3.gd")
 const DevelopmentCommandCenterV3 = preload("res://scripts/development_command_center_v3.gd")
 const ScoutingDraftCenterV3 = preload("res://scripts/scouting_draft_center_v3.gd")
 const SeasonLifecycleCenterV3 = preload("res://scripts/season_lifecycle_center_v3.gd")
@@ -29,6 +30,14 @@ const PlayerProfileExperienceV3 = preload("res://scripts/player_profile_experien
 const RotationCourtV3 = preload("res://scripts/rotation_court_v3.gd")
 const MatchupBannerV3 = preload("res://scripts/matchup_banner_v3.gd")
 const FranchiseHeroArtV3 = preload("res://scripts/franchise_hero_art_v3.gd")
+# V3_50A_VISUAL_PARITY
+# V3_50A2_POLISH
+# V3_50A3_STREAMLIT_EVOLUTION
+# V3_50A4_BROADCAST_HERO
+const FranchiseHomeArtV50A = preload("res://scripts/franchise_home_art_v50a.gd")
+const FranchiseStoryHQV50A = preload("res://scripts/franchise_story_hq_v50a.gd")
+const FranchiseCoreStageV50A = preload("res://scripts/franchise_core_stage_v50a.gd")
+const PlayerPortraitV3 = preload("res://scripts/player_portrait_v3.gd")
 const UxPolishV3 = preload("res://scripts/ux_polish_v3.gd")
 
 const BRIDGE_URL := "http://127.0.0.1:8765/health"
@@ -48,7 +57,9 @@ const PANEL := DesignSystemV3.PANEL
 const PANEL_ALT := DesignSystemV3.PANEL_ALT
 const PANEL_HOVER := DesignSystemV3.PANEL_HOVER
 const TEXT := DesignSystemV3.TEXT
+const TEXT_STRONG := DesignSystemV3.TEXT_STRONG
 const MUTED := DesignSystemV3.MUTED
+const MUTED_DARK := DesignSystemV3.MUTED_DARK
 const ACCENT := DesignSystemV3.ACCENT
 const GOOD := DesignSystemV3.GOOD
 const BAD := DesignSystemV3.BAD
@@ -64,6 +75,7 @@ var retry_button: Button
 var http_request: HTTPRequest
 var summary_request: HTTPRequest
 var roster_request: HTTPRequest
+var home_roster_request: HTTPRequest
 var rotation_request: HTTPRequest
 var game_day_request: HTTPRequest
 var game_day_simulate_request: HTTPRequest
@@ -73,7 +85,9 @@ var transaction_foundation_request: HTTPRequest
 
 var hq_story: VBoxContainer
 var inbox_page: Control
+var feature_guide: Control
 var home_page: Control
+var rebuild_page: Control
 var roster_page: Control
 var trades_page: Control
 var free_agency_page: Control
@@ -110,6 +124,7 @@ var long_action_detail_label: Label
 var long_action_elapsed_label: Label
 var long_action_spinner_label: Label
 var nav_buttons := {}
+var home_context_buttons: Array = []
 var active_team_abbreviation := "CHI"
 var active_team_primary := DesignSystemV3.TEAM_PRIMARY
 var active_team_secondary := Color("000000")
@@ -120,6 +135,8 @@ var background_top_band: ColorRect
 var background_accent_line: ColorRect
 var header_eyebrow_label: Label
 var franchise_hero_art: Control
+var home_featured_players: Control
+var home_hero_record_label: Label
 var team_card_panel: PanelContainer
 var team_badge_panel: PanelContainer
 var team_card_eyebrow_label: Label
@@ -313,7 +330,7 @@ func _build_background() -> void:
 	background_top_band.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(background_top_band)
 	background_top_band.anchor_right = 1.0
-	background_top_band.offset_bottom = 185.0
+	background_top_band.offset_bottom = 126.0
 
 	background_accent_line = ColorRect.new()
 	background_accent_line.color = active_team_primary
@@ -330,14 +347,34 @@ func _build_interface() -> void:
 
 	shell.add_child(_build_sidebar())
 
+	var workspace := VBoxContainer.new()
+	workspace.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	workspace.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	workspace.add_theme_constant_override("separation", 0)
+	shell.add_child(workspace)
+	var guide_margin := MarginContainer.new()
+	for side in ["left", "right"]:
+		guide_margin.add_theme_constant_override("margin_" + side, 24)
+	guide_margin.add_theme_constant_override("margin_top", 8)
+	workspace.add_child(guide_margin)
+	feature_guide = preload("res://scripts/feature_guide_v3.gd").new()
+	guide_margin.add_child(feature_guide)
+	feature_guide.navigate_requested.connect(_show_page)
 	var content_stack := Control.new()
 	content_stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content_stack.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	shell.add_child(content_stack)
+	workspace.add_child(content_stack)
 
 	home_page = _build_main_area()
 	content_stack.add_child(home_page)
 	home_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	rebuild_page = RebuildHQV3.new()
+	content_stack.add_child(rebuild_page)
+	rebuild_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	rebuild_page.navigate_requested.connect(_show_page)
+	rebuild_page.player_development_requested.connect(_open_player_development)
+	rebuild_page.onboarding_finished.connect(_on_rebuild_onboarding_finished)
 
 	save_manager_page = SaveManagerV3.new()
 	content_stack.add_child(save_manager_page)
@@ -429,10 +466,10 @@ func _build_interface() -> void:
 
 func _build_sidebar() -> Control:
 	var sidebar_panel := PanelContainer.new()
-	sidebar_panel.custom_minimum_size = Vector2(244, 0)
+	sidebar_panel.custom_minimum_size = Vector2(184, 0)
 	sidebar_panel.add_theme_stylebox_override(
 		"panel",
-		DesignSystemV3.style_box(SIDEBAR, 0, SOFT_BORDER, 1, 0.12)
+		DesignSystemV3.style_box(SIDEBAR, 0, Color(SOFT_BORDER, 0.62), 1, 0.08)
 	)
 
 	var sidebar_scroll := ScrollContainer.new()
@@ -440,22 +477,23 @@ func _build_sidebar() -> Control:
 	sidebar_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	sidebar_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	sidebar_panel.add_child(sidebar_scroll)
+
 	var margin := MarginContainer.new()
 	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	margin.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_set_margins(margin, 18, 20, 18, 28)
+	_set_margins(margin, 12, 14, 10, 16)
 	sidebar_scroll.add_child(margin)
 
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 6)
+	column.add_theme_constant_override("separation", 3)
 	margin.add_child(column)
 
 	var brand_row := HBoxContainer.new()
-	brand_row.add_theme_constant_override("separation", 12)
+	brand_row.add_theme_constant_override("separation", 9)
 	column.add_child(brand_row)
 
 	var mark := PanelContainer.new()
-	mark.custom_minimum_size = Vector2(48, 48)
+	mark.custom_minimum_size = Vector2(38, 38)
 	mark.add_theme_stylebox_override(
 		"panel",
 		DesignSystemV3.style_box(
@@ -463,7 +501,7 @@ func _build_sidebar() -> Control:
 			DesignSystemV3.RADIUS_MD,
 			TEAM_PRIMARY_HOVER,
 			1,
-			0.22
+			0.16
 		)
 	)
 	brand_row.add_child(mark)
@@ -473,76 +511,78 @@ func _build_sidebar() -> Control:
 	mark_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	mark_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	mark_label.add_theme_color_override("font_color", TEXT)
-	mark_label.add_theme_font_size_override("font_size", 16)
+	mark_label.add_theme_font_size_override("font_size", 13)
 	mark.add_child(mark_label)
 
 	var brand_box := VBoxContainer.new()
-	brand_box.add_theme_constant_override("separation", 1)
+	brand_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	brand_box.add_theme_constant_override("separation", 0)
 	brand_row.add_child(brand_box)
 
 	var brand := Label.new()
-	brand.text = "FRANCHISE SIMULATOR"
+	brand.text = "FRANCHISE"
 	brand.add_theme_color_override("font_color", TEXT)
-	brand.add_theme_font_size_override("font_size", 17)
+	brand.add_theme_font_size_override("font_size", 13)
 	brand_box.add_child(brand)
 
 	var brand_detail := Label.new()
-	brand_detail.text = "DESKTOP FRONT OFFICE"
+	brand_detail.text = "SIMULATOR • DESKTOP"
 	brand_detail.add_theme_color_override("font_color", MUTED)
-	brand_detail.add_theme_font_size_override("font_size", 9)
+	brand_detail.add_theme_font_size_override("font_size", 8)
 	brand_box.add_child(brand_detail)
 
 	var version := Label.new()
-	version.text = "V3 • PRODUCTION ENGINE"
+	version.text = "NBA FRONT OFFICE"
 	version.add_theme_color_override("font_color", DesignSystemV3.ACCENT)
-	version.add_theme_font_size_override("font_size", 9)
+	version.add_theme_font_size_override("font_size", 8)
 	column.add_child(version)
 
 	var brand_spacer := Control.new()
-	brand_spacer.custom_minimum_size = Vector2(0, 10)
+	brand_spacer.custom_minimum_size = Vector2(0, 5)
 	column.add_child(brand_spacer)
 
+	# Expansion 49 guided information architecture, kept intact but substantially denser.
 	column.add_child(UiComponentsV3.sidebar_group_label("COMMAND"))
 	column.add_child(_nav_button("HOME", true))
+	column.add_child(_nav_button("REBUILD HQ"))
 	column.add_child(_nav_button("INBOX"))
-	column.add_child(_nav_button("PULSE"))
-	column.add_child(_nav_button("FRANCHISES"))
 
-	column.add_child(UiComponentsV3.sidebar_group_label("TEAM"))
+	column.add_child(UiComponentsV3.sidebar_group_label("BUILD YOUR TEAM"))
+	column.add_child(_nav_button("DEVELOPMENT"))
 	column.add_child(_nav_button("ROSTER"))
 	column.add_child(_nav_button("LOCKER ROOM"))
-	column.add_child(_nav_button("GAME DAY"))
-	column.add_child(_nav_button("THEATER"))
 
-	column.add_child(UiComponentsV3.sidebar_group_label("ROSTER BUILDING"))
-	column.add_child(_nav_button("OFFSEASON"))
-	column.add_child(_nav_button("DEVELOPMENT"))
+	column.add_child(UiComponentsV3.sidebar_group_label("SEASON"))
+	column.add_child(_nav_button("GAME DAY"))
+	column.add_child(_nav_button("SEASON"))
+
+	column.add_child(UiComponentsV3.sidebar_group_label("BUILD THE FUTURE"))
+	column.add_child(_nav_button("SCOUTING"))
 	column.add_child(_nav_button("TRADES"))
 	column.add_child(_nav_button("FREE AGENCY"))
-	column.add_child(_nav_button("SCOUTING"))
+	column.add_child(_nav_button("OFFSEASON"))
 
 	column.add_child(UiComponentsV3.sidebar_group_label("LEAGUE"))
-	column.add_child(_nav_button("SEASON"))
 	column.add_child(_nav_button("LEAGUE"))
-	column.add_child(_nav_button("STORIES"))
 	column.add_child(_nav_button("LEGACY"))
 
-	column.add_child(UiComponentsV3.sidebar_group_label("ORGANIZATION"))
-	column.add_child(_nav_button("FRONT OFFICE"))
+	column.add_child(UiComponentsV3.sidebar_group_label("SYSTEM"))
+	column.add_child(_nav_button("FRANCHISES"))
 	column.add_child(_nav_button("SETTINGS"))
 
 	var expanding_spacer := Control.new()
 	expanding_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(expanding_spacer)
 
-	var eras := _nav_button("ERAS  •  COMING IN V3")
+	var eras := _nav_button("ERAS • COMING SOON")
 	eras.disabled = true
 	column.add_child(eras)
 
 	var footer := Label.new()
-	footer.text = "V3 working universe\nV2 release protected"
-	footer.add_theme_color_override("font_color", MUTED)
-	footer.add_theme_font_size_override("font_size", 10)
+	footer.text = "FRANCHISE MODE
+LOCAL SAVE"
+	footer.add_theme_color_override("font_color", MUTED_DARK)
+	footer.add_theme_font_size_override("font_size", 8)
 	column.add_child(footer)
 
 	return sidebar_panel
@@ -551,75 +591,286 @@ func _build_main_area() -> Control:
 	var scroll := ScrollContainer.new()
 	scroll.name = "FranchiseHQScroll"
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
 	var outer := MarginContainer.new()
 	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	outer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_set_margins(outer, 34, 28, 34, 30)
+	outer.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_set_margins(outer, 22, 14, 22, 24)
 
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 20)
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_theme_constant_override("separation", 10)
 	outer.add_child(column)
 
 	column.add_child(_build_header())
+	column.add_child(_build_home_hero())
+	column.add_child(_build_home_nav_strip())
+	column.add_child(_build_home_stat_ribbon())
 
-	var hero_row := HBoxContainer.new()
-	hero_row.add_theme_constant_override("separation", 16)
-	hero_row.add_child(_build_team_card())
-	hero_row.add_child(_build_next_game_card())
-	column.add_child(hero_row)
+	# Keep the bridge controls alive for reconnect/error handling, but do not make
+	# engineering infrastructure part of the player's primary Home composition.
+	var engine_strip := _build_engine_status_strip()
+	engine_strip.visible = false
+	column.add_child(engine_strip)
 
-	column.add_child(_build_engine_status_strip())
-	hq_story = preload("res://scripts/franchise_story_hq_v3.gd").new()
+	hq_story = FranchiseStoryHQV50A.new()
 	hq_story.navigate.connect(_show_page)
 	column.add_child(hq_story)
-
-	var metrics := GridContainer.new()
-	metrics.columns = 4
-	metrics.add_theme_constant_override("h_separation", 14)
-	metrics.add_theme_constant_override("v_separation", 14)
-	metrics.add_child(_metric_card("RECORD", "LOADING...", "Waiting for V3 save"))
-	metrics.add_child(_metric_card("CHEMISTRY", "LOADING...", "Waiting for V3 save"))
-	metrics.add_child(_metric_card("CAP SPACE", "LOADING...", "Waiting for V3 save"))
-	metrics.add_child(_metric_card("DRAFT CLASS", "LOADING...", "Waiting for V3 save"))
-	column.add_child(metrics)
 
 	scroll.add_child(outer)
 	return scroll
 
-
 func _build_header() -> Control:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 14)
-
-	var titles := VBoxContainer.new()
-	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	titles.add_theme_constant_override("separation", 3)
+	row.custom_minimum_size = Vector2(0, 28)
+	row.add_theme_constant_override("separation", 9)
 
 	header_eyebrow_label = Label.new()
-	var eyebrow := header_eyebrow_label
-	eyebrow.text = "NBA FRANCHISE OPERATIONS"
-	eyebrow.add_theme_color_override("font_color", TEAM_PRIMARY_HOVER)
-	eyebrow.add_theme_font_size_override("font_size", 10)
-	titles.add_child(eyebrow)
+	header_eyebrow_label.text = "FRANCHISE MODE"
+	header_eyebrow_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	header_eyebrow_label.add_theme_color_override("font_color", TEAM_PRIMARY_HOVER)
+	header_eyebrow_label.add_theme_font_size_override("font_size", 9)
+	row.add_child(header_eyebrow_label)
 
-	var title := Label.new()
-	title.text = "FRANCHISE HQ"
-	title.add_theme_color_override("font_color", TEXT)
-	title.add_theme_font_size_override("font_size", 34)
-	titles.add_child(title)
+	var divider := Label.new()
+	divider.text = "•"
+	divider.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	divider.add_theme_color_override("font_color", MUTED_DARK)
+	divider.add_theme_font_size_override("font_size", 9)
+	row.add_child(divider)
 
 	header_subtitle = Label.new()
-	header_subtitle.text = "LOADING V3 WORKING FRANCHISE..."
+	header_subtitle.text = "LOADING FRANCHISE..."
+	header_subtitle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header_subtitle.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	header_subtitle.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	header_subtitle.add_theme_color_override("font_color", MUTED)
-	header_subtitle.add_theme_font_size_override("font_size", 12)
-	titles.add_child(header_subtitle)
-	row.add_child(titles)
-
-	var alpha := _pill("V3 DESKTOP ALPHA", TEAM_PRIMARY_HOVER)
-	alpha.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(alpha)
-
+	header_subtitle.add_theme_font_size_override("font_size", 9)
+	row.add_child(header_subtitle)
 	return row
+
+func _style_home_quick_button(button: Button, active: bool) -> void:
+	if button == null:
+		return
+	var normal_fill := Color(active_team_primary, 0.17) if active else Color(PANEL, 0.54)
+	var normal_border := Color(active_team_primary, 0.82) if active else Color(SOFT_BORDER, 0.60)
+	var hover_fill := Color(active_team_primary, 0.25) if active else Color(PANEL_HOVER, 0.90)
+	button.add_theme_color_override("font_color", TEXT_STRONG if active else MUTED)
+	button.add_theme_color_override("font_hover_color", TEXT_STRONG)
+	button.add_theme_stylebox_override("normal", DesignSystemV3.style_box(normal_fill, 9, normal_border, 1, 0.04))
+	button.add_theme_stylebox_override("hover", DesignSystemV3.style_box(hover_fill, 9, Color(active_team_primary, 0.86), 1, 0.08))
+	button.add_theme_stylebox_override("pressed", DesignSystemV3.style_box(Color(active_team_primary, 0.30), 9, active_team_primary, 1, 0.02))
+
+
+func _home_quick_button(text_value: String, page: String, active: bool = false) -> Button:
+	var button := Button.new()
+	button.text = text_value
+	button.custom_minimum_size = Vector2(94, 32)
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	button.add_theme_font_size_override("font_size", 9)
+	button.set_meta("home_context_active", active)
+	home_context_buttons.append(button)
+	_style_home_quick_button(button, active)
+	button.pressed.connect(_show_page.bind(page))
+	return button
+
+func _build_home_nav_strip() -> Control:
+	var row := HBoxContainer.new()
+	row.custom_minimum_size = Vector2(0, 38)
+	row.add_theme_constant_override("separation", 6)
+	row.add_child(_home_quick_button("HOME", "HOME", true))
+	row.add_child(_home_quick_button("ROSTER", "ROSTER"))
+	row.add_child(_home_quick_button("GAME DAY", "GAME DAY"))
+	row.add_child(_home_quick_button("SEASON", "SEASON"))
+	row.add_child(_home_quick_button("TRADES", "TRADES"))
+	row.add_child(_home_quick_button("SCOUTING", "SCOUTING"))
+	row.add_child(_home_quick_button("LEAGUE", "LEAGUE"))
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(spacer)
+	return row
+
+func _build_home_hero() -> Control:
+	team_card_panel = PanelContainer.new()
+	team_card_panel.custom_minimum_size = Vector2(0, 308)
+	team_card_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	team_card_panel.add_theme_stylebox_override(
+		"panel",
+		DesignSystemV3.style_box(
+			Color("080c13"),
+			20,
+			Color(active_team_primary, 0.46),
+			1,
+			0.18
+		)
+	)
+	var card := team_card_panel
+
+	franchise_hero_art = FranchiseHomeArtV50A.new()
+	franchise_hero_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(franchise_hero_art)
+
+	var margin := MarginContainer.new()
+	_set_margins(margin, 30, 22, 24, 14)
+	card.add_child(margin)
+
+	var hero_row := HBoxContainer.new()
+	hero_row.add_theme_constant_override("separation", 10)
+	margin.add_child(hero_row)
+
+	# The identity side is intentionally simple: logo + oversized team name + one
+	# compact next-game rail. The player stage gets the visual drama.
+	var identity := VBoxContainer.new()
+	identity.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	identity.size_flags_stretch_ratio = 0.86
+	identity.add_theme_constant_override("separation", 7)
+	hero_row.add_child(identity)
+
+	var identity_top := HBoxContainer.new()
+	identity_top.add_theme_constant_override("separation", 16)
+	identity.add_child(identity_top)
+
+	team_badge_panel = PanelContainer.new()
+	team_badge_panel.custom_minimum_size = Vector2(98, 98)
+	team_badge_panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	identity_top.add_child(team_badge_panel)
+
+	team_abbr_badge = Label.new()
+	team_abbr_badge.text = "TEAM"
+	team_abbr_badge.visible = false
+	team_badge_panel.add_child(team_abbr_badge)
+
+	team_logo = TeamLogoV3.new()
+	team_logo.custom_minimum_size = Vector2(98, 98)
+	team_badge_panel.add_child(team_logo)
+
+	var identity_copy := VBoxContainer.new()
+	identity_copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	identity_copy.alignment = BoxContainer.ALIGNMENT_CENTER
+	identity_copy.add_theme_constant_override("separation", 2)
+	identity_top.add_child(identity_copy)
+
+	team_card_eyebrow_label = _small_label("YOUR FRANCHISE", active_team_hover)
+	team_card_eyebrow_label.add_theme_font_size_override("font_size", 9)
+	identity_copy.add_child(team_card_eyebrow_label)
+
+	team_name_label = Label.new()
+	team_name_label.text = "LOADING..."
+	team_name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	team_name_label.add_theme_color_override("font_color", TEXT_STRONG)
+	team_name_label.add_theme_font_size_override("font_size", 46)
+	identity_copy.add_child(team_name_label)
+
+	home_hero_record_label = Label.new()
+	home_hero_record_label.text = "LOADING SEASON CONTEXT..."
+	home_hero_record_label.add_theme_color_override("font_color", TEXT_STRONG)
+	home_hero_record_label.add_theme_font_size_override("font_size", 13)
+	identity_copy.add_child(home_hero_record_label)
+
+	team_detail_label = Label.new()
+	team_detail_label.text = "Reading active franchise..."
+	team_detail_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	team_detail_label.add_theme_color_override("font_color", Color(TEXT, 0.72))
+	team_detail_label.add_theme_font_size_override("font_size", 10)
+	identity_copy.add_child(team_detail_label)
+
+	var identity_spacer := Control.new()
+	identity_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	identity.add_child(identity_spacer)
+
+	# Streamlit's next-up pill was stronger than a separate matchup card. Keep all
+	# the live schedule data, but visually reduce it to one broadcast rail.
+	var next_panel := PanelContainer.new()
+	next_panel.custom_minimum_size = Vector2(0, 62)
+	next_panel.add_theme_stylebox_override(
+		"panel",
+		DesignSystemV3.style_box(Color(Color("070a10"), 0.70), 11, Color(active_team_primary, 0.20), 1, 0.02)
+	)
+	identity.add_child(next_panel)
+
+	var next_margin := MarginContainer.new()
+	_set_margins(next_margin, 13, 7, 10, 7)
+	next_panel.add_child(next_margin)
+
+	var next_row := HBoxContainer.new()
+	next_row.add_theme_constant_override("separation", 10)
+	next_margin.add_child(next_row)
+
+	var next_copy := VBoxContainer.new()
+	next_copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	next_copy.alignment = BoxContainer.ALIGNMENT_CENTER
+	next_copy.add_theme_constant_override("separation", 1)
+	next_row.add_child(next_copy)
+
+	var next_head := HBoxContainer.new()
+	next_head.add_child(_small_label("NEXT UP", GOLD))
+	var next_head_spacer := Control.new()
+	next_head_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	next_head.add_child(next_head_spacer)
+	matchup_phase = _pill("SCHEDULE", MUTED)
+	matchup_phase.visible = false
+	next_head.add_child(matchup_phase)
+	next_copy.add_child(next_head)
+
+	next_game_matchup = Label.new()
+	next_game_matchup.text = "LOADING..."
+	next_game_matchup.add_theme_color_override("font_color", TEXT_STRONG)
+	next_game_matchup.add_theme_font_size_override("font_size", 16)
+	next_copy.add_child(next_game_matchup)
+
+	next_game_detail = Label.new()
+	next_game_detail.text = "Reading schedule..."
+	next_game_detail.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	next_game_detail.add_theme_color_override("font_color", MUTED)
+	next_game_detail.add_theme_font_size_override("font_size", 9)
+	next_copy.add_child(next_game_detail)
+
+	var open_game_day := _action_button("OPEN GAME DAY", true)
+	open_game_day.custom_minimum_size = Vector2(118, 36)
+	open_game_day.add_theme_font_size_override("font_size", 9)
+	open_game_day.pressed.connect(_show_page.bind("GAME DAY"))
+	next_row.add_child(open_game_day)
+
+	# Retain the existing matchup component as a hidden compatibility node.
+	matchup_banner = MatchupBannerV3.new()
+	matchup_banner.custom_minimum_size = Vector2(0, 0)
+	matchup_banner.visible = false
+	identity.add_child(matchup_banner)
+
+	# Right side is now a true broadcast player stage: transparent overlapping
+	# cutouts, center star larger, no individual portrait-card boxes.
+	var featured := VBoxContainer.new()
+	featured.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	featured.size_flags_stretch_ratio = 1.34
+	featured.add_theme_constant_override("separation", 0)
+	hero_row.add_child(featured)
+
+	var featured_head := HBoxContainer.new()
+	featured_head.custom_minimum_size.y = 22
+	featured_head.add_child(_small_label("FRANCHISE CORE", GOLD))
+	var featured_spacer := Control.new()
+	featured_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	featured_head.add_child(featured_spacer)
+	featured_head.add_child(_small_label("LIVE ROSTER", Color(TEXT, 0.52)))
+	featured.add_child(featured_head)
+
+	home_featured_players = FranchiseCoreStageV50A.new()
+	home_featured_players.custom_minimum_size = Vector2(0, 244)
+	home_featured_players.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	home_featured_players.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	featured.add_child(home_featured_players)
+	_render_home_featured_players([])
+
+	return card
+
+func _render_home_featured_players(players: Array) -> void:
+	if home_featured_players == null:
+		return
+	if home_featured_players.has_method("configure"):
+		home_featured_players.call("configure", players, active_team_primary, active_team_secondary)
 
 func _build_team_card() -> Control:
 	team_card_panel = _card(Vector2(330, 220))
@@ -732,63 +983,154 @@ func _build_next_game_card() -> Control:
 
 func _build_engine_status_strip() -> Control:
 	var strip := PanelContainer.new()
-	strip.custom_minimum_size = Vector2(0, 58)
-	strip.add_theme_stylebox_override("panel", _box(Color("0f151f"), 12, SOFT_BORDER))
+	strip.custom_minimum_size = Vector2(0, 30)
+	strip.add_theme_stylebox_override(
+		"panel",
+		DesignSystemV3.style_box(Color(Color("0b1018"), 0.52), 8, Color(SOFT_BORDER, 0.34), 1, 0.0)
+	)
 
 	var margin := MarginContainer.new()
-	_set_margins(margin, 16, 10, 12, 10)
+	_set_margins(margin, 8, 2, 6, 2)
 	strip.add_child(margin)
 
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
+	row.add_theme_constant_override("separation", 9)
 	margin.add_child(row)
 
-	var engine_tag := _pill("DESKTOP ENGINE", ACCENT)
-	row.add_child(engine_tag)
+	row.add_child(_pill("SIM", ACCENT))
 
 	bridge_status = Label.new()
 	bridge_status.text = "CHECKING..."
 	bridge_status.add_theme_color_override("font_color", MUTED)
-	bridge_status.add_theme_font_size_override("font_size", 13)
+	bridge_status.add_theme_font_size_override("font_size", 10)
 	bridge_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(bridge_status)
 
 	bridge_detail = Label.new()
-	bridge_detail.text = "Looking for the local Python bridge on port 8765."
+	bridge_detail.text = "Connecting to the local simulation engine."
 	bridge_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bridge_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	bridge_detail.add_theme_color_override("font_color", MUTED)
-	bridge_detail.add_theme_font_size_override("font_size", 10)
+	bridge_detail.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	bridge_detail.add_theme_color_override("font_color", MUTED_DARK)
+	bridge_detail.add_theme_font_size_override("font_size", 9)
 	bridge_detail.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(bridge_detail)
 
 	retry_button = _action_button("RETRY")
-	retry_button.custom_minimum_size = Vector2(88, 32)
+	retry_button.custom_minimum_size = Vector2(62, 24)
+	retry_button.add_theme_font_size_override("font_size", 9)
 	retry_button.pressed.connect(_check_bridge)
 	row.add_child(retry_button)
 
 	return strip
 
 
-func _metric_card(label_text: String, value_text: String, detail_text: String) -> Control:
-	var card := _card(Vector2(0, 118))
-	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card.add_theme_stylebox_override("panel", _box(PANEL_ALT, 14, SOFT_BORDER))
-	var body := _card_body(card, 16)
-	body.add_theme_constant_override("separation", 6)
+func _home_ribbon_stat(label_text: String, value_text: String, detail_text: String) -> Control:
+	var box := VBoxContainer.new()
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_theme_constant_override("separation", 1)
 
-	body.add_child(_small_label(label_text, TEAM_PRIMARY_HOVER if label_text == "RECORD" else MUTED))
+	var caption := _small_label(label_text, active_team_hover if label_text == "RECORD" else MUTED)
+	caption.add_theme_font_size_override("font_size", 8)
+	box.add_child(caption)
 
 	var value := Label.new()
 	value.text = value_text
-	value.add_theme_color_override("font_color", TEXT)
-	value.add_theme_font_size_override("font_size", 27)
+	value.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	value.add_theme_color_override("font_color", TEXT_STRONG)
+	value.add_theme_font_size_override("font_size", 19)
+	box.add_child(value)
+
+	var detail := Label.new()
+	detail.text = detail_text
+	detail.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	detail.add_theme_color_override("font_color", GOOD)
+	detail.add_theme_font_size_override("font_size", 8)
+	box.add_child(detail)
+
+	match label_text:
+		"RECORD":
+			record_value = value
+			record_detail = detail
+		"CHEMISTRY":
+			chemistry_value = value
+			chemistry_detail = detail
+		"CAP SPACE":
+			cap_value = value
+			cap_detail = detail
+		"DRAFT CLASS":
+			draft_value = value
+			draft_detail = detail
+
+	return box
+
+
+func _build_home_stat_ribbon() -> Control:
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(0, 62)
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.add_theme_stylebox_override(
+		"panel",
+		DesignSystemV3.style_box(Color(PANEL_ALT, 0.44), 10, Color(SOFT_BORDER, 0.34), 1, 0.0)
+	)
+
+	var margin := MarginContainer.new()
+	_set_margins(margin, 16, 6, 16, 5)
+	panel.add_child(margin)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	margin.add_child(row)
+
+	var labels := [
+		["RECORD", "LOADING...", "Live standings"],
+		["CHEMISTRY", "LOADING...", "Team environment"],
+		["CAP SPACE", "LOADING...", "Financial flexibility"],
+		["DRAFT CLASS", "LOADING...", "Scouting horizon"],
+	]
+
+	for index in range(labels.size()):
+		var item: Array = labels[index]
+		row.add_child(_home_ribbon_stat(str(item[0]), str(item[1]), str(item[2])))
+		if index < labels.size() - 1:
+			var divider := VSeparator.new()
+			divider.custom_minimum_size = Vector2(1, 0)
+			divider.modulate = Color(1, 1, 1, 0.08)
+			row.add_child(divider)
+
+	return panel
+
+func _metric_card(label_text: String, value_text: String, detail_text: String) -> Control:
+	var card := _card(Vector2(0, 90))
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.add_theme_stylebox_override(
+		"panel",
+		DesignSystemV3.style_box(
+			Color(PANEL_ALT, 0.78),
+			12,
+			Color(SOFT_BORDER, 0.72),
+			1,
+			0.04
+		)
+	)
+	var body := _card_body(card, 12)
+	body.add_theme_constant_override("separation", 3)
+
+	var label := _small_label(label_text, active_team_hover if label_text == "RECORD" else MUTED)
+	label.add_theme_font_size_override("font_size", 9)
+	body.add_child(label)
+
+	var value := Label.new()
+	value.text = value_text
+	value.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	value.add_theme_color_override("font_color", TEXT_STRONG)
+	value.add_theme_font_size_override("font_size", 22)
 	body.add_child(value)
 
 	var detail := Label.new()
 	detail.text = detail_text
+	detail.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	detail.add_theme_color_override("font_color", GOOD)
-	detail.add_theme_font_size_override("font_size", 11)
+	detail.add_theme_font_size_override("font_size", 9)
 	body.add_child(detail)
 
 	match label_text:
@@ -806,6 +1148,7 @@ func _metric_card(label_text: String, value_text: String, detail_text: String) -
 			draft_detail = detail
 
 	return card
+
 
 func _build_feature_area(
 	title_text: String,
@@ -2795,6 +3138,8 @@ func _page_control(page_name: String):
 			return inbox_page
 		"HOME":
 			return home_page
+		"REBUILD HQ":
+			return rebuild_page
 		"FRANCHISES":
 			return save_manager_page
 		"ROSTER":
@@ -2835,6 +3180,7 @@ func _page_control(page_name: String):
 func _all_page_controls() -> Array:
 	return [
 		home_page,
+		rebuild_page,
 		save_manager_page,
 		roster_page,
 		game_day_page,
@@ -2863,6 +3209,8 @@ func _show_page(page_name: String, force_refresh: bool = false) -> void:
 	var previous_page := current_page
 	page_navigation_initialized = true
 	current_page = page_name
+	if feature_guide != null:
+		feature_guide.show_page(page_name)
 
 	var target_page = _page_control(page_name)
 	for page in _all_page_controls():
@@ -2888,6 +3236,9 @@ func _show_page(page_name: String, force_refresh: bool = false) -> void:
 			game_day_page.call("refresh")
 	elif page_name == "HOME":
 		_request_franchise_summary(force_refresh)
+	elif page_name == "REBUILD HQ":
+		if rebuild_page != null and rebuild_page.has_method("refresh"):
+			rebuild_page.call("refresh")
 	elif page_name == "FRANCHISES":
 		if save_manager_page != null and save_manager_page.has_method("refresh"):
 			save_manager_page.call("refresh")
@@ -2952,9 +3303,18 @@ func _on_desktop_preferences_changed(next_preferences: Dictionary) -> void:
 		return
 	startup_tutorial_checked = true
 	if bool(desktop_preferences.get("show_tutorial_on_startup", true)):
-		_show_page("SETTINGS")
-		if settings_page != null and settings_page.has_method("start_tutorial"):
-			settings_page.call_deferred("start_tutorial", true)
+		_show_page("REBUILD HQ")
+		if rebuild_page != null and rebuild_page.has_method("start_onboarding"):
+			rebuild_page.call_deferred("start_onboarding", true)
+
+
+func _open_player_development(player_id: String) -> void:
+	development_page.focus_player(player_id)
+	_show_page("DEVELOPMENT", true)
+
+
+func _on_rebuild_onboarding_finished(_started_from_startup: bool) -> void:
+	_show_page("DEVELOPMENT")
 
 
 func _on_tutorial_finished(started_from_startup: bool) -> void:
@@ -2997,31 +3357,24 @@ func _apply_active_team_brand(team_abbreviation: String) -> void:
 
 	if franchise_hero_art != null:
 		franchise_hero_art.apply_team_brand(team_key, active_team_primary, active_team_secondary)
+	if home_featured_players != null and home_featured_players.has_method("apply_team_brand"):
+		home_featured_players.call("apply_team_brand", active_team_primary, active_team_secondary)
 	if team_card_panel != null:
 		team_card_panel.add_theme_stylebox_override(
 			"panel",
 			DesignSystemV3.style_box(
-				PANEL,
-				DesignSystemV3.RADIUS_LG,
-				Color(active_team_primary, 0.76),
+				Color("0a0f17"),
+				20,
+				Color(active_team_primary, 0.48),
 				1,
-				0.16
+				0.20
 			)
 		)
 
 	if team_logo != null:
 		team_logo.configure(team_key)
 	if team_badge_panel != null:
-		team_badge_panel.add_theme_stylebox_override(
-			"panel",
-			DesignSystemV3.style_box(
-				PANEL_ALT.lerp(active_team_primary, 0.15),
-				DesignSystemV3.RADIUS_LG,
-				active_team_hover,
-				1,
-				0.22
-			)
-		)
+		team_badge_panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 
 	if team_abbr_badge != null:
 		team_abbr_badge.add_theme_color_override("font_color", active_team_foreground)
@@ -3034,6 +3387,10 @@ func _apply_active_team_brand(team_abbreviation: String) -> void:
 			active_team_primary
 		)
 
+	for home_button in home_context_buttons:
+		if is_instance_valid(home_button) and home_button is Button:
+			_style_home_quick_button(home_button, bool(home_button.get_meta("home_context_active", false)))
+
 	for button in branded_primary_buttons:
 		if is_instance_valid(button) and button is Button:
 			TeamBrandingV3.apply_primary_button(button, active_team_primary)
@@ -3044,6 +3401,7 @@ func _apply_active_team_brand(team_abbreviation: String) -> void:
 func _broadcast_team_brand() -> void:
 	for page in [
 		home_page,
+		rebuild_page,
 		roster_page,
 		game_day_page,
 		trades_page,
@@ -3146,6 +3504,7 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 	if text_value in [
 		"INBOX",
 		"HOME",
+		"REBUILD HQ",
 		"FRANCHISES",
 		"ROSTER",
 		"GAME DAY",
@@ -3245,6 +3604,11 @@ func _build_http_client() -> void:
 	roster_request.request_completed.connect(_on_roster_completed)
 	add_child(roster_request)
 
+	home_roster_request = HTTPRequest.new()
+	home_roster_request.timeout = 4.0
+	home_roster_request.request_completed.connect(_on_home_roster_completed)
+	add_child(home_roster_request)
+
 	rotation_request = HTTPRequest.new()
 	rotation_request.timeout = 8.0
 	rotation_request.request_completed.connect(_on_rotation_request_completed)
@@ -3312,10 +3676,44 @@ func _on_health_completed(
 	)
 
 	_request_franchise_summary()
-	# Batch 18B: Roster is lazy-loaded on first navigation. The launcher already
-	# prewarms its server response cache, so hidden UI work is unnecessary.
+	# 50A keeps the full Roster page lazy. Home performs a separate lightweight read
+	# after summary success only to populate three featured player portraits.
 	if settings_page != null and settings_page.has_method("refresh"):
 		settings_page.call("refresh")
+
+
+func _request_home_featured_players() -> void:
+	if home_roster_request == null:
+		return
+	if home_roster_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		return
+
+	var error := home_roster_request.request(ROSTER_URL)
+	if error != OK:
+		_render_home_featured_players([])
+
+
+func _on_home_roster_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		_render_home_featured_players([])
+		return
+
+	var payload = JSON.parse_string(body.get_string_from_utf8())
+	if typeof(payload) != TYPE_DICTIONARY or payload.has("error"):
+		_render_home_featured_players([])
+		return
+
+	var players = payload.get("players", [])
+	if typeof(players) != TYPE_ARRAY:
+		_render_home_featured_players([])
+		return
+
+	_render_home_featured_players(players)
 
 
 func _request_roster(force_refresh: bool = false) -> void:
@@ -3374,6 +3772,8 @@ func _apply_roster_payload(payload: Dictionary) -> void:
 
 	if team is Dictionary and team.get("abbreviation", "") != "":
 		_apply_active_team_brand(str(team.abbreviation))
+
+	_render_home_featured_players(players)
 
 	var roster_team_abbreviation := str(team.get("abbreviation", active_team_abbreviation)).to_upper()
 	if roster_team_logo != null:
@@ -4073,6 +4473,8 @@ func _on_summary_completed(
 
 	_apply_franchise_summary(payload)
 	_request_franchise_intelligence()
+	# 50A: lightweight cached roster read for the three Home hero portraits only.
+	_request_home_featured_players()
 
 
 func _apply_franchise_summary(payload: Dictionary) -> void:
@@ -4100,10 +4502,12 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 	if team_abbr_badge != null:
 		team_abbr_badge.text = str(team.get("abbreviation", "TEAM")).to_upper()
 
-	team_detail_label.text = "%s • %s Division
-%s rostered • %s active" % [
-		str(team.get("conference", "Unknown")),
-		str(team.get("division", "Unknown")),
+	if team_card_eyebrow_label != null:
+		team_card_eyebrow_label.text = "%s  •  %s" % [
+			str(team.get("conference", "FRANCHISE")).to_upper(),
+			str(team.get("division", "MODE")).to_upper()
+		]
+	team_detail_label.text = "%s rostered  •  %s active" % [
 		str(team.get("roster_size", "?")),
 		str(team.get("active_players", "?"))
 	]
@@ -4124,6 +4528,8 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 			record_text += " • " + str(streak_text)
 
 	record_detail.text = record_text
+	if home_hero_record_label != null:
+		home_hero_record_label.text = "%s  •  %s" % [str(record.get("display", "N/A")), record_text.to_upper()]
 
 	var chemistry_score = chemistry.get("score", null)
 	if chemistry_score == null:
@@ -4164,8 +4570,8 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 		]
 
 		matchup_banner.set_matchup(team_abbr, opponent_abbr, is_home)
-		matchup_banner.visible = true
-		next_game_matchup.visible = false
+		matchup_banner.visible = false
+		next_game_matchup.visible = true
 		matchup_phase.text = _pretty_phase(str(season.get("phase", "SCHEDULE")))
 		var days_value = next_game.get("days_away", null)
 		var days_away := int(days_value) if days_value != null else -1
@@ -4181,8 +4587,7 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 		var venue_text := "Home" if is_home else "Away"
 		var next_game_number := int(record.get("games_played", 0)) + 1
 
-		next_game_detail.text = "%s • %s
-%s • Game %s" % [
+		next_game_detail.text = "%s  •  %s  •  %s  •  Game %s" % [
 			when_text,
 			venue_text,
 			str(next_game.get("opponent_name", opponent_abbr)),
@@ -4199,6 +4604,8 @@ func _apply_franchise_summary(payload: Dictionary) -> void:
 func _set_live_data_error(message: String) -> void:
 	hq_story.set_unavailable(message)
 	header_subtitle.text = "V3 FRANCHISE DATA UNAVAILABLE"
+	if home_hero_record_label != null:
+		home_hero_record_label.text = "DATA OFFLINE"
 
 	record_value.text = "N/A"
 	record_detail.text = message
@@ -4223,9 +4630,9 @@ func _pretty_phase(value: String) -> String:
 	return value.replace("_", " ").to_upper()
 
 func _set_bridge_status(connected: bool, detail: String) -> void:
-	bridge_status.text = "CONNECTED" if connected else "OFFLINE"
+	bridge_status.text = "ONLINE" if connected else "OFFLINE"
 	bridge_status.add_theme_color_override("font_color", GOOD if connected else BAD)
-	bridge_detail.text = detail
+	bridge_detail.text = "Simulation engine ready" if connected else detail
 	retry_button.disabled = false
 
 

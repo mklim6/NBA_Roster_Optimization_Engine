@@ -65,32 +65,40 @@ var tutorial_started_from_startup := false
 
 const TUTORIAL_STEPS := [
 	{
-		"title": "WELCOME TO V3 FRANCHISE MODE",
-		"body": "Franchise HQ is your command center. The sidebar opens every major desktop module, while all franchise-changing actions write only to the isolated V3 working save. Your validated V2 release checkpoint remains protected.",
+		"title": "REBUILDING STARTS WITH DEVELOPMENT",
+		"body": "Start with the players already in your building. Rebuild HQ identifies the young core and sends you to DEVELOPMENT first so you can set season goals, review growth runway, track real progress, and use training camp before treating every weakness as a transaction problem.",
 	},
 	{
-		"title": "ROSTER + GAME DAY",
-		"body": "ROSTER manages depth, rotation, player roles, contracts, health, morale, and development context. GAME DAY prepares and simulates your next controlled-team game while synchronizing the rest of the league calendar.",
+		"title": "REBUILD HQ + YOUR FRANCHISE JOURNEY",
+		"body": "REBUILD HQ turns the simulator into a guided front-office loop. It ranks what matters now, tracks meaningful evidence-based milestones, and lets you choose a team-building direction without secretly changing ratings, CPU logic, or simulation outcomes.",
+	},
+	{
+		"title": "PLAYER DEVELOPMENT + YOUR CORE",
+		"body": "DEVELOPMENT is where a rebuild becomes personal. Commit up to three season goals, follow real rating and opportunity progress, review historical development, and use training camp and mentoring as part of the long-term player arc.",
+	},
+	{
+		"title": "ROSTER + LOCKER ROOM",
+		"body": "ROSTER manages the depth chart, rotation, contracts, health and player profiles. LOCKER ROOM adds roles, promises, morale, conversation memory and consequences so a roster decision matters beyond an overall rating.",
+	},
+	{
+		"title": "SCOUTING + THE DRAFT",
+		"body": "SCOUTING follows the class over time. Build confidence, choose focus prospects, compare dossiers, and arrive at Draft Night with information the franchise actually earned rather than treating the Draft as a one-night menu.",
 	},
 	{
 		"title": "TRADES + FREE AGENCY",
-		"body": "TRADES uses the production transaction and CBA legality engines for offers, Trade Finder, player packages, and draft capital. FREE AGENCY handles the live market, contract previews, and write-safe signings.",
+		"body": "Use the market after you understand the internal core. TRADES uses production transaction and CBA legality engines; FREE AGENCY handles the live market, contract previews and write-safe signings.",
 	},
 	{
-		"title": "SCOUTING + SEASON",
-		"body": "SCOUTING follows the upcoming draft class from season scouting through Draft Night. SEASON controls lifecycle transitions including postseason creation, offseason stages, Draft progression, and opening the next regular season.",
+		"title": "GAME DAY + SEASON",
+		"body": "GAME DAY turns roster construction into results with matchup preparation, coaching intelligence and synchronized league simulation. SEASON manages lifecycle transitions, postseason, Draft progression and the next regular season.",
 	},
 	{
-		"title": "LEAGUE + FRONT OFFICE",
-		"body": "LEAGUE tracks standings, leaders, results, awards, and league context. FRONT OFFICE combines team health, chemistry, staff, financial position, competitive outlook, and long-term roster planning.",
+		"title": "PULSE + STORIES + LEGACY",
+		"body": "PULSE summarizes what changed, STORIES turns saved rivalry evidence into meaningful matchups, THEATER presents recorded game results, and LEGACY preserves the long arc of the universe. These deep features are surfaced contextually instead of crowding the permanent sidebar.",
 	},
 	{
-		"title": "FRANCHISES + MULTI-SAVE",
-		"body": "FRANCHISES protects named save slots, creates copies, switches universes, and starts clean franchises for any NBA team. Before switching, the current live session is snapshotted and recovery copies are created automatically.",
-	},
-	{
-		"title": "SETTINGS + SAVE SAFETY",
-		"body": "SETTINGS controls confirmations, startup tutorial behavior, and post-switch navigation. These desktop preferences are stored separately from franchise checkpoints. You can reopen this tutorial at any time without advancing or editing a franchise.",
+		"title": "FRANCHISES + SETTINGS + SAVE SAFETY",
+		"body": "FRANCHISES manages named save slots and clean universes. SETTINGS controls desktop behavior and help. V3 franchise-changing actions remain isolated to the working save while the validated V2 release checkpoint stays protected.",
 	},
 ]
 
@@ -286,7 +294,7 @@ func _build_ui() -> void:
 	tutorial_body.add_child(_section_title("V3 FRANCHISE TUTORIAL"))
 
 	var tutorial_text := Label.new()
-	tutorial_text.text = "A seven-step walkthrough covers Franchise HQ, Game Day, roster management, trades, free agency, scouting, season progression, league intelligence, Front Office tools, multi-save franchises, and V3 save safety."
+	tutorial_text.text = "A NINE-STEP walkthrough starts with player development and Rebuild HQ, then explains roster roles, scouting, transactions, Game Day, season flow, Pulse + Stories + Legacy, multi-save franchises, and V3 save safety."
 	tutorial_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tutorial_text.add_theme_color_override("font_color", TEXT)
 	tutorial_text.add_theme_font_size_override("font_size", 12)

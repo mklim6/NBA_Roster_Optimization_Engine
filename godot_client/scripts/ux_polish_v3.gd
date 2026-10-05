@@ -81,10 +81,10 @@ static func attach_button_motion(button: Button) -> void:
 		return
 
 	button.set_meta("ux_motion_attached", true)
-	button.mouse_entered.connect(func(): UxPolishV3._on_button_mouse_entered(button))
-	button.mouse_exited.connect(func(): UxPolishV3._on_button_mouse_exited(button))
-	button.button_down.connect(func(): UxPolishV3._on_button_down(button))
-	button.button_up.connect(func(): UxPolishV3._on_button_up(button))
+	button.mouse_entered.connect(func(): _on_button_mouse_entered(button))
+	button.mouse_exited.connect(func(): _on_button_mouse_exited(button))
+	button.button_down.connect(func(): _on_button_down(button))
+	button.button_up.connect(func(): _on_button_up(button))
 
 
 static func _on_button_mouse_entered(button: Button) -> void:

@@ -337,7 +337,6 @@ def validate_static(results: dict[str, bool]) -> None:
         for token in [
             "RivalryStoryCenterV3",
             "var stories_page: Control",
-            'column.add_child(_nav_button("STORIES"))',
             '"STORIES":',
             'elif page_name == "STORIES":',
             "stories_page.refresh()",
@@ -376,7 +375,8 @@ def validate_static(results: dict[str, bool]) -> None:
             'Route("/v3/trade/execute", trade_execute, methods=["POST"])',
         ]
     )
-    results["api_version_025"] = 'API_VERSION = "0.25.0"' in server
+    from desktop_bridge.server import API_VERSION
+    results["api_version_at_least_025"] = tuple(map(int, API_VERSION.split("."))) >= (0, 25, 0)
 
 
 def validate_python_compile(results: dict[str, bool]) -> None:

@@ -15,6 +15,10 @@ var confirm_button: Button
 var submitted: Array = []
 var pending_action = ""
 var primary = DS.TEAM_PRIMARY
+var focused_player_id = ""
+
+func focus_player(player_id: String) -> void:
+	focused_player_id = player_id
 
 func _ready() -> void:
 	name = "DevelopmentCommandCenter"
@@ -108,6 +112,7 @@ func configure(data: Dictionary) -> void:
 		action.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		action.pressed.connect(func(): navigate_requested.emit(destination[1]))
 		buttons.add_child(action)
+	_build_player_review()
 	if bool(board.get("committed",false)):
 		var goals: Array = board.get("goals",[])
 		var met = 0
@@ -123,6 +128,68 @@ func configure(data: Dictionary) -> void:
 	else:
 		content.add_child(_label("No commitments for this season. New plans open during regular season or offseason.",16,DS.MUTED))
 	_build_archive()
+
+func _build_player_review() -> void:
+	if focused_player_id.is_empty():
+		return
+	var player: Dictionary = {}
+	for row in board.get("players", []):
+		if str(row.get("player_id", "")) == focused_player_id:
+			player = row
+			break
+	if player.is_empty():
+		focused_player_id = ""
+		return
+	var card = _card(content, primary)
+	card.name = "FocusedDevelopmentPlayer"
+	var portrait = Portrait.new()
+	portrait.custom_minimum_size = Vector2(0, 110)
+	card.add_child(portrait)
+	portrait.configure({"player_id": focused_player_id, "name": str(player.get("name", ""))})
+	card.add_child(_label("YOUR CORE • " + str(player.get("name", "")).to_upper(), 24, DS.GOLD))
+	card.add_child(_label("%s appearances • %s MPG • %s OVR" % [player.get("games", 0), _number(player.get("minutes_per_game")), _number(player.get("overall"))], 14))
+	var skills = GridContainer.new()
+	skills.columns = 2
+	card.add_child(skills)
+	for skill in ["shooting", "playmaking", "defense", "rebounding"]:
+		skills.add_child(_label(skill.capitalize() + " • " + _number(player.get("skills", {}).get(skill)), 14, DS.ACCENT))
+	card.add_child(_label("Choose what you want to measure: skill growth or meaningful playing opportunity. A goal tracks the player's progress; rotation minutes and camp remain separate decisions.", 14, DS.MUTED))
+	if not bool(board.get("committed", false)) and bool(board.get("can_commit", false)):
+		var draft = Button.new()
+		draft.name = "DraftFocusedPlayerGoal"
+		draft.text = "ADD THIS PLAYER TO AN EMPTY GOAL SLOT"
+		draft.custom_minimum_size.y = 44
+		draft.pressed.connect(_draft_focused_player)
+		card.add_child(draft)
+	else:
+		card.add_child(_label("Review your season commitments below. New targets cannot replace a committed season plan.", 14, DS.MUTED))
+
+func _draft_focused_player() -> void:
+	var player_index = -1
+	for index in range(board.get("players", []).size()):
+		if str(board.players[index].get("player_id", "")) == focused_player_id:
+			player_index = index + 1
+	if player_index < 1 or pending_action != "":
+		return
+	for form in forms:
+		if form.player.selected == player_index:
+			status.text = "This player already has a draft slot. Review its metric and target before confirming."
+			_reveal_form(form)
+			return
+	for index in range(forms.size()):
+		if forms[index].player.selected == 0:
+			forms[index].player.select(player_index)
+			_update_form(index)
+			status.text = "DRAFT ONLY • Choose the metric and target, then review the plan. Nothing has been saved."
+			_reveal_form(forms[index])
+			return
+	status.text = "All three draft slots are occupied. Clear a slot below if you want to include this player."
+
+func _reveal_form(form: Dictionary) -> void:
+	var scroll = find_child("DevelopmentCommandScroll", true, false)
+	if scroll != null:
+		scroll.ensure_control_visible(form.player)
+	form.player.grab_focus()
 
 func _build_planner() -> void:
 	content.add_child(_label("SET THE SEASON AGENDA",22,DS.GOLD))

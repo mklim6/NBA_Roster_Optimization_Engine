@@ -60,14 +60,14 @@ func _panel(title: String, detail: String, page: String, action: String) -> Pane
 	style.set_corner_radius_all(14)
 	style.content_margin_left = 20
 	style.content_margin_right = 20
-	style.content_margin_top = 18
-	style.content_margin_bottom = 18
+	style.content_margin_top = 14
+	style.content_margin_bottom = 14
 	panel.add_theme_stylebox_override("panel", style)
 	var body := VBoxContainer.new()
 	body.add_theme_constant_override("separation", 10)
 	panel.add_child(body)
-	body.add_child(_label(title, 20, accent.lightened(0.3)))
-	body.add_child(_label(detail, 15))
+	body.add_child(_label(title, 18, accent.lightened(0.3)))
+	body.add_child(_label(detail, 13))
 	if not page.is_empty():
 		var button := Button.new()
 		button.text = action
@@ -93,9 +93,9 @@ func _render() -> void:
 		headline = "Keep the momentum" if str(record.get("streak_type", "")) == "W" else "Find your response"
 	if "offseason" in phase or "draft" in phase:
 		headline = "Build the next chapter"
-	add_child(_label("YOUR FRANCHISE • " + str(season.get("label", "")), 12, DS.GOLD))
-	add_child(_label(headline, 28))
-	add_child(_label("%s • %s • %s games played" % [team.get("name", "Your team"), record.get("display", "Record unavailable"), played], 15, DS.MUTED))
+	var hero = preload("res://scripts/franchise_hero_v3.gd").new()
+	add_child(hero)
+	hero.configure(str(team.get("abbreviation", "BOS")), str(team.get("name", "Your franchise")), "FRANCHISE HQ • " + str(season.get("label", "")), "%s\n%s • %s games played" % [headline, record.get("display", "0-0"), played])
 	var inbox_link := Button.new()
 	inbox_link.text = "OPEN FRANCHISE INBOX"
 	inbox_link.custom_minimum_size.y = 42
