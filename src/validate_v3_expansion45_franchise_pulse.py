@@ -51,7 +51,16 @@ def main():
         dict(transaction_id='undated',status='committed',season_label=board['season'],team_a=team,team_b='SAS')]
     trades=[s['id'] for s in build_franchise_pulse(trade_copy,team,inbox)['stories'] if s['id'].startswith('trade:')]
     assert trades==['trade:valid']
-    opening=build_franchise_pulse(original,team,{'cards':[]})
+    # EXP48_4_PULSE45_COMPAT:
+    # The live checkpoint may already contain played games. Build the legacy
+    # opening-state contract from a controlled copy instead.
+    opening_copy=copy.deepcopy(original)
+    opening_state=opening_copy.simulation_state
+    opening_state.current_day_index=0
+    opening_state.completed_games={}
+    opening_state.schedule={}
+    opening_state.franchise_transaction_history_v1=[]
+    opening=build_franchise_pulse(opening_copy,team,{'cards':[]})
     assert not opening['results'] and opening['stories']
     from desktop_bridge import server
     response=asyncio.run(server.franchise_pulse(Request({'type':'http','method':'GET','path':'/v3/franchise-pulse','headers':[]})))
@@ -66,6 +75,11 @@ def main():
     finally:
         server._working_checkpoint=loader
     assert any(r.path=='/v3/franchise-pulse' and r.methods=={'GET','HEAD'} for r in server.routes)
+    pulse_all_count=len(board['stories'])
+    pulse_development_count=sum(str(s.get('destination',''))=='DEVELOPMENT' for s in board['stories'])
+    pulse_stories_count=sum(str(s.get('destination',''))=='STORIES' for s in board['stories'])
+    pulse_decisions_count=sum(str(s.get('destination','')) not in ('DEVELOPMENT','STORIES') and str(s.get('category',''))!='ON THE COURT' for s in board['stories'])
+    assert pulse_stories_count >= 1
     with tempfile.TemporaryDirectory() as temp:
         gd='''extends SceneTree
 func _initialize():
@@ -75,11 +89,13 @@ func run():
     root.add_child(page)
     page.size = Vector2(880,850)
     page.configure(BOARD)
-    assert(page.stories_box.get_child_count() == 3)
+    assert(page.stories_box.get_child_count() == ALL_COUNT)
     page._set_filter("DEVELOPMENT")
-    assert(page.stories_box.get_child_count() == 1)
+    assert(page.stories_box.get_child_count() == DEVELOPMENT_COUNT)
+    page._set_filter("STORIES")
+    assert(page.stories_box.get_child_count() == STORIES_COUNT)
     page._set_filter("DECISIONS")
-    assert(page.stories_box.get_child_count() == 1)
+    assert(page.stories_box.get_child_count() == DECISIONS_COUNT)
     page._set_filter("ALL")
     var action = page.stories_box.get_child(0).get_child(0).get_children().back()
     assert(action.get_signal_connection_list("pressed").size() == 1)
@@ -104,11 +120,15 @@ func run():
     print("PULSE45_RUNTIME_PASS")
     quit()
 '''.replace('BOARD',json.dumps(board))
+        gd=gd.replace('ALL_COUNT',str(pulse_all_count))
+        gd=gd.replace('DEVELOPMENT_COUNT',str(pulse_development_count))
+        gd=gd.replace('STORIES_COUNT',str(pulse_stories_count))
+        gd=gd.replace('DECISIONS_COUNT',str(pulse_decisions_count))
         script=Path(temp)/'pulse45.gd';script.write_text(gd,encoding='utf-8')
         proc=subprocess.run([str(Path.home()/'Downloads/Godot_v4.0-stable_win64.exe'),'--headless','--path',str(ROOT/'godot_client'),'--script',str(script)],capture_output=True,text=True,timeout=35)
         output=proc.stdout+proc.stderr;print(output)
         assert proc.returncode==0 and 'PULSE45_RUNTIME_PASS' in output and 'SCRIPT ERROR' not in output
     assert hashes()==before
-    print('PASS: inclusive weekly window, home/away scores, absent dates, future/unrelated games excluded, truthful goals/decisions, deterministic snapshot, API read-only, Godot filters/navigation, protected saves')
+    print('PASS: inclusive weekly window, home/away scores, absent dates, future/unrelated games excluded, truthful goals/decisions/story handoff, deterministic opening fixture, API read-only, Godot ALL/DEVELOPMENT/STORIES/DECISIONS filters, navigation, protected saves')
 
 if __name__=='__main__':main()
