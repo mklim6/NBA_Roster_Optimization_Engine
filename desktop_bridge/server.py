@@ -18,7 +18,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.23.0"
+API_VERSION = "0.24.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -129,6 +129,8 @@ from desktop_bridge.front_office_foundation import build_front_office_intelligen
 from desktop_bridge.decision_inbox import build_decision_inbox
 from desktop_bridge.franchise_pulse import build_franchise_pulse
 from desktop_bridge.game_night_theater import build_game_night_theater
+from desktop_bridge.locker_room import locker_room_board,build_locker_room_candidate
+from franchise_morale_chemistry_v1 import MORALE_STATE_ATTR
 from desktop_bridge.save_manager_foundation import (
     V3SaveManagerError,
     bootstrap_save_manager,
@@ -2563,6 +2565,56 @@ async def front_office_intelligence(_: Request) -> JSONResponse:
             },
             status_code=500,
         )
+
+
+async def locker_room(request: Request) -> JSONResponse:
+    import os
+    import tempfile
+    before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    protected = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            raise ValueError("Initialize a V3 working save first.")
+        team = _active_team_from_checkpoint(checkpoint)
+        if not team:
+            raise ValueError("Select an active franchise.")
+        if request.method == "GET":
+            board = locker_room_board(checkpoint,team)
+            if before != _file_sha256(V3_WORKING_CHECKPOINT_PATH) or protected != _file_sha256(DEFAULT_CHECKPOINT_PATH):
+                raise ValueError("The save changed. Refresh the locker room.")
+            return JSONResponse({**board,"working_save_sha256":before})
+        body = await request.json()
+        if not isinstance(body,dict) or body.get("action") not in {"preview","execute"}:
+            raise ValueError("Choose preview or execute.")
+        if body.get("expected_working_save_sha256") != before:
+            raise ValueError("The working save changed. Refresh the locker room.")
+        candidate,board,effect = build_locker_room_candidate(checkpoint,team,body)
+        if body["action"] == "preview":
+            if before != _file_sha256(V3_WORKING_CHECKPOINT_PATH) or protected != _file_sha256(DEFAULT_CHECKPOINT_PATH):
+                raise ValueError("The save changed during preview. Refresh and retry.")
+            return JSONResponse({"preview":True,"read_only":True,"effect":effect,"working_save_sha256":before,"working_save_write_performed":False})
+        with tempfile.TemporaryDirectory(dir=V3_WORKING_CHECKPOINT_PATH.parent) as directory:
+            staged = Path(directory)/"locker.pkl.gz"
+            save_franchise_checkpoint(candidate.simulation_state,candidate.trade_state,preferences=candidate.preferences,
+                reason="Expansion 47 locker-room action",path=staged,copy_payload=False,force_replace=True)
+            verified = load_franchise_checkpoint(path=staged)
+            if getattr(verified.simulation_state,MORALE_STATE_ATTR,None) != getattr(candidate.simulation_state,MORALE_STATE_ATTR,None):
+                raise RuntimeError("Locker-room memory failed reload verification.")
+            if before != _file_sha256(V3_WORKING_CHECKPOINT_PATH) or protected != _file_sha256(DEFAULT_CHECKPOINT_PATH):
+                raise ValueError("The save changed during the conversation. Refresh and retry.")
+            recovery = REPO_ROOT/"outputs/runtime/v3_locker_room_recovery"
+            recovery.mkdir(parents=True,exist_ok=True)
+            recovery_path = recovery/(str(before)+".pkl.gz")
+            shutil.copy2(V3_WORKING_CHECKPOINT_PATH,recovery_path)
+            if _file_sha256(recovery_path) != before:
+                raise RuntimeError("Locker-room recovery copy failed verification.")
+            os.replace(staged,V3_WORKING_CHECKPOINT_PATH)
+        return JSONResponse({**board,"read_only":False,"effect":effect,"applied":True,"working_save_write_performed":True,"working_save_sha256":_file_sha256(V3_WORKING_CHECKPOINT_PATH)})
+    except ValueError as exc:
+        return JSONResponse({"error":"locker_room_rejected","detail":str(exc)},status_code=409)
+    except Exception as exc:
+        return JSONResponse({"error":"locker_room_failed","detail":str(exc)},status_code=500)
 
 
 async def development_goals(request: Request) -> JSONResponse:
@@ -5194,6 +5246,7 @@ routes = [
     Route("/v3/offseason-command", offseason_command, methods=["GET"]),
     Route("/v3/training-camp", training_camp, methods=["GET", "POST"]),
     Route("/v3/development-goals", development_goals, methods=["GET", "POST"]),
+    Route("/v3/locker-room", locker_room, methods=["GET", "POST"]),
     Route("/v3/front-office", front_office_intelligence, methods=["GET"]),
     Route("/v3/decision-inbox", decision_inbox, methods=["GET"]),
     Route("/v3/franchise-pulse", franchise_pulse, methods=["GET"]),

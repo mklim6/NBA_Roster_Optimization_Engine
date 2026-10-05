@@ -5,6 +5,7 @@ extends Control
 const TradeCenterV3 = preload("res://scripts/trade_center_v3.gd")
 const FreeAgencyCenterV3 = preload("res://scripts/free_agency_center_v3.gd")
 const OffseasonCommandCenterV3 = preload("res://scripts/offseason_command_center_v3.gd")
+const LockerRoomV3 = preload("res://scripts/locker_room_v3.gd")
 const GameNightTheaterV3 = preload("res://scripts/game_night_theater_v3.gd")
 const FranchisePulseV3 = preload("res://scripts/franchise_pulse_v3.gd")
 const DevelopmentCommandCenterV3 = preload("res://scripts/development_command_center_v3.gd")
@@ -76,6 +77,7 @@ var roster_page: Control
 var trades_page: Control
 var free_agency_page: Control
 var offseason_page: Control
+var locker_page: Control
 var theater_page: Control
 var pulse_page: Control
 var development_page: Control
@@ -371,6 +373,10 @@ func _build_interface() -> void:
 	offseason_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	if offseason_page.has_signal("navigate_requested"):
 		offseason_page.connect("navigate_requested", _show_page)
+	locker_page = LockerRoomV3.new()
+	content_stack.add_child(locker_page)
+	locker_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	locker_page.navigate_requested.connect(_show_page)
 	theater_page = GameNightTheaterV3.new()
 	content_stack.add_child(theater_page)
 	theater_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -498,6 +504,7 @@ func _build_sidebar() -> Control:
 
 	column.add_child(UiComponentsV3.sidebar_group_label("TEAM"))
 	column.add_child(_nav_button("ROSTER"))
+	column.add_child(_nav_button("LOCKER ROOM"))
 	column.add_child(_nav_button("GAME DAY"))
 	column.add_child(_nav_button("THEATER"))
 
@@ -2789,6 +2796,8 @@ func _page_control(page_name: String):
 			return free_agency_page
 		"OFFSEASON":
 			return offseason_page
+		"LOCKER ROOM":
+			return locker_page
 		"THEATER":
 			return theater_page
 		"PULSE":
@@ -2819,6 +2828,7 @@ func _all_page_controls() -> Array:
 		trades_page,
 		free_agency_page,
 		offseason_page,
+		locker_page,
 		theater_page,
 		pulse_page,
 		development_page,
@@ -2896,6 +2906,8 @@ func _show_page(page_name: String, force_refresh: bool = false) -> void:
 	elif page_name == "OFFSEASON":
 		if offseason_page != null and offseason_page.has_method("refresh"):
 			offseason_page.call("refresh")
+	elif page_name == "LOCKER ROOM":
+		locker_page.refresh()
 	elif page_name == "THEATER":
 		theater_page.refresh()
 	elif page_name == "PULSE":
@@ -3021,6 +3033,7 @@ func _broadcast_team_brand() -> void:
 		trades_page,
 		free_agency_page,
 		offseason_page,
+		locker_page,
 		theater_page,
 		pulse_page,
 		development_page,
@@ -3120,6 +3133,7 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 		"ROSTER",
 		"GAME DAY",
 		"OFFSEASON",
+		"LOCKER ROOM",
 		"THEATER",
 		"PULSE",
 		"DEVELOPMENT",

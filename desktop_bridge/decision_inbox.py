@@ -33,8 +33,8 @@ def build_decision_inbox(state: Any, team: str, office: dict, game: dict, draft:
     for row in office.get("morale", {}).get("attention", []):
         pid = str(row.get("player_id", ""))
         add("morale:" + pid, "Player roles", "Watch", str(row.get("name", "Player")) + " • role concern",
-            f"{row.get('status') or 'Reported concern'}\nExpected role: {row.get('expected_role') or 'Unavailable'}. Review role satisfaction and minutes in Front Office.",
-            "FRONT OFFICE", pid, name=row.get("name", "Player"))
+            f"{row.get('status') or 'Reported concern'}\nExpected role: {row.get('expected_role') or 'Unavailable'}. Review expectations and conversation options in Locker Room.",
+            "LOCKER ROOM", pid, name=row.get("name", "Player"))
     for i, alert in enumerate(game.get("coaching_alerts", [])):
         add("coaching:" + str(i), "Game preparation", "Watch", str(alert.get("title", "Coaching alert")),
             str(alert.get("detail", "Review your current game plan.")), "GAME DAY")
