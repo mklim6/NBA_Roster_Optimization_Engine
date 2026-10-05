@@ -57,8 +57,8 @@ def build_franchise_pulse(checkpoint, team, inbox, names=None):
         wins = sum(r['outcome']=='W' for r in results)
         latest = results[0]
         add('week:results', 'ON THE COURT', f'{wins} wins in {len(results)} games this week',
-            f"Latest: {latest['outcome']} vs {names.get(latest['opponent'],latest['opponent'])}, {latest['score']}–{latest['against']}. Review your season before the next matchup.",
-            'SEASON', f'Recorded games · league days {start}–{day}', 1)
+            f"Latest: {latest['outcome']} vs {names.get(latest['opponent'],latest['opponent'])}, {latest['score']}–{latest['against']}. Watch the recorded postgame broadcast, then plan your next matchup.",
+            'THEATER', f'Recorded games · league days {start}–{day}', 1)
     board = goals_board(checkpoint, team)
     for goal in board['goals']:
         current = goal.get('current')

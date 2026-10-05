@@ -1,4 +1,5 @@
 extends Control
+signal navigate_requested(page: String)
 
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
@@ -572,6 +573,12 @@ func _build_postgame_card() -> Control:
 	card.name = "BroadcastPostgameReview"
 	var body := _card_body(card, 16)
 	body.add_theme_constant_override("separation", 12)
+
+	var theater_button = Button.new()
+	theater_button.text = "WATCH RECORDED POSTGAME BROADCAST"
+	theater_button.custom_minimum_size.y = 42
+	theater_button.pressed.connect(func(): navigate_requested.emit("THEATER"))
+	body.add_child(theater_button)
 
 	postgame_scoreboard_panel = PanelContainer.new()
 	postgame_scoreboard_panel.name = "PostgameBroadcastScoreboard"
