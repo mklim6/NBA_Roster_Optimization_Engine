@@ -31,7 +31,7 @@ var current_players: Array = []
 func _ready() -> void:
 	if name == "":
 		name = "RotationCourtV3"
-	custom_minimum_size = Vector2(700, 540)
+	custom_minimum_size = Vector2(640, 540)
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	mouse_filter = Control.MOUSE_FILTER_PASS
 	clip_contents = true

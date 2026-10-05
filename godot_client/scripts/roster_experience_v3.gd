@@ -56,6 +56,7 @@ func configure(
 	_build_header(team, players)
 
 	var main_row = HBoxContainer.new()
+	main_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	main_row.add_theme_constant_override("separation", 12)
 	add_child(main_row)
 
@@ -69,13 +70,13 @@ func configure(
 	court_card.add_child(court_margin)
 
 	court = RotationCourtV3.new()
-	court.custom_minimum_size = Vector2(700, 540)
+	court.custom_minimum_size = Vector2(640, 540)
 	court_margin.add_child(court)
 	court.player_selected.connect(_on_player_selected)
 	court.configure(players, primary, secondary)
 
 	var depth = _build_depth_chart(players)
-	depth.custom_minimum_size = Vector2(360, 350)
+	depth.custom_minimum_size = Vector2(320, 350)
 	main_row.add_child(depth)
 
 

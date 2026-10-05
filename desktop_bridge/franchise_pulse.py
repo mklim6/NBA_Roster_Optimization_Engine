@@ -1,6 +1,7 @@
 """Evidence-based rolling seven-day franchise briefing. Never writes a save."""
 from __future__ import annotations
 from desktop_bridge.development_goals import goals_board
+from desktop_bridge.rivalry_story_foundation import build_rivalry_story_universe
 
 
 def build_franchise_pulse(checkpoint, team, inbox, names=None):
@@ -75,6 +76,23 @@ def build_franchise_pulse(checkpoint, team, inbox, names=None):
         add('goal:agenda', 'BUILD YOUR CORE', 'Give this season a development agenda',
             'Choose up to three players and fixed skill or opportunity targets. Follow their progress through the season.',
             'DEVELOPMENT', 'No saved development agenda for this team and season', 2)
+    try:
+        story_universe = build_rivalry_story_universe(checkpoint, team, names)
+    except Exception:
+        # Pulse remains usable even if the optional story layer cannot be built.
+        story_universe = {}
+    for card in story_universe.get("pulse_cards", []):
+        add(
+            str(card.get("id", "story:unknown")),
+            str(card.get("category", "RIVALRY WATCH")),
+            str(card.get("title", "League story")),
+            str(card.get("detail", "Review the current rivalry story desk.")),
+            "STORIES",
+            str(card.get("evidence", "Saved franchise story evidence")),
+            int(card.get("priority", 2)),
+            player_id=str(card.get("player_id", "")),
+            opponent=str(card.get("opponent", "")),
+        )
     if not stories:
         add('quiet', 'FRANCHISE WATCH', 'A quiet week is a chance to plan',
             'No actionable stories are available in the saved snapshot. Review your roster and season calendar.',

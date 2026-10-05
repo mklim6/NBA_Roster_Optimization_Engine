@@ -113,7 +113,7 @@ func configure(data: Dictionary) -> void:
 	var group = ButtonGroup.new()
 	filters.add_theme_constant_override("separation",10)
 	content.add_child(filters)
-	for category in ["ALL","DECISIONS","DEVELOPMENT"]:
+	for category in ["ALL","DECISIONS","DEVELOPMENT","STORIES"]:
 		var button = Button.new()
 		button.text = category
 		button.toggle_mode = true
@@ -141,10 +141,14 @@ func _render_stories() -> void:
 		child.queue_free()
 	var count = 0
 	for story in payload.get("stories",[]):
-		var development = str(story.get("destination","")) == "DEVELOPMENT"
+		var destination = str(story.get("destination",""))
+		var development = destination == "DEVELOPMENT"
+		var storyline = destination == "STORIES"
 		if filter_name == "DEVELOPMENT" and not development:
 			continue
-		if filter_name == "DECISIONS" and (development or str(story.get("category","")) == "ON THE COURT"):
+		if filter_name == "STORIES" and not storyline:
+			continue
+		if filter_name == "DECISIONS" and (development or storyline or str(story.get("category","")) == "ON THE COURT"):
 			continue
 		count += 1
 		var card = _card(stories_box,DS.GOLD if int(story.get("priority",2)) == 0 else primary)

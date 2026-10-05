@@ -8,6 +8,7 @@ const OffseasonCommandCenterV3 = preload("res://scripts/offseason_command_center
 const LockerRoomV3 = preload("res://scripts/locker_room_v3.gd")
 const GameNightTheaterV3 = preload("res://scripts/game_night_theater_v3.gd")
 const FranchisePulseV3 = preload("res://scripts/franchise_pulse_v3.gd")
+const RivalryStoryCenterV3 = preload("res://scripts/rivalry_story_center_v3.gd")
 const DevelopmentCommandCenterV3 = preload("res://scripts/development_command_center_v3.gd")
 const ScoutingDraftCenterV3 = preload("res://scripts/scouting_draft_center_v3.gd")
 const SeasonLifecycleCenterV3 = preload("res://scripts/season_lifecycle_center_v3.gd")
@@ -80,6 +81,7 @@ var offseason_page: Control
 var locker_page: Control
 var theater_page: Control
 var pulse_page: Control
+var stories_page: Control
 var development_page: Control
 var scouting_page: Control
 var season_page: Control
@@ -385,6 +387,10 @@ func _build_interface() -> void:
 	content_stack.add_child(pulse_page)
 	pulse_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	pulse_page.navigate_requested.connect(_show_page)
+	stories_page = RivalryStoryCenterV3.new()
+	content_stack.add_child(stories_page)
+	stories_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	stories_page.navigate_requested.connect(_show_page)
 	development_page = DevelopmentCommandCenterV3.new()
 	content_stack.add_child(development_page)
 	development_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -518,6 +524,7 @@ func _build_sidebar() -> Control:
 	column.add_child(UiComponentsV3.sidebar_group_label("LEAGUE"))
 	column.add_child(_nav_button("SEASON"))
 	column.add_child(_nav_button("LEAGUE"))
+	column.add_child(_nav_button("STORIES"))
 	column.add_child(_nav_button("LEGACY"))
 
 	column.add_child(UiComponentsV3.sidebar_group_label("ORGANIZATION"))
@@ -955,20 +962,24 @@ func _build_feature_area(
 
 
 # Batch 24 roster + player experience mega-overhaul
-# Batch 24 roster + player experience mega-overhaul
+# EXP48_2R_ROSTER_OVERFLOW_RECOVERY: roster page is vertical-only and width-safe.
 func _build_roster_area() -> Control:
 	var page_scroll := ScrollContainer.new()
 	page_scroll.name = "RosterPageScroll"
+	page_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	page_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	page_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	page_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
 	var outer := MarginContainer.new()
 	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_set_margins(outer, 28, 22, 28, 24)
 	page_scroll.add_child(outer)
 
 	var column := VBoxContainer.new()
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	column.add_theme_constant_override("separation", 12)
 	outer.add_child(column)
 
@@ -2802,6 +2813,8 @@ func _page_control(page_name: String):
 			return theater_page
 		"PULSE":
 			return pulse_page
+		"STORIES":
+			return stories_page
 		"DEVELOPMENT":
 			return development_page
 		"SCOUTING":
@@ -2831,6 +2844,7 @@ func _all_page_controls() -> Array:
 		locker_page,
 		theater_page,
 		pulse_page,
+		stories_page,
 		development_page,
 		scouting_page,
 		season_page,
@@ -2912,6 +2926,8 @@ func _show_page(page_name: String, force_refresh: bool = false) -> void:
 		theater_page.refresh()
 	elif page_name == "PULSE":
 		pulse_page.refresh()
+	elif page_name == "STORIES":
+		stories_page.refresh()
 	elif page_name == "DEVELOPMENT":
 		development_page.refresh()
 
@@ -3036,6 +3052,7 @@ func _broadcast_team_brand() -> void:
 		locker_page,
 		theater_page,
 		pulse_page,
+		stories_page,
 		development_page,
 		scouting_page,
 		season_page,
@@ -3136,6 +3153,7 @@ func _nav_button(text_value: String, active: bool = false) -> Button:
 		"LOCKER ROOM",
 		"THEATER",
 		"PULSE",
+		"STORIES",
 		"DEVELOPMENT",
 		"TRADES",
 		"FREE AGENCY",

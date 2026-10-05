@@ -18,7 +18,7 @@ from starlette.routing import Route
 
 
 SERVICE_NAME = "nba-franchise-v3-bridge"
-API_VERSION = "0.24.0"
+API_VERSION = "0.25.0"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -128,6 +128,7 @@ from desktop_bridge.development_goals import goals_board, build_goals_candidate,
 from desktop_bridge.front_office_foundation import build_front_office_intelligence_payload
 from desktop_bridge.decision_inbox import build_decision_inbox
 from desktop_bridge.franchise_pulse import build_franchise_pulse
+from desktop_bridge.rivalry_story_foundation import build_rivalry_story_universe
 from desktop_bridge.game_night_theater import build_game_night_theater
 from desktop_bridge.locker_room import locker_room_board,build_locker_room_candidate
 from franchise_morale_chemistry_v1 import MORALE_STATE_ATTR
@@ -2455,6 +2456,64 @@ async def game_night_theater(_: Request) -> JSONResponse:
         return JSONResponse(payload)
     except Exception as exc:
         return JSONResponse({"error": "theater_unavailable", "detail": str(exc)}, status_code=500)
+
+
+async def rivalry_stories(_: Request) -> JSONResponse:
+    before = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+    protected = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+    try:
+        checkpoint = _working_checkpoint()
+        if checkpoint is None:
+            return JSONResponse(
+                {"error": "v3_working_save_not_initialized"},
+                status_code=409,
+            )
+        team = _active_team_from_checkpoint(checkpoint)
+        if not team:
+            return JSONResponse(
+                {"error": "active_franchise_not_found"},
+                status_code=404,
+            )
+
+        payload = build_rivalry_story_universe(
+            checkpoint,
+            team,
+            TEAM_NAMES,
+        )
+        working_after = _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+        protected_after = _file_sha256(DEFAULT_CHECKPOINT_PATH)
+
+        if before != working_after or protected != protected_after:
+            return JSONResponse(
+                {
+                    "error": "rivalry_stories_checkpoint_changed",
+                    "working_save_unchanged": before == working_after,
+                    "active_v2_unchanged": protected == protected_after,
+                },
+                status_code=409,
+            )
+
+        payload.update(
+            api_version=API_VERSION,
+            working_save_write_performed=False,
+            working_save_unchanged=True,
+            active_v2_unchanged=True,
+        )
+        return JSONResponse(payload)
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "error": "rivalry_stories_unavailable",
+                "detail": str(exc),
+                "working_save_unchanged": (
+                    before == _file_sha256(V3_WORKING_CHECKPOINT_PATH)
+                ),
+                "active_v2_unchanged": (
+                    protected == _file_sha256(DEFAULT_CHECKPOINT_PATH)
+                ),
+            },
+            status_code=500,
+        )
 
 
 async def franchise_pulse(_: Request) -> JSONResponse:
@@ -5250,6 +5309,7 @@ routes = [
     Route("/v3/front-office", front_office_intelligence, methods=["GET"]),
     Route("/v3/decision-inbox", decision_inbox, methods=["GET"]),
     Route("/v3/franchise-pulse", franchise_pulse, methods=["GET"]),
+    Route("/v3/rivalry-stories", rivalry_stories, methods=["GET"]),
     Route("/v3/game-night-theater", game_night_theater, methods=["GET"]),
     Route("/v3/market-intelligence", market_intelligence, methods=["GET"]),
     Route("/v3/transaction-foundation", transaction_foundation, methods=["GET"]),
