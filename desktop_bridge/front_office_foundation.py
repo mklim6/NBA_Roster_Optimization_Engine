@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from typing import Any, Mapping
+from desktop_bridge.player_career_history import career_history
 
 
 FRONT_OFFICE_FOUNDATION_VERSION = (
@@ -111,6 +112,7 @@ def _player_development_rows(state: Any, active_team: str) -> list[dict[str, Any
                     getattr(player, "profile_reliability", None)
                 ),
                 "history_entries": len(history),
+                "career_history": career_history(player),
             }
         )
 

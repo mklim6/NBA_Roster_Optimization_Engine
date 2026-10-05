@@ -1,6 +1,7 @@
 extends VBoxContainer
 const DS = preload("res://scripts/design_system_v3.gd")
 const Portrait = preload("res://scripts/player_portrait_v3.gd")
+const CareerHistory = preload("res://scripts/player_career_history_v3.gd")
 var rows: Array = []
 var selected_id := ""
 var sort_selector: OptionButton
@@ -141,6 +142,11 @@ func _render_selected(player: Dictionary) -> void:
 			body.add_child(bar)
 	var reliability = player.get("profile_reliability", null)
 	body.add_child(_label("Profile reliability: %s. Potential and outlook are projections, not recorded changes." % ("Unavailable" if reliability == null else "%.0f%%" % (float(reliability) * 100.0)), 13, DS.MUTED))
+	if player.has("career_history"):
+		var career = CareerHistory.new()
+		career.name = "PlayerCareerHistory"
+		body.add_child(career)
+		career.configure(player.get("career_history", {}))
 
 func _number(value) -> String:
 	return "—" if value == null else "%.1f" % float(value)

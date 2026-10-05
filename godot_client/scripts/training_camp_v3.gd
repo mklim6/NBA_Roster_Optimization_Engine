@@ -104,7 +104,12 @@ func _completed(result: int, code: int, _headers: PackedStringArray, body: Packe
 		_render_results(data.get("results", []), false)
 		confirm_button.visible = false
 		preview_ready = false
-		status.text = "CAMP COMPLETE • Outcomes saved across the league." if bool(data.get("completed", false)) else str(data.get("detail", ""))
+		if bool(data.get("completed", false)):
+			status.text = "CAMP COMPLETE • Outcomes saved across the league."
+		elif not bool(data.get("available", false)):
+			status.text = "CAMP OPENS DURING OFFSEASON • Current phase: %s. Explore your players below; return after the season to run camp." % str(data.get("phase", "unknown")).replace("_", " ").to_upper()
+		else:
+			status.text = str(data.get("detail", ""))
 	pending_action = ""
 
 func _render_roster() -> void:
