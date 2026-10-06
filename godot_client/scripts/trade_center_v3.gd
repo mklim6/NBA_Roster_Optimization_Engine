@@ -1,6 +1,10 @@
 extends Control
 
 # Batch 22 franchise presentation macro
+# 50B-R2E premium Trade Negotiation Room visual pass
+# 50B-R2E.0.4 lazy visual dependency hotfix
+# 50B-R2E.0.6 stable asset-panel compiler hotfix
+# 50B-R2E.1 visual density + empty-state polish
 
 const DesignSystemV3 = preload("res://scripts/design_system_v3.gd")
 const TeamBrandingV3 = preload("res://scripts/team_branding_v3.gd")
@@ -33,6 +37,12 @@ var package_stage: Control
 var active_asset_logo: Control
 var partner_asset_logo: Control
 var active_color = TEAM_PRIMARY
+var active_secondary = DesignSystemV3.TEXT
+var negotiation_hero: Control
+var active_assets_panel: PanelContainer
+var partner_assets_panel: PanelContainer
+var trade_finder_surface: PanelContainer
+var trade_finder_scroll: ScrollContainer
 
 var foundation_request: HTTPRequest
 var partner_assets_request: HTTPRequest
@@ -80,6 +90,7 @@ var long_action_manager = null
 
 func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
 	active_color = primary
+	active_secondary = _secondary
 	if page_identity != null:
 		page_identity.configure(_team, primary, _secondary)
 	if page_brand_bar != null:
@@ -88,11 +99,14 @@ func apply_team_brand(_team: String, primary: Color, _secondary: Color) -> void:
 		brand_heading.add_theme_color_override("font_color", TeamBrandingV3.hover_color(primary))
 	if active_assets_heading != null:
 		active_assets_heading.add_theme_color_override("font_color", TeamBrandingV3.hover_color(primary))
+	if active_assets_panel != null and active_assets_panel.has_method("configure"):
+		active_assets_panel.configure(primary, 16)
 	for button in primary_buttons:
 		TeamBrandingV3.apply_primary_button(button, primary)
 	if package_stage != null:
 		_refresh_package_stage()
 		_render_active_assets()
+	_refresh_negotiation_hero()
 
 
 func _update_package_state() -> void:
@@ -108,6 +122,7 @@ func _update_package_state() -> void:
 		package_state.text = "PACKAGE NEEDS PREVIEW"
 	if package_stage != null:
 		package_stage.set_preview_state(package_state.text, GOOD if package_state.text == "READY TO CONFIRM" else GOLD)
+	_refresh_negotiation_hero()
 
 
 func _display(value: Variant, fallback: String = "N/A") -> String:
@@ -168,6 +183,21 @@ func _build_http() -> void:
 	add_child(execute_request)
 
 
+func _new_premium_surface() -> PanelContainer:
+	var script: Variant = load("res://scripts/premium_surface_v3.gd")
+	return script.new()
+
+
+func _new_trade_negotiation_hero() -> PanelContainer:
+	var script: Variant = load("res://scripts/trade_negotiation_hero_v3.gd")
+	return script.new()
+
+
+func _premium_chip(text_value: String, tone: Color, font_size: int = 9) -> Label:
+	var script: Variant = load("res://scripts/premium_ui_v3.gd")
+	return script.chip(text_value, tone, font_size)
+
+
 func _build_ui() -> void:
 	var page_scroll := ScrollContainer.new()
 	page_scroll.name = "TradeCenterPageScroll"
@@ -179,7 +209,7 @@ func _build_ui() -> void:
 
 	var outer := MarginContainer.new()
 	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_set_margins(outer, 28, 24, 28, 28)
+	_set_margins(outer, 28, 24, 28, 120)
 	page_scroll.add_child(outer)
 
 	var column := VBoxContainer.new()
@@ -200,7 +230,7 @@ func _build_ui() -> void:
 	var titles := VBoxContainer.new()
 	titles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(titles)
-	brand_heading = _small_label("FRANCHISE OPERATIONS • TRANSACTIONS", TEAM_PRIMARY_HOVER)
+	brand_heading = _small_label("FRONT OFFICE • NEGOTIATION ROOM", TEAM_PRIMARY_HOVER)
 	titles.add_child(brand_heading)
 
 	var title := Label.new()
@@ -210,7 +240,7 @@ func _build_ui() -> void:
 	titles.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "Build the next chapter of your franchise. Compare both sides of the deal."
+	subtitle.text = "Build leverage, compare value, and take a legal package from conversation to commitment."
 	subtitle.add_theme_color_override("font_color", MUTED)
 	subtitle.add_theme_font_size_override("font_size", 12)
 	titles.add_child(subtitle)
@@ -222,41 +252,55 @@ func _build_ui() -> void:
 	refresh_button.pressed.connect(_request_foundation)
 	header.add_child(refresh_button)
 
-	var safety := _card(Vector2(0, 58))
+	var safety := _new_premium_surface()
+	safety.name = "TradeMarketStatusSurface"
+	safety.custom_minimum_size = Vector2(0, 58)
+	safety.configure(ACCENT, 14)
 	var safety_body := _card_body(safety, 12)
 	status_label = Label.new()
-	status_label.text = "Open Trade Center to load the V3 transaction foundation."
+	status_label.text = "Loading live trade market and asset ownership..."
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	status_label.add_theme_color_override("font_color", MUTED)
 	status_label.add_theme_font_size_override("font_size", 11)
 	safety_body.add_child(status_label)
 	column.add_child(safety)
+
+	negotiation_hero = _new_trade_negotiation_hero()
+	negotiation_hero.name = "TradeNegotiationHero"
+	column.add_child(negotiation_hero)
+	negotiation_hero.configure("", "", [], [], [], [], "BUILD YOUR PACKAGE")
+
 	package_stage = TradePackageStageV3.new()
 	column.add_child(package_stage)
 	package_stage.configure("", "", [], [], [], [])
+	package_stage.visible = false
 
-	var finder_card := _card(Vector2(0, 205))
-	finder_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(GOLD, 0.46)))
+	trade_finder_surface = _new_premium_surface()
+	trade_finder_surface.name = "TradeFinderPremiumSurface"
+	trade_finder_surface.custom_minimum_size = Vector2(0, 128)
+	var finder_card := trade_finder_surface
+	finder_card.configure(GOLD, 18)
 	var finder_body := _card_body(finder_card, 16)
 	var finder_header := HBoxContainer.new()
-	finder_header.add_child(_section_title("CPU TRADE FINDER"))
+	finder_header.add_child(_section_title("TRADE FINDER • LIVE PROPOSALS"))
 	var finder_spacer := Control.new()
 	finder_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	finder_header.add_child(finder_spacer)
-	finder_header.add_child(_pill("PRODUCTION ENGINE", GOOD))
+	finder_header.add_child(_premium_chip("FRONT OFFICE AI", GOOD, 10))
 	finder_body.add_child(finder_header)
 
 	var finder_hint := Label.new()
-	finder_hint.text = "Load any production proposal directly into the builder, or construct your own package below."
+	finder_hint.text = "Open a front-office proposal below or build your own package. Every deal still passes the same legality and CBA preview before execution."
 	finder_hint.add_theme_color_override("font_color", MUTED)
 	finder_hint.add_theme_font_size_override("font_size", 10)
 	finder_body.add_child(finder_hint)
 
-	var proposal_scroll := ScrollContainer.new()
-	proposal_scroll.name = "TradeFinderScroll"
-	proposal_scroll.custom_minimum_size = Vector2(0, 180)
-	proposal_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	finder_body.add_child(proposal_scroll)
+	trade_finder_scroll = ScrollContainer.new()
+	trade_finder_scroll.name = "TradeFinderScroll"
+	trade_finder_scroll.custom_minimum_size = Vector2(0, 46)
+	trade_finder_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	finder_body.add_child(trade_finder_scroll)
+	var proposal_scroll := trade_finder_scroll
 
 	proposal_rows = VBoxContainer.new()
 	proposal_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -268,15 +312,17 @@ func _build_ui() -> void:
 	builder_row.add_theme_constant_override("separation", 12)
 	column.add_child(builder_row)
 
-	var active_panel := _asset_panel("YOUR ASSETS", true)
-	active_panel.custom_minimum_size = Vector2(345, 560)
-	active_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	builder_row.add_child(active_panel)
+	active_assets_panel = _asset_panel("YOUR ASSETS", true)
+	active_assets_panel.custom_minimum_size = Vector2(345, 560)
+	active_assets_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	builder_row.add_child(active_assets_panel)
 
-	var command_card := _card(Vector2(280, 560))
-	command_card.add_theme_stylebox_override("panel", _box(PANEL, 16, Color(ACCENT, 0.46)))
+	var command_card := _new_premium_surface()
+	command_card.name = "TradePackageControlSurface"
+	command_card.custom_minimum_size = Vector2(280, 560)
+	command_card.configure(ACCENT, 18)
 	var command_body := _card_body(command_card, 16)
-	command_body.add_child(_small_label("TRADE BUILDER", GOLD))
+	command_body.add_child(_premium_chip("DEAL DESK", GOLD, 10))
 	command_body.add_child(_section_title("PACKAGE CONTROL"))
 	command_body.add_child(_small_label("TRADE PARTNER", MUTED))
 
@@ -326,19 +372,22 @@ func _build_ui() -> void:
 	command_body.add_child(locked)
 	builder_row.add_child(command_card)
 
-	var partner_panel := _asset_panel("PARTNER ASSETS", false)
-	partner_panel.custom_minimum_size = Vector2(345, 560)
-	partner_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	builder_row.add_child(partner_panel)
+	partner_assets_panel = _asset_panel("PARTNER ASSETS", false)
+	partner_assets_panel.custom_minimum_size = Vector2(345, 560)
+	partner_assets_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	builder_row.add_child(partner_assets_panel)
 
-	var preview_card := _card(Vector2(0, 130))
+	var preview_card := _new_premium_surface()
+	preview_card.name = "TradeLegalityDeskSurface"
+	preview_card.custom_minimum_size = Vector2(0, 145)
+	preview_card.configure(GOOD, 18)
 	var preview_body := _card_body(preview_card, 16)
 	var preview_header := HBoxContainer.new()
-	preview_header.add_child(_section_title("LEGALITY + FINANCIAL PREVIEW"))
+	preview_header.add_child(_section_title("DEAL DESK • LEGALITY + FINANCIAL PREVIEW"))
 	var preview_spacer := Control.new()
 	preview_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	preview_header.add_child(preview_spacer)
-	preview_header.add_child(_pill("READ ONLY", ACCENT))
+	preview_header.add_child(_premium_chip("VERIFY BEFORE COMMIT", ACCENT, 10))
 	preview_body.add_child(preview_header)
 
 	preview_label = Label.new()
@@ -347,12 +396,17 @@ func _build_ui() -> void:
 	preview_label.add_theme_color_override("font_color", MUTED)
 	preview_label.add_theme_font_size_override("font_size", 11)
 	preview_body.add_child(preview_label)
+	var rule_rail := HBoxContainer.new()
+	rule_rail.add_theme_constant_override("separation", 7)
+	preview_body.add_child(rule_rail)
+	for rule_name in ["SALARY MATCH", "DRAFT RIGHTS", "CONTRACTS", "CBA RULES"]:
+		rule_rail.add_child(_premium_chip(rule_name, ACCENT, 8))
 	column.add_child(preview_card)
 	column.add_child(finder_card)
 
 	execute_dialog = ConfirmationDialog.new()
 	execute_dialog.title = "Confirm franchise trade"
-	execute_dialog.dialog_text = "Execute this trade on the isolated V3 working save?"
+	execute_dialog.dialog_text = "Commit this trade to your franchise?"
 	execute_dialog.confirmed.connect(_execute_trade)
 	add_child(execute_dialog)
 	execute_dialog.get_ok_button().text = "EXECUTE TRADE"
@@ -414,7 +468,7 @@ func _request_foundation() -> void:
 		return
 	if foundation_request.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
 		return
-	status_label.text = "Scanning the production Trade Finder and live asset ledger..."
+	status_label.text = "Scanning live front offices, roster assets, and draft capital..."
 	status_label.add_theme_color_override("font_color", ACCENT)
 	preview_button.disabled = true
 	var error := foundation_request.request(FOUNDATION_URL)
@@ -451,7 +505,7 @@ func _on_foundation_completed(result: int, response_code: int, _headers: PackedS
 	_populate_partner_selector()
 
 	var finder := _dict(foundation_payload.get("trade_finder"))
-	status_label.text = "LIVE • %s • %s legal packages • %s proposal(s) • %.2fs search • working save unchanged • V2 protected" % [
+	status_label.text = "LIVE MARKET • %s • %s legal packages • %s proposal(s) • %.2fs search" % [
 		active_team,
 		str(finder.get("legal_packages", 0)),
 		str(proposals.size()),
@@ -523,6 +577,9 @@ func _on_partner_assets_completed(result: int, response_code: int, _headers: Pac
 	if typeof(raw_payload) != TYPE_DICTIONARY:
 		return
 	partner_payload = raw_payload
+	if partner_assets_panel != null and partner_assets_panel.has_method("configure"):
+		var partner_tone: Color = TeamBrandingV3.palette(str(partner_payload.get("team", ""))).get("primary", ACCENT)
+		partner_assets_panel.configure(partner_tone, 16)
 	if not bool(partner_payload.get("working_save_unchanged", false)) or not bool(partner_payload.get("active_v2_unchanged", false)):
 		status_label.text = "PARTNER-ASSET SAFETY CHECK FAILED"
 		status_label.add_theme_color_override("font_color", BAD)
@@ -582,9 +639,11 @@ func _pick_checkbox(pick_data: Dictionary, kind: String) -> CheckBox:
 	box.name = "TradePick_" + asset_id
 	box.set_meta("asset_id", asset_id)
 	box.flat = false
-	box.custom_minimum_size = Vector2(0, 60)
-	box.add_theme_stylebox_override("normal", _box(Color(GOLD, 0.07), 10, Color(GOLD, 0.30)))
-	box.text = "%s  •  %s" % [display, readiness]
+	box.custom_minimum_size = Vector2(0, 66)
+	box.add_theme_stylebox_override("normal", _box(Color(GOLD, 0.07), 10, Color(GOLD, 0.34)))
+	box.add_theme_stylebox_override("hover", _box(Color(GOLD, 0.12), 10, Color(GOLD, 0.62)))
+	box.add_theme_stylebox_override("pressed", _box(Color(GOLD, 0.16), 10, GOLD))
+	box.text = "DRAFT CAPITAL  •  %s  •  %s" % [display, readiness]
 	box.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	box.tooltip_text = box.text
 	box.button_pressed = _selection_dict(kind).has(asset_id)
@@ -669,6 +728,13 @@ func _update_package_summary() -> void:
 func _refresh_package_stage() -> void:
 	if package_stage == null:
 		return
+	var has_assets := (
+		not selected_active_players.is_empty()
+		or not selected_partner_players.is_empty()
+		or not selected_active_picks.is_empty()
+		or not selected_partner_picks.is_empty()
+	)
+	package_stage.visible = has_assets
 	var partner = partner_selector.get_item_text(partner_selector.selected) if partner_selector != null and partner_selector.item_count > 0 else ""
 	package_stage.configure(
 		active_team, partner,
@@ -683,6 +749,27 @@ func _refresh_package_stage() -> void:
 		partner_asset_logo.configure(partner)
 	if package_state != null:
 		package_stage.set_preview_state(package_state.text, GOOD if package_state.text == "READY TO CONFIRM" else GOLD)
+	_refresh_negotiation_hero()
+
+
+func _refresh_negotiation_hero() -> void:
+	if negotiation_hero == null:
+		return
+	var partner := ""
+	if partner_selector != null and partner_selector.item_count > 0:
+		partner = partner_selector.get_item_text(partner_selector.selected)
+	var state_text := "BUILD YOUR PACKAGE"
+	if package_state != null:
+		state_text = package_state.text
+	negotiation_hero.configure(
+		active_team,
+		partner,
+		_selected_asset_rows(selected_active_players, _array(_dict(foundation_payload.get("trade_assets")).get("players")), "player_id"),
+		_selected_asset_rows(selected_partner_players, _array(partner_payload.get("players")), "player_id"),
+		_selected_asset_rows(selected_active_picks, _array(_dict(foundation_payload.get("draft_assets")).get("owned")), "asset_id"),
+		_selected_asset_rows(selected_partner_picks, _array(partner_payload.get("picks")), "asset_id"),
+		state_text
+	)
 
 
 func _selected_asset_rows(selection: Dictionary, rows: Array, id_key: String) -> Array:
@@ -735,44 +822,84 @@ func _clear_package() -> void:
 func _render_proposals() -> void:
 	_clear_children(proposal_rows)
 	if proposals.is_empty():
+		if trade_finder_surface != null:
+			trade_finder_surface.custom_minimum_size = Vector2(0, 128)
+		if trade_finder_scroll != null:
+			trade_finder_scroll.custom_minimum_size = Vector2(0, 46)
 		var empty := Label.new()
-		empty.text = "No legal production proposals cleared this search window."
+		empty.text = "No legal front-office proposals cleared this search window. Refresh Market to scan again."
 		empty.add_theme_color_override("font_color", MUTED)
+		empty.add_theme_font_size_override("font_size", 11)
 		proposal_rows.add_child(empty)
 		return
+
+	if trade_finder_surface != null:
+		trade_finder_surface.custom_minimum_size = Vector2(0, 225)
+	if trade_finder_scroll != null:
+		trade_finder_scroll.custom_minimum_size = Vector2(0, 180)
 
 	for raw_proposal in proposals:
 		if typeof(raw_proposal) != TYPE_DICTIONARY:
 			continue
 		var proposal: Dictionary = raw_proposal
+		var partner := str(proposal.get("partner_team", ""))
+		var response := str(proposal.get("response_label", proposal.get("cpu_response", "OPEN")))
+		var deal_type := str(proposal.get("deal_type", "proposal")).replace("_", " ").to_upper()
+		var team_color: Color = TeamBrandingV3.palette(partner).get("primary", ACCENT)
+		var response_tone := _proposal_response_tone(response)
+
 		var button := Button.new()
-		button.custom_minimum_size = Vector2(0, 88)
-		button.name = "TradeFinderProposal_" + str(proposal.get("partner_team", ""))
+		button.custom_minimum_size = Vector2(0, 104)
+		button.name = "TradeFinderProposal_" + partner
 		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		button.text = "%s • %s • %s\nGET %s   |   SEND %s" % [
-			str(proposal.get("partner_team", "")),
-			str(proposal.get("response_label", proposal.get("cpu_response", ""))),
-			str(proposal.get("deal_type", "")),
+		button.text = "%s  •  %s  •  %s\nRECEIVE  %s\nSEND       %s" % [
+			partner,
+			response.to_upper(),
+			deal_type,
 			_join_assets(proposal.get("incoming", [])),
 			_join_assets(proposal.get("outgoing", []))
 		]
 		button.tooltip_text = button.text
 		button.add_theme_color_override("font_color", TEXT)
+		button.add_theme_color_override("font_hover_color", Color.WHITE)
 		button.add_theme_font_size_override("font_size", 12)
-		var normal = _box(PANEL_ALT, 12, BORDER)
-		normal.content_margin_left = 82
-		var hover = _box(PANEL_HOVER, 12, ACCENT)
-		hover.content_margin_left = 82
+		var normal = _box(Color(team_color, 0.075), 14, Color(team_color, 0.42))
+		normal.content_margin_left = 92
+		normal.content_margin_right = 118
+		var hover = _box(Color(team_color, 0.14), 14, Color(team_color, 0.82))
+		hover.content_margin_left = 92
+		hover.content_margin_right = 118
 		button.add_theme_stylebox_override("normal", normal)
 		button.add_theme_stylebox_override("hover", hover)
+		button.add_theme_stylebox_override("pressed", hover)
+
 		var logo = TeamLogoV3.new()
-		logo.position = Vector2(12, 12)
-		logo.size = Vector2(58, 64)
+		logo.position = Vector2(14, 14)
+		logo.size = Vector2(64, 76)
 		button.add_child(logo)
-		logo.configure(str(proposal.get("partner_team", "")))
+		logo.configure(partner)
+
+		var response_chip := _premium_chip(response.to_upper(), response_tone, 9)
+		response_chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		response_chip.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		response_chip.offset_left = -112.0
+		response_chip.offset_top = 14.0
+		response_chip.offset_right = -14.0
+		response_chip.offset_bottom = 42.0
+		button.add_child(response_chip)
+
 		button.pressed.connect(_load_proposal.bind(proposal))
 		proposal_rows.add_child(button)
+
+
+func _proposal_response_tone(response: String) -> Color:
+	var normalized := response.to_lower()
+	if "accept" in normalized or "interest" in normalized or "ready" in normalized:
+		return GOOD
+	if "reject" in normalized or "declin" in normalized or "block" in normalized:
+		return BAD
+	return GOLD
 
 
 func _load_proposal(proposal: Dictionary) -> void:
@@ -876,7 +1003,7 @@ func _on_preview_completed(result: int, response_code: int, _headers: PackedStri
 		if issue_lines.size() >= 4:
 			break
 
-	var detail := "STATUS %s • ENGINE COMMITTABLE %s\n%s sends %s • receives %s\n%s sends %s • receives %s\nFinancial %s • Contracts %s • Draft/Stepien %s" % [
+	var detail := "STATUS %s • READY TO COMMIT %s\n%s sends %s • receives %s\n%s sends %s • receives %s\nFinancial %s • Contracts %s • Draft/Stepien %s" % [
 		preview_status.to_upper(),
 		"YES" if bool(preview.get("can_commit", false)) else "NO",
 		str(side_a.get("team", active_team)),
@@ -904,7 +1031,7 @@ func _on_preview_completed(result: int, response_code: int, _headers: PackedStri
 		latest_preview_working_sha = working_sha
 		latest_preview_request_payload = _current_trade_request_payload().duplicate(true)
 		execute_button.disabled = false
-		detail += "\n\nEXECUTION READY • Fresh preview token locked to the current V3 working save."
+		detail += "\n\nEXECUTION READY • This preview is locked to the current package."
 		preview_label.text = detail
 	else:
 		_invalidate_trade_execution()
@@ -917,7 +1044,7 @@ func _confirm_execute_trade() -> void:
 	var partner := str(latest_preview_request_payload.get("partner_team", ""))
 	var outgoing_count: int = int(latest_preview_request_payload.get("side_a_player_ids", []).size()) + int(latest_preview_request_payload.get("side_a_pick_asset_ids", []).size())
 	var incoming_count: int = int(latest_preview_request_payload.get("side_b_player_ids", []).size()) + int(latest_preview_request_payload.get("side_b_pick_asset_ids", []).size())
-	execute_dialog.dialog_text = "%s ↔ %s\n\nSend %s asset(s) and receive %s asset(s).\n\nThis writes ONLY the isolated V3 working save. A recovery checkpoint is created first, the result is reloaded and verified, and the protected V2 checkpoint must remain unchanged." % [
+	execute_dialog.dialog_text = "%s ↔ %s\n\nSend %s asset(s) and receive %s asset(s).\n\nThis will commit the trade after a fresh legality check. A recovery checkpoint is created first, then the result is reloaded and verified." % [
 		active_team,
 		partner,
 		str(outgoing_count),
@@ -939,13 +1066,13 @@ func _execute_trade() -> void:
 	if not _begin_long_action(
 		"trade_execution",
 		"EXECUTING TRADE",
-		"Applying the certified transaction to the isolated V3 franchise...",
+		"Applying the certified transaction to your franchise...",
 		[
-			"Rechecking the fresh trade preview and working-save fingerprint...",
+			"Rechecking the fresh trade preview and package fingerprint...",
 			"Applying the production transaction and CBA engines...",
 			"Persisting rosters, contracts, and asset ledgers...",
-			"Reloading the V3 checkpoint and verifying the trade...",
-			"Confirming the protected V2 checkpoint is unchanged...",
+			"Reloading the franchise and verifying the trade...",
+			"Finalizing transaction safety checks...",
 		]
 	):
 		preview_label.text = "Another franchise-changing action is already running."
@@ -1005,10 +1132,7 @@ func _on_execute_completed(result: int, response_code: int, _headers: PackedStri
 		return
 
 	var transaction_id := str(raw_payload.get("transaction_id", ""))
-	preview_label.text = "TRADE COMMITTED • %s\nPersisted after reload • V3 working save updated • protected V2 unchanged\nRecovery checkpoint: %s" % [
-		transaction_id,
-		str(raw_payload.get("recovery_checkpoint_path", ""))
-	]
+	preview_label.text = "TRADE COMMITTED • %s\nSaved and verified after reload. Your franchise is ready to continue." % transaction_id
 	preview_label.add_theme_color_override("font_color", GOOD)
 	status_label.text = "LIVE • %s committed successfully • refreshing transaction foundation..." % transaction_id
 	status_label.add_theme_color_override("font_color", GOOD)
